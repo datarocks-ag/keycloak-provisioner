@@ -72,7 +72,7 @@ func TestEnsureRealmCreate(t *testing.T) {
 	}
 
 	p := New(c, cfg)
-	if err := p.ensureRealm(context.Background(), cfg.Realms[0]); err != nil {
+	if err := p.ensureRealm(context.Background(), cfg.Realms[0], "update"); err != nil {
 		t.Fatalf("ensureRealm: %v", err)
 	}
 
@@ -83,6 +83,37 @@ func TestEnsureRealmCreate(t *testing.T) {
 	}
 	if createdBody["enabled"] != true {
 		t.Errorf("expected enabled true, got %v", createdBody["enabled"])
+	}
+}
+
+func TestEnsureRealmCreateStrategySkipsExisting(t *testing.T) {
+	updateCalled := false
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]any{"realm": "test-realm"})
+		},
+		"PUT /admin/realms/{realm}": func(w http.ResponseWriter, r *http.Request) {
+			updateCalled = true
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	c := newTestClient(t, server.URL)
+	cfg := &config.Config{
+		Realms: []config.Realm{
+			{Realm: "test-realm"},
+		},
+	}
+
+	p := New(c, cfg)
+	if err := p.ensureRealm(context.Background(), cfg.Realms[0], "create"); err != nil {
+		t.Fatalf("ensureRealm: %v", err)
+	}
+
+	if updateCalled {
+		t.Error("expected PUT not to be called with strategy=create")
 	}
 }
 
@@ -114,7 +145,7 @@ func TestEnsureRealmUpdate(t *testing.T) {
 	}
 
 	p := New(c, cfg)
-	if err := p.ensureRealm(context.Background(), cfg.Realms[0]); err != nil {
+	if err := p.ensureRealm(context.Background(), cfg.Realms[0], "update"); err != nil {
 		t.Fatalf("ensureRealm: %v", err)
 	}
 
@@ -165,7 +196,7 @@ func TestEnsureClientCreate(t *testing.T) {
 	}
 
 	p := New(c, &config.Config{})
-	uuid, err := p.ensureClient(context.Background(), "test-realm", clientCfg)
+	uuid, err := p.ensureClient(context.Background(), "test-realm", clientCfg, "update")
 	if err != nil {
 		t.Fatalf("ensureClient: %v", err)
 	}
@@ -207,7 +238,7 @@ func TestEnsureClientUpdate(t *testing.T) {
 	}
 
 	p := New(c, &config.Config{})
-	uuid, err := p.ensureClient(context.Background(), "test-realm", clientCfg)
+	uuid, err := p.ensureClient(context.Background(), "test-realm", clientCfg, "update")
 	if err != nil {
 		t.Fatalf("ensureClient: %v", err)
 	}
@@ -244,7 +275,7 @@ func TestEnsureRealmRoleCreate(t *testing.T) {
 	role := config.RealmRole{Name: "app-admin", Description: "Admin role"}
 
 	p := New(c, &config.Config{})
-	if err := p.ensureRealmRole(context.Background(), "test-realm", role); err != nil {
+	if err := p.ensureRealmRole(context.Background(), "test-realm", role, "update"); err != nil {
 		t.Fatalf("ensureRealmRole: %v", err)
 	}
 
@@ -276,7 +307,7 @@ func TestEnsureRealmRoleUpdate(t *testing.T) {
 	role := config.RealmRole{Name: "app-admin", Description: "Updated description"}
 
 	p := New(c, &config.Config{})
-	if err := p.ensureRealmRole(context.Background(), "test-realm", role); err != nil {
+	if err := p.ensureRealmRole(context.Background(), "test-realm", role, "update"); err != nil {
 		t.Fatalf("ensureRealmRole: %v", err)
 	}
 
@@ -308,7 +339,7 @@ func TestEnsureClientRoleCreate(t *testing.T) {
 	role := config.ClientRole{Name: "admin", Description: "Admin"}
 
 	p := New(c, &config.Config{})
-	if err := p.ensureClientRole(context.Background(), "test-realm", "uuid-123", role); err != nil {
+	if err := p.ensureClientRole(context.Background(), "test-realm", "uuid-123", role, "update"); err != nil {
 		t.Fatalf("ensureClientRole: %v", err)
 	}
 
@@ -345,7 +376,7 @@ func TestEnsureProtocolMapperCreate(t *testing.T) {
 	}
 
 	p := New(c, &config.Config{})
-	if err := p.ensureProtocolMapper(context.Background(), "test-realm", "uuid-123", pm); err != nil {
+	if err := p.ensureProtocolMapper(context.Background(), "test-realm", "uuid-123", pm, "update"); err != nil {
 		t.Fatalf("ensureProtocolMapper: %v", err)
 	}
 
@@ -387,7 +418,7 @@ func TestEnsureProtocolMapperUpdate(t *testing.T) {
 	}
 
 	p := New(c, &config.Config{})
-	if err := p.ensureProtocolMapper(context.Background(), "test-realm", "uuid-123", pm); err != nil {
+	if err := p.ensureProtocolMapper(context.Background(), "test-realm", "uuid-123", pm, "update"); err != nil {
 		t.Fatalf("ensureProtocolMapper: %v", err)
 	}
 
@@ -395,6 +426,129 @@ func TestEnsureProtocolMapperUpdate(t *testing.T) {
 	defer mu.Unlock()
 	if updatedBody["id"] != "pm-id-1" {
 		t.Errorf("expected id pm-id-1, got %v", updatedBody["id"])
+	}
+}
+
+func TestEnsureClientCreateStrategySkipsExisting(t *testing.T) {
+	updateCalled := false
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/clients": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"id": "uuid-789", "clientId": "my-app"},
+			})
+		},
+		"PUT /admin/realms/{realm}/clients/{uuid}": func(w http.ResponseWriter, r *http.Request) {
+			updateCalled = true
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	c := newTestClient(t, server.URL)
+	clientCfg := config.Client{
+		ClientID: "my-app",
+		Secret:   "should-not-be-sent",
+	}
+
+	p := New(c, &config.Config{})
+	uuid, err := p.ensureClient(context.Background(), "test-realm", clientCfg, "create")
+	if err != nil {
+		t.Fatalf("ensureClient: %v", err)
+	}
+
+	if uuid != "uuid-789" {
+		t.Errorf("expected uuid-789, got %s", uuid)
+	}
+	if updateCalled {
+		t.Error("expected PUT not to be called with strategy=create")
+	}
+}
+
+func TestEnsureRealmRoleCreateStrategySkipsExisting(t *testing.T) {
+	updateCalled := false
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/roles/{name}": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]any{"name": "app-admin"})
+		},
+		"PUT /admin/realms/{realm}/roles/{name}": func(w http.ResponseWriter, r *http.Request) {
+			updateCalled = true
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	c := newTestClient(t, server.URL)
+	role := config.RealmRole{Name: "app-admin", Description: "Should not update"}
+
+	p := New(c, &config.Config{})
+	if err := p.ensureRealmRole(context.Background(), "test-realm", role, "create"); err != nil {
+		t.Fatalf("ensureRealmRole: %v", err)
+	}
+
+	if updateCalled {
+		t.Error("expected PUT not to be called with strategy=create")
+	}
+}
+
+func TestEnsureClientRoleCreateStrategySkipsExisting(t *testing.T) {
+	updateCalled := false
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/clients/{uuid}/roles/{name}": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]any{"name": "admin"})
+		},
+		"PUT /admin/realms/{realm}/clients/{uuid}/roles/{name}": func(w http.ResponseWriter, r *http.Request) {
+			updateCalled = true
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	c := newTestClient(t, server.URL)
+	role := config.ClientRole{Name: "admin", Description: "Should not update"}
+
+	p := New(c, &config.Config{})
+	if err := p.ensureClientRole(context.Background(), "test-realm", "uuid-123", role, "create"); err != nil {
+		t.Fatalf("ensureClientRole: %v", err)
+	}
+
+	if updateCalled {
+		t.Error("expected PUT not to be called with strategy=create")
+	}
+}
+
+func TestEnsureProtocolMapperCreateStrategySkipsExisting(t *testing.T) {
+	updateCalled := false
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/clients/{uuid}/protocol-mappers/models": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"id": "pm-id-1", "name": "audience-mapper", "protocolMapper": "oidc-audience-mapper"},
+			})
+		},
+		"PUT /admin/realms/{realm}/clients/{uuid}/protocol-mappers/models/{id}": func(w http.ResponseWriter, r *http.Request) {
+			updateCalled = true
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	c := newTestClient(t, server.URL)
+	pm := config.ProtocolMapper{
+		Name:           "audience-mapper",
+		ProtocolMapper: "oidc-audience-mapper",
+		Config:         map[string]string{"included.client.audience": "should-not-update"},
+	}
+
+	p := New(c, &config.Config{})
+	if err := p.ensureProtocolMapper(context.Background(), "test-realm", "uuid-123", pm, "create"); err != nil {
+		t.Fatalf("ensureProtocolMapper: %v", err)
+	}
+
+	if updateCalled {
+		t.Error("expected PUT not to be called with strategy=create")
 	}
 }
 

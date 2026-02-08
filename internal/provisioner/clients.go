@@ -8,7 +8,7 @@ import (
 	"keycloak-provisioner/internal/config"
 )
 
-func (p *Provisioner) ensureClient(ctx context.Context, realm string, c config.Client) (string, error) {
+func (p *Provisioner) ensureClient(ctx context.Context, realm string, c config.Client, strategy string) (string, error) {
 	existing, err := p.client.GetClients(ctx, realm, c.ClientID)
 	if err != nil {
 		return "", err
@@ -29,10 +29,23 @@ func (p *Provisioner) ensureClient(ctx context.Context, realm string, c config.C
 		if len(created) == 0 {
 			return "", fmt.Errorf("client %q not found after creation", c.ClientID)
 		}
-		return created[0]["id"].(string), nil
+		id, ok := created[0]["id"].(string)
+		if !ok {
+			return "", fmt.Errorf("client %q: missing or invalid id in response", c.ClientID)
+		}
+		return id, nil
 	}
 
-	uuid := existing[0]["id"].(string)
+	uuid, ok := existing[0]["id"].(string)
+	if !ok {
+		return "", fmt.Errorf("client %q: missing or invalid id in response", c.ClientID)
+	}
+
+	if strategy == "create" {
+		slog.Info("Skipping existing client (strategy=create)", "realm", realm, "clientId", c.ClientID)
+		return uuid, nil
+	}
+
 	slog.Info("Updating client", "realm", realm, "clientId", c.ClientID, "uuid", uuid)
 	body["id"] = uuid
 	if err := p.client.UpdateClient(ctx, realm, uuid, body); err != nil {

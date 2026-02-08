@@ -46,7 +46,11 @@ func New(baseURL, username, password string) *Client {
 }
 
 // Connect authenticates to Keycloak with retry logic.
+// Warns if the base URL does not use HTTPS.
 func (c *Client) Connect(ctx context.Context) error {
+	if strings.HasPrefix(c.baseURL, "http://") {
+		slog.Warn("Keycloak URL uses plain HTTP — credentials will be sent unencrypted", "url", c.baseURL)
+	}
 	ctx, cancel := context.WithTimeout(ctx, totalTimeout)
 	defer cancel()
 
@@ -106,7 +110,10 @@ func (c *Client) authenticate(ctx context.Context) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return fmt.Errorf("token request failed with status %d (failed to read body: %v)", resp.StatusCode, readErr)
+		}
 		return fmt.Errorf("token request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -187,7 +194,10 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any) (
 }
 
 func readError(resp *http.Response) error {
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("unexpected status %d (failed to read body: %v)", resp.StatusCode, err)
+	}
 	return fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
 }
 

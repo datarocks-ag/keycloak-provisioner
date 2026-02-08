@@ -9,9 +9,28 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// validStrategies is the allowlist of update strategy values.
+var validStrategies = map[string]bool{
+	"":       true, // inherits from parent/default
+	"create": true, // only create if missing, skip if exists
+	"update": true, // create or update (default behavior)
+}
+
+// EffectiveStrategy returns the first non-empty strategy from the given list,
+// defaulting to "update" if all are empty.
+func EffectiveStrategy(strategies ...string) string {
+	for _, s := range strategies {
+		if s != "" {
+			return s
+		}
+	}
+	return "update"
+}
+
 // Config is the top-level YAML configuration.
 type Config struct {
-	Realms []Realm `yaml:"realms"`
+	Strategy string  `yaml:"strategy"`
+	Realms   []Realm `yaml:"realms"`
 }
 
 // Realm defines a Keycloak realm to provision.
@@ -24,6 +43,7 @@ type Realm struct {
 	ResetPasswordAllowed *bool       `yaml:"resetPasswordAllowed"`
 	Clients              []Client    `yaml:"clients"`
 	Roles                []RealmRole `yaml:"roles"`
+	Strategy             string      `yaml:"strategy"`
 }
 
 // Client defines a Keycloak client to provision within a realm.
@@ -186,11 +206,26 @@ func scanSliceNullBytes(prefix string, values []string) error {
 	return nil
 }
 
+// validateStrategy returns an error if the strategy value is invalid.
+func validateStrategy(path, value string) error {
+	if !validStrategies[value] {
+		return fmt.Errorf("%s: invalid strategy %q (must be \"create\" or \"update\")", path, value)
+	}
+	return nil
+}
+
 // validate checks the config for required fields and consistency.
 func validate(cfg *Config) error {
+	if err := validateStrategy("strategy", cfg.Strategy); err != nil {
+		return err
+	}
+
 	realmNames := make(map[string]bool)
 
 	for i, r := range cfg.Realms {
+		if err := validateStrategy(fmt.Sprintf("realms[%d].strategy", i), r.Strategy); err != nil {
+			return err
+		}
 		if r.Realm == "" {
 			return fmt.Errorf("realms[%d].realm: name is required", i)
 		}

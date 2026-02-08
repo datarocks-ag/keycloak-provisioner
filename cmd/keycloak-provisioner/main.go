@@ -12,8 +12,11 @@ import (
 	"keycloak-provisioner/internal/provisioner"
 )
 
+var version = "dev"
+
 func main() {
 	setupLogging()
+	slog.Info("Starting keycloak-provisioner", "version", version)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
