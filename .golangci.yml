@@ -1,11 +1,21 @@
+version: "2"
+
 linters:
   enable:
     - errcheck
     - govet
     - staticcheck
     - unused
-    - gosimple
     - ineffassign
+
+  settings:
+    errcheck:
+      exclude-functions:
+        - (*net/http.Response).Body.Close
+        - (io.Closer).Close
+        - (*encoding/json.Encoder).Encode
+        - (*encoding/json.Decoder).Decode
+        - os.Unsetenv
 
 issues:
   exclude-dirs:
