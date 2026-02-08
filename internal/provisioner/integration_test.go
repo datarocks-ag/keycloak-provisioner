@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/stillya/testcontainers-keycloak"
+	keycloak "github.com/stillya/testcontainers-keycloak"
 	"github.com/testcontainers/testcontainers-go"
 
 	"keycloak-provisioner/internal/client"
@@ -140,7 +140,10 @@ realms:
 	}
 
 	// Verify client roles
-	clientUUID := clients[0]["id"].(string)
+	clientUUID, ok := clients[0]["id"].(string)
+	if !ok {
+		t.Fatal("expected client 'id' to be a string")
+	}
 	clientRole, err := kc.GetClientRole(ctx, "test-realm", clientUUID, "admin")
 	if err != nil {
 		t.Fatalf("getting client role: %v", err)
