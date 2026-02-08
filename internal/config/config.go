@@ -330,6 +330,12 @@ func validateProtocolMappers(clientPrefix string, mappers []ProtocolMapper) erro
 		if containsNullByte(pm.Name) {
 			return fmt.Errorf("%s.name: contains null byte", prefix)
 		}
+		if pm.Protocol == "" {
+			return fmt.Errorf("%s.protocol: is required", prefix)
+		}
+		if containsNullByte(pm.Protocol) {
+			return fmt.Errorf("%s.protocol: contains null byte", prefix)
+		}
 		if pm.ProtocolMapper == "" {
 			return fmt.Errorf("%s.protocolMapper: is required", prefix)
 		}

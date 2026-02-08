@@ -201,6 +201,23 @@ realms:
 	}
 }
 
+func TestValidationMissingProtocolMapperProtocol(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    clients:
+      - clientId: "app"
+        protocolMappers:
+          - name: "my-mapper"
+            protocolMapper: "oidc-audience-mapper"
+`
+	path := writeTempConfig(t, yaml)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for missing protocol mapper protocol")
+	}
+}
+
 func TestValidationMissingProtocolMapperType(t *testing.T) {
 	yaml := `
 realms:
@@ -209,6 +226,7 @@ realms:
       - clientId: "app"
         protocolMappers:
           - name: "my-mapper"
+            protocol: "openid-connect"
 `
 	path := writeTempConfig(t, yaml)
 	_, err := Load(path)
@@ -225,8 +243,10 @@ realms:
       - clientId: "app"
         protocolMappers:
           - name: "dup"
+            protocol: "openid-connect"
             protocolMapper: "oidc-audience-mapper"
           - name: "dup"
+            protocol: "openid-connect"
             protocolMapper: "oidc-usermodel-attribute-mapper"
 `
 	path := writeTempConfig(t, yaml)
@@ -381,7 +401,7 @@ func TestEffectiveStrategy(t *testing.T) {
 }
 
 func TestValidationNullByteInProtocolMapperName(t *testing.T) {
-	yaml := "realms:\n  - realm: \"test\"\n    clients:\n      - clientId: \"app\"\n        protocolMappers:\n          - name: \"m\\x00evil\"\n            protocolMapper: \"oidc-audience-mapper\"\n"
+	yaml := "realms:\n  - realm: \"test\"\n    clients:\n      - clientId: \"app\"\n        protocolMappers:\n          - name: \"m\\x00evil\"\n            protocol: \"openid-connect\"\n            protocolMapper: \"oidc-audience-mapper\"\n"
 	path := writeTempConfig(t, yaml)
 	_, err := Load(path)
 	if err == nil {

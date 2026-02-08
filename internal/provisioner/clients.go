@@ -18,22 +18,11 @@ func (p *Provisioner) ensureClient(ctx context.Context, realm string, c config.C
 
 	if len(existing) == 0 {
 		slog.Info("Creating client", "realm", realm, "clientId", c.ClientID)
-		if err := p.client.CreateClient(ctx, realm, body); err != nil {
+		uuid, err := p.client.CreateClient(ctx, realm, body)
+		if err != nil {
 			return "", err
 		}
-		// Re-fetch to get the UUID
-		created, err := p.client.GetClients(ctx, realm, c.ClientID)
-		if err != nil {
-			return "", fmt.Errorf("fetching created client UUID: %w", err)
-		}
-		if len(created) == 0 {
-			return "", fmt.Errorf("client %q not found after creation", c.ClientID)
-		}
-		id, ok := created[0]["id"].(string)
-		if !ok {
-			return "", fmt.Errorf("client %q: missing or invalid id in response", c.ClientID)
-		}
-		return id, nil
+		return uuid, nil
 	}
 
 	uuid, ok := existing[0]["id"].(string)

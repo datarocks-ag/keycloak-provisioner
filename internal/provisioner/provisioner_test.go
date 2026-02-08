@@ -160,29 +160,17 @@ func TestEnsureRealmUpdate(t *testing.T) {
 func TestEnsureClientCreate(t *testing.T) {
 	var mu sync.Mutex
 	var createdBody map[string]any
-	getCallCount := 0
 
 	server := testServer(t, map[string]http.HandlerFunc{
 		"GET /admin/realms/{realm}/clients": func(w http.ResponseWriter, r *http.Request) {
-			mu.Lock()
-			getCallCount++
-			count := getCallCount
-			mu.Unlock()
-
-			if count == 1 {
-				// First call: client doesn't exist
-				json.NewEncoder(w).Encode([]map[string]any{})
-			} else {
-				// Second call: after creation, return the client with UUID
-				json.NewEncoder(w).Encode([]map[string]any{
-					{"id": "uuid-123", "clientId": "my-app"},
-				})
-			}
+			// Client doesn't exist
+			json.NewEncoder(w).Encode([]map[string]any{})
 		},
 		"POST /admin/realms/{realm}/clients": func(w http.ResponseWriter, r *http.Request) {
 			mu.Lock()
 			defer mu.Unlock()
 			json.NewDecoder(r.Body).Decode(&createdBody)
+			w.Header().Set("Location", r.URL.String()+"/uuid-123")
 			w.WriteHeader(http.StatusCreated)
 		},
 	})
@@ -560,8 +548,6 @@ func TestRunFullProvisioning(t *testing.T) {
 	realmRoleCreated := false
 	clientRoleCreated := false
 	pmCreated := false
-	clientGetCount := 0
-
 	server := testServer(t, map[string]http.HandlerFunc{
 		"GET /admin/realms/{realm}": func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNotFound)
@@ -573,23 +559,13 @@ func TestRunFullProvisioning(t *testing.T) {
 			w.WriteHeader(http.StatusCreated)
 		},
 		"GET /admin/realms/{realm}/clients": func(w http.ResponseWriter, r *http.Request) {
-			mu.Lock()
-			clientGetCount++
-			count := clientGetCount
-			mu.Unlock()
-
-			if count == 1 {
-				json.NewEncoder(w).Encode([]map[string]any{})
-			} else {
-				json.NewEncoder(w).Encode([]map[string]any{
-					{"id": "uuid-1", "clientId": "my-app"},
-				})
-			}
+			json.NewEncoder(w).Encode([]map[string]any{})
 		},
 		"POST /admin/realms/{realm}/clients": func(w http.ResponseWriter, r *http.Request) {
 			mu.Lock()
 			clientCreated = true
 			mu.Unlock()
+			w.Header().Set("Location", r.URL.String()+"/uuid-1")
 			w.WriteHeader(http.StatusCreated)
 		},
 		"GET /admin/realms/{realm}/clients/{uuid}/protocol-mappers/models": func(w http.ResponseWriter, r *http.Request) {
