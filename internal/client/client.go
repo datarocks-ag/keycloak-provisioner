@@ -285,18 +285,29 @@ func (c *Client) GetClients(ctx context.Context, realm, clientID string) ([]map[
 }
 
 // CreateClient creates a new client in the given realm.
-func (c *Client) CreateClient(ctx context.Context, realm string, body map[string]any) error {
+// Returns the UUID of the newly created client, extracted from the Location header.
+func (c *Client) CreateClient(ctx context.Context, realm string, body map[string]any) (string, error) {
 	path := "/admin/realms/" + url.PathEscape(realm) + "/clients"
 	resp, err := c.doRequest(ctx, http.MethodPost, path, body)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated {
-		return readError(resp)
+		return "", readError(resp)
 	}
-	return nil
+
+	location := resp.Header.Get("Location")
+	if location == "" {
+		return "", fmt.Errorf("creating client: no Location header in response")
+	}
+	// Location is typically: .../clients/{uuid}
+	idx := strings.LastIndex(location, "/")
+	if idx < 0 || idx == len(location)-1 {
+		return "", fmt.Errorf("creating client: unexpected Location header format: %s", location)
+	}
+	return location[idx+1:], nil
 }
 
 // UpdateClient updates an existing client by UUID.
