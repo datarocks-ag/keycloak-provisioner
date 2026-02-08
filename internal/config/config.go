@@ -1,0 +1,371 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"regexp"
+	"strings"
+
+	"gopkg.in/yaml.v3"
+)
+
+// Config is the top-level YAML configuration.
+type Config struct {
+	Realms []Realm `yaml:"realms"`
+}
+
+// Realm defines a Keycloak realm to provision.
+type Realm struct {
+	Realm                string      `yaml:"realm"`
+	DisplayName          string      `yaml:"displayName"`
+	Enabled              *bool       `yaml:"enabled"`
+	LoginTheme           string      `yaml:"loginTheme"`
+	RegistrationAllowed  *bool       `yaml:"registrationAllowed"`
+	ResetPasswordAllowed *bool       `yaml:"resetPasswordAllowed"`
+	Clients              []Client    `yaml:"clients"`
+	Roles                []RealmRole `yaml:"roles"`
+}
+
+// Client defines a Keycloak client to provision within a realm.
+type Client struct {
+	ClientID                  string            `yaml:"clientId"`
+	Secret                    string            `yaml:"secret"`
+	Name                      string            `yaml:"name"`
+	Enabled                   *bool             `yaml:"enabled"`
+	PublicClient              *bool             `yaml:"publicClient"`
+	Protocol                  string            `yaml:"protocol"`
+	RootUrl                   string            `yaml:"rootUrl"`
+	BaseUrl                   string            `yaml:"baseUrl"`
+	AdminUrl                  string            `yaml:"adminUrl"`
+	RedirectUris              []string          `yaml:"redirectUris"`
+	WebOrigins                []string          `yaml:"webOrigins"`
+	StandardFlowEnabled       *bool             `yaml:"standardFlowEnabled"`
+	DirectAccessGrantsEnabled *bool             `yaml:"directAccessGrantsEnabled"`
+	ServiceAccountsEnabled    *bool             `yaml:"serviceAccountsEnabled"`
+	BearerOnly                *bool             `yaml:"bearerOnly"`
+	ConsentRequired           *bool             `yaml:"consentRequired"`
+	FrontchannelLogout        *bool             `yaml:"frontchannelLogout"`
+	DefaultClientScopes       []string          `yaml:"defaultClientScopes"`
+	OptionalClientScopes      []string          `yaml:"optionalClientScopes"`
+	Attributes                map[string]string `yaml:"attributes"`
+	ProtocolMappers           []ProtocolMapper  `yaml:"protocolMappers"`
+	ClientRoles               []ClientRole      `yaml:"clientRoles"`
+}
+
+// ProtocolMapper defines a protocol mapper for a Keycloak client.
+type ProtocolMapper struct {
+	Name            string            `yaml:"name"`
+	Protocol        string            `yaml:"protocol"`
+	ProtocolMapper  string            `yaml:"protocolMapper"`
+	ConsentRequired *bool             `yaml:"consentRequired"`
+	Config          map[string]string `yaml:"config"`
+}
+
+// RealmRole defines a realm-level role.
+type RealmRole struct {
+	Name        string `yaml:"name"`
+	Description string `yaml:"description"`
+}
+
+// ClientRole defines a client-level role.
+type ClientRole struct {
+	Name        string `yaml:"name"`
+	Description string `yaml:"description"`
+}
+
+// containsNullByte returns true if s contains a null byte (\x00).
+func containsNullByte(s string) bool {
+	return strings.ContainsRune(s, '\x00')
+}
+
+var envVarPattern = regexp.MustCompile(`\$\{([^}]+)}`)
+
+// expandEnvVars replaces ${VAR} references with their environment variable values.
+func expandEnvVars(s string) string {
+	return envVarPattern.ReplaceAllStringFunc(s, func(match string) string {
+		varName := envVarPattern.FindStringSubmatch(match)[1]
+		if val, ok := os.LookupEnv(varName); ok {
+			return val
+		}
+		return match // leave unresolved vars as-is
+	})
+}
+
+// expandConfig walks the config and expands env vars in string fields.
+func expandConfig(cfg *Config) {
+	for i := range cfg.Realms {
+		r := &cfg.Realms[i]
+		r.Realm = expandEnvVars(r.Realm)
+		r.DisplayName = expandEnvVars(r.DisplayName)
+		r.LoginTheme = expandEnvVars(r.LoginTheme)
+
+		for j := range r.Clients {
+			c := &r.Clients[j]
+			c.ClientID = expandEnvVars(c.ClientID)
+			c.Secret = expandEnvVars(c.Secret)
+			c.Name = expandEnvVars(c.Name)
+			c.Protocol = expandEnvVars(c.Protocol)
+			c.RootUrl = expandEnvVars(c.RootUrl)
+			c.BaseUrl = expandEnvVars(c.BaseUrl)
+			c.AdminUrl = expandEnvVars(c.AdminUrl)
+			for k := range c.RedirectUris {
+				c.RedirectUris[k] = expandEnvVars(c.RedirectUris[k])
+			}
+			for k := range c.WebOrigins {
+				c.WebOrigins[k] = expandEnvVars(c.WebOrigins[k])
+			}
+			for k := range c.DefaultClientScopes {
+				c.DefaultClientScopes[k] = expandEnvVars(c.DefaultClientScopes[k])
+			}
+			for k := range c.OptionalClientScopes {
+				c.OptionalClientScopes[k] = expandEnvVars(c.OptionalClientScopes[k])
+			}
+			for k, v := range c.Attributes {
+				c.Attributes[k] = expandEnvVars(v)
+			}
+			for k := range c.ProtocolMappers {
+				pm := &c.ProtocolMappers[k]
+				pm.Name = expandEnvVars(pm.Name)
+				pm.Protocol = expandEnvVars(pm.Protocol)
+				pm.ProtocolMapper = expandEnvVars(pm.ProtocolMapper)
+				for ck, cv := range pm.Config {
+					pm.Config[ck] = expandEnvVars(cv)
+				}
+			}
+			for k := range c.ClientRoles {
+				c.ClientRoles[k].Name = expandEnvVars(c.ClientRoles[k].Name)
+				c.ClientRoles[k].Description = expandEnvVars(c.ClientRoles[k].Description)
+			}
+		}
+
+		for j := range r.Roles {
+			r.Roles[j].Name = expandEnvVars(r.Roles[j].Name)
+			r.Roles[j].Description = expandEnvVars(r.Roles[j].Description)
+		}
+	}
+}
+
+// Load reads and parses a YAML config file, expanding env vars and validating.
+func Load(path string) (*Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading config file: %w", err)
+	}
+
+	var cfg Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("parsing config YAML: %w", err)
+	}
+
+	expandConfig(&cfg)
+
+	if err := validate(&cfg); err != nil {
+		return nil, fmt.Errorf("validating config: %w", err)
+	}
+
+	return &cfg, nil
+}
+
+// scanNullBytes checks a set of named string values for null bytes.
+func scanNullBytes(fields map[string]string) error {
+	for path, value := range fields {
+		if containsNullByte(value) {
+			return fmt.Errorf("%s: contains null byte", path)
+		}
+	}
+	return nil
+}
+
+// scanSliceNullBytes checks a slice of strings for null bytes.
+func scanSliceNullBytes(prefix string, values []string) error {
+	for i, v := range values {
+		if containsNullByte(v) {
+			return fmt.Errorf("%s[%d]: contains null byte", prefix, i)
+		}
+	}
+	return nil
+}
+
+// validate checks the config for required fields and consistency.
+func validate(cfg *Config) error {
+	realmNames := make(map[string]bool)
+
+	for i, r := range cfg.Realms {
+		if r.Realm == "" {
+			return fmt.Errorf("realms[%d].realm: name is required", i)
+		}
+		if containsNullByte(r.Realm) {
+			return fmt.Errorf("realms[%d].realm: contains null byte", i)
+		}
+		if r.Realm == "master" {
+			return fmt.Errorf("realms[%d].realm: provisioning the \"master\" realm is not allowed", i)
+		}
+		if realmNames[r.Realm] {
+			return fmt.Errorf("realms[%d].realm: duplicate realm name %q", i, r.Realm)
+		}
+		realmNames[r.Realm] = true
+
+		if err := scanNullBytes(map[string]string{
+			fmt.Sprintf("realms[%d].displayName", i): r.DisplayName,
+			fmt.Sprintf("realms[%d].loginTheme", i):  r.LoginTheme,
+		}); err != nil {
+			return err
+		}
+
+		if err := validateClients(i, r.Clients); err != nil {
+			return err
+		}
+
+		if err := validateRealmRoles(i, r.Roles); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func validateClients(realmIdx int, clients []Client) error {
+	clientIDs := make(map[string]bool)
+
+	for j, c := range clients {
+		prefix := fmt.Sprintf("realms[%d].clients[%d]", realmIdx, j)
+
+		if c.ClientID == "" {
+			return fmt.Errorf("%s.clientId: is required", prefix)
+		}
+		if containsNullByte(c.ClientID) {
+			return fmt.Errorf("%s.clientId: contains null byte", prefix)
+		}
+		if clientIDs[c.ClientID] {
+			return fmt.Errorf("%s.clientId: duplicate client ID %q", prefix, c.ClientID)
+		}
+		clientIDs[c.ClientID] = true
+
+		if err := scanNullBytes(map[string]string{
+			prefix + ".secret":   c.Secret,
+			prefix + ".name":     c.Name,
+			prefix + ".protocol": c.Protocol,
+			prefix + ".rootUrl":  c.RootUrl,
+			prefix + ".baseUrl":  c.BaseUrl,
+			prefix + ".adminUrl": c.AdminUrl,
+		}); err != nil {
+			return err
+		}
+
+		if err := scanSliceNullBytes(prefix+".redirectUris", c.RedirectUris); err != nil {
+			return err
+		}
+		if err := scanSliceNullBytes(prefix+".webOrigins", c.WebOrigins); err != nil {
+			return err
+		}
+		if err := scanSliceNullBytes(prefix+".defaultClientScopes", c.DefaultClientScopes); err != nil {
+			return err
+		}
+		if err := scanSliceNullBytes(prefix+".optionalClientScopes", c.OptionalClientScopes); err != nil {
+			return err
+		}
+
+		for k, v := range c.Attributes {
+			if containsNullByte(k) || containsNullByte(v) {
+				return fmt.Errorf("%s.attributes: contains null byte", prefix)
+			}
+		}
+
+		if err := validateProtocolMappers(prefix, c.ProtocolMappers); err != nil {
+			return err
+		}
+
+		if err := validateClientRoles(prefix, c.ClientRoles); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func validateProtocolMappers(clientPrefix string, mappers []ProtocolMapper) error {
+	names := make(map[string]bool)
+
+	for k, pm := range mappers {
+		prefix := fmt.Sprintf("%s.protocolMappers[%d]", clientPrefix, k)
+
+		if pm.Name == "" {
+			return fmt.Errorf("%s.name: is required", prefix)
+		}
+		if containsNullByte(pm.Name) {
+			return fmt.Errorf("%s.name: contains null byte", prefix)
+		}
+		if pm.ProtocolMapper == "" {
+			return fmt.Errorf("%s.protocolMapper: is required", prefix)
+		}
+		if containsNullByte(pm.ProtocolMapper) {
+			return fmt.Errorf("%s.protocolMapper: contains null byte", prefix)
+		}
+		if names[pm.Name] {
+			return fmt.Errorf("%s.name: duplicate protocol mapper name %q", prefix, pm.Name)
+		}
+		names[pm.Name] = true
+
+		if err := scanNullBytes(map[string]string{
+			prefix + ".protocol": pm.Protocol,
+		}); err != nil {
+			return err
+		}
+
+		for ck, cv := range pm.Config {
+			if containsNullByte(ck) || containsNullByte(cv) {
+				return fmt.Errorf("%s.config: contains null byte", prefix)
+			}
+		}
+	}
+
+	return nil
+}
+
+func validateClientRoles(clientPrefix string, roles []ClientRole) error {
+	names := make(map[string]bool)
+
+	for k, cr := range roles {
+		prefix := fmt.Sprintf("%s.clientRoles[%d]", clientPrefix, k)
+
+		if cr.Name == "" {
+			return fmt.Errorf("%s.name: is required", prefix)
+		}
+		if containsNullByte(cr.Name) {
+			return fmt.Errorf("%s.name: contains null byte", prefix)
+		}
+		if containsNullByte(cr.Description) {
+			return fmt.Errorf("%s.description: contains null byte", prefix)
+		}
+		if names[cr.Name] {
+			return fmt.Errorf("%s.name: duplicate client role name %q", prefix, cr.Name)
+		}
+		names[cr.Name] = true
+	}
+
+	return nil
+}
+
+func validateRealmRoles(realmIdx int, roles []RealmRole) error {
+	names := make(map[string]bool)
+
+	for j, r := range roles {
+		prefix := fmt.Sprintf("realms[%d].roles[%d]", realmIdx, j)
+
+		if r.Name == "" {
+			return fmt.Errorf("%s.name: is required", prefix)
+		}
+		if containsNullByte(r.Name) {
+			return fmt.Errorf("%s.name: contains null byte", prefix)
+		}
+		if containsNullByte(r.Description) {
+			return fmt.Errorf("%s.description: contains null byte", prefix)
+		}
+		if names[r.Name] {
+			return fmt.Errorf("%s.name: duplicate realm role name %q", prefix, r.Name)
+		}
+		names[r.Name] = true
+	}
+
+	return nil
+}

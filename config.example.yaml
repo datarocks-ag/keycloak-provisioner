@@ -1,0 +1,55 @@
+realms:
+  - realm: "my-realm"
+    displayName: "My Realm"
+    enabled: true
+    loginTheme: "keycloak"
+    registrationAllowed: false
+    resetPasswordAllowed: true
+
+    clients:
+      - clientId: "my-app"
+        secret: "${MY_APP_CLIENT_SECRET}"
+        name: "My Application"
+        enabled: true
+        publicClient: false
+        protocol: "openid-connect"
+        rootUrl: "https://myapp.example.com"
+        baseUrl: "/"
+        adminUrl: "https://myapp.example.com"
+        redirectUris:
+          - "https://myapp.example.com/*"
+        webOrigins:
+          - "https://myapp.example.com"
+        standardFlowEnabled: true
+        directAccessGrantsEnabled: false
+        serviceAccountsEnabled: false
+        bearerOnly: false
+        consentRequired: false
+        frontchannelLogout: false
+        defaultClientScopes:
+          - "web-origins"
+          - "profile"
+        optionalClientScopes:
+          - "offline_access"
+        attributes:
+          "post.logout.redirect.uris": "+"
+        protocolMappers:
+          - name: "audience-mapper"
+            protocol: "openid-connect"
+            protocolMapper: "oidc-audience-mapper"
+            consentRequired: false
+            config:
+              "included.client.audience": "my-app"
+              "id.token.claim": "true"
+              "access.token.claim": "true"
+        clientRoles:
+          - name: "admin"
+            description: "Administrator role"
+          - name: "user"
+            description: "Regular user role"
+
+    roles:
+      - name: "app-admin"
+        description: "Application administrator"
+      - name: "app-user"
+        description: "Application user"
