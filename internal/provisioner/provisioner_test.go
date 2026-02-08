@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"keycloak-provisioner/internal/client"
@@ -87,14 +88,14 @@ func TestEnsureRealmCreate(t *testing.T) {
 }
 
 func TestEnsureRealmCreateStrategySkipsExisting(t *testing.T) {
-	updateCalled := false
+	var updateCalled atomic.Bool
 
 	server := testServer(t, map[string]http.HandlerFunc{
 		"GET /admin/realms/{realm}": func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(map[string]any{"realm": "test-realm"})
 		},
 		"PUT /admin/realms/{realm}": func(w http.ResponseWriter, r *http.Request) {
-			updateCalled = true
+			updateCalled.Store(true)
 			w.WriteHeader(http.StatusNoContent)
 		},
 	})
@@ -112,7 +113,7 @@ func TestEnsureRealmCreateStrategySkipsExisting(t *testing.T) {
 		t.Fatalf("ensureRealm: %v", err)
 	}
 
-	if updateCalled {
+	if updateCalled.Load() {
 		t.Error("expected PUT not to be called with strategy=create")
 	}
 }
@@ -430,7 +431,7 @@ func TestEnsureProtocolMapperUpdate(t *testing.T) {
 }
 
 func TestEnsureClientCreateStrategySkipsExisting(t *testing.T) {
-	updateCalled := false
+	var updateCalled atomic.Bool
 
 	server := testServer(t, map[string]http.HandlerFunc{
 		"GET /admin/realms/{realm}/clients": func(w http.ResponseWriter, r *http.Request) {
@@ -439,7 +440,7 @@ func TestEnsureClientCreateStrategySkipsExisting(t *testing.T) {
 			})
 		},
 		"PUT /admin/realms/{realm}/clients/{uuid}": func(w http.ResponseWriter, r *http.Request) {
-			updateCalled = true
+			updateCalled.Store(true)
 			w.WriteHeader(http.StatusNoContent)
 		},
 	})
@@ -460,20 +461,20 @@ func TestEnsureClientCreateStrategySkipsExisting(t *testing.T) {
 	if uuid != "uuid-789" {
 		t.Errorf("expected uuid-789, got %s", uuid)
 	}
-	if updateCalled {
+	if updateCalled.Load() {
 		t.Error("expected PUT not to be called with strategy=create")
 	}
 }
 
 func TestEnsureRealmRoleCreateStrategySkipsExisting(t *testing.T) {
-	updateCalled := false
+	var updateCalled atomic.Bool
 
 	server := testServer(t, map[string]http.HandlerFunc{
 		"GET /admin/realms/{realm}/roles/{name}": func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(map[string]any{"name": "app-admin"})
 		},
 		"PUT /admin/realms/{realm}/roles/{name}": func(w http.ResponseWriter, r *http.Request) {
-			updateCalled = true
+			updateCalled.Store(true)
 			w.WriteHeader(http.StatusNoContent)
 		},
 	})
@@ -487,20 +488,20 @@ func TestEnsureRealmRoleCreateStrategySkipsExisting(t *testing.T) {
 		t.Fatalf("ensureRealmRole: %v", err)
 	}
 
-	if updateCalled {
+	if updateCalled.Load() {
 		t.Error("expected PUT not to be called with strategy=create")
 	}
 }
 
 func TestEnsureClientRoleCreateStrategySkipsExisting(t *testing.T) {
-	updateCalled := false
+	var updateCalled atomic.Bool
 
 	server := testServer(t, map[string]http.HandlerFunc{
 		"GET /admin/realms/{realm}/clients/{uuid}/roles/{name}": func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(map[string]any{"name": "admin"})
 		},
 		"PUT /admin/realms/{realm}/clients/{uuid}/roles/{name}": func(w http.ResponseWriter, r *http.Request) {
-			updateCalled = true
+			updateCalled.Store(true)
 			w.WriteHeader(http.StatusNoContent)
 		},
 	})
@@ -514,13 +515,13 @@ func TestEnsureClientRoleCreateStrategySkipsExisting(t *testing.T) {
 		t.Fatalf("ensureClientRole: %v", err)
 	}
 
-	if updateCalled {
+	if updateCalled.Load() {
 		t.Error("expected PUT not to be called with strategy=create")
 	}
 }
 
 func TestEnsureProtocolMapperCreateStrategySkipsExisting(t *testing.T) {
-	updateCalled := false
+	var updateCalled atomic.Bool
 
 	server := testServer(t, map[string]http.HandlerFunc{
 		"GET /admin/realms/{realm}/clients/{uuid}/protocol-mappers/models": func(w http.ResponseWriter, r *http.Request) {
@@ -529,7 +530,7 @@ func TestEnsureProtocolMapperCreateStrategySkipsExisting(t *testing.T) {
 			})
 		},
 		"PUT /admin/realms/{realm}/clients/{uuid}/protocol-mappers/models/{id}": func(w http.ResponseWriter, r *http.Request) {
-			updateCalled = true
+			updateCalled.Store(true)
 			w.WriteHeader(http.StatusNoContent)
 		},
 	})
@@ -547,7 +548,7 @@ func TestEnsureProtocolMapperCreateStrategySkipsExisting(t *testing.T) {
 		t.Fatalf("ensureProtocolMapper: %v", err)
 	}
 
-	if updateCalled {
+	if updateCalled.Load() {
 		t.Error("expected PUT not to be called with strategy=create")
 	}
 }

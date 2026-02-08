@@ -146,51 +146,62 @@ func (c *Client) ensureToken(ctx context.Context) error {
 }
 
 func (c *Client) doRequest(ctx context.Context, method, path string, body any) (*http.Response, error) {
-	if err := c.ensureToken(ctx); err != nil {
-		return nil, fmt.Errorf("ensuring token: %w", err)
-	}
-
-	fullURL := c.baseURL + path
-
-	var reqBody io.Reader
+	// Marshal body once so it can be reused on retry.
+	var bodyBytes []byte
 	if body != nil {
-		data, err := json.Marshal(body)
+		var err error
+		bodyBytes, err = json.Marshal(body)
 		if err != nil {
 			return nil, fmt.Errorf("marshaling request body: %w", err)
 		}
-		reqBody = bytes.NewReader(data)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, fullURL, reqBody)
-	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
-
-	c.mu.Lock()
-	token := c.accessToken
-	c.mu.Unlock()
-
-	req.Header.Set("Authorization", "Bearer "+token)
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("executing request: %w", err)
-	}
-
-	// Auto-retry once on 401 (token may have expired mid-run)
-	if resp.StatusCode == http.StatusUnauthorized {
-		resp.Body.Close()
-		slog.Debug("Got 401, refreshing token and retrying")
-		if err := c.authenticate(ctx); err != nil {
-			return nil, fmt.Errorf("re-authenticating after 401: %w", err)
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := c.ensureToken(ctx); err != nil {
+			return nil, fmt.Errorf("ensuring token: %w", err)
 		}
-		return c.doRequest(ctx, method, path, body)
+
+		fullURL := c.baseURL + path
+
+		var reqBody io.Reader
+		if bodyBytes != nil {
+			reqBody = bytes.NewReader(bodyBytes)
+		}
+
+		req, err := http.NewRequestWithContext(ctx, method, fullURL, reqBody)
+		if err != nil {
+			return nil, fmt.Errorf("creating request: %w", err)
+		}
+
+		c.mu.Lock()
+		token := c.accessToken
+		c.mu.Unlock()
+
+		req.Header.Set("Authorization", "Bearer "+token)
+		if body != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("executing request: %w", err)
+		}
+
+		// Retry once on 401 (token may have expired mid-run)
+		if resp.StatusCode == http.StatusUnauthorized && attempt == 0 {
+			resp.Body.Close()
+			slog.Debug("Got 401, refreshing token and retrying")
+			if err := c.authenticate(ctx); err != nil {
+				return nil, fmt.Errorf("re-authenticating after 401: %w", err)
+			}
+			continue
+		}
+
+		return resp, nil
 	}
 
-	return resp, nil
+	// Unreachable, but satisfies the compiler.
+	return nil, fmt.Errorf("unexpected: exhausted 401 retries for %s %s", method, path)
 }
 
 func readError(resp *http.Response) error {
