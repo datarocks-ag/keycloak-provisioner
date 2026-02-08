@@ -316,6 +316,70 @@ func TestValidationNullByteInClientID(t *testing.T) {
 	}
 }
 
+func TestValidationInvalidGlobalStrategy(t *testing.T) {
+	yaml := `
+strategy: "invalid"
+realms:
+  - realm: "test"
+`
+	path := writeTempConfig(t, yaml)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for invalid global strategy")
+	}
+}
+
+func TestValidationInvalidRealmStrategy(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    strategy: "invalid"
+`
+	path := writeTempConfig(t, yaml)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for invalid realm strategy")
+	}
+}
+
+func TestValidStrategies(t *testing.T) {
+	for _, strategy := range []string{"create", "update"} {
+		t.Run(strategy, func(t *testing.T) {
+			yaml := `
+strategy: "` + strategy + `"
+realms:
+  - realm: "test"
+    strategy: "` + strategy + `"
+`
+			path := writeTempConfig(t, yaml)
+			_, err := Load(path)
+			if err != nil {
+				t.Fatalf("unexpected error for strategy %q: %v", strategy, err)
+			}
+		})
+	}
+}
+
+func TestEffectiveStrategy(t *testing.T) {
+	tests := []struct {
+		name       string
+		strategies []string
+		want       string
+	}{
+		{"all empty defaults to update", []string{"", ""}, "update"},
+		{"first wins", []string{"create", "update"}, "create"},
+		{"fallback to second", []string{"", "create"}, "create"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := EffectiveStrategy(tt.strategies...)
+			if got != tt.want {
+				t.Errorf("EffectiveStrategy(%v) = %q, want %q", tt.strategies, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestValidationNullByteInProtocolMapperName(t *testing.T) {
 	yaml := "realms:\n  - realm: \"test\"\n    clients:\n      - clientId: \"app\"\n        protocolMappers:\n          - name: \"m\\x00evil\"\n            protocolMapper: \"oidc-audience-mapper\"\n"
 	path := writeTempConfig(t, yaml)

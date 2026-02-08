@@ -1,3 +1,8 @@
+# Strategy: "update" (default) creates or updates resources.
+#           "create" only creates if missing, skips existing.
+# Set globally or per realm (realm strategy overrides global).
+# strategy: "update"
+
 realms:
   - realm: "my-realm"
     displayName: "My Realm"

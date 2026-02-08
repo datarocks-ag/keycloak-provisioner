@@ -7,7 +7,7 @@ import (
 	"keycloak-provisioner/internal/config"
 )
 
-func (p *Provisioner) ensureClientRole(ctx context.Context, realm, clientUUID string, role config.ClientRole) error {
+func (p *Provisioner) ensureClientRole(ctx context.Context, realm, clientUUID string, role config.ClientRole, strategy string) error {
 	existing, err := p.client.GetClientRole(ctx, realm, clientUUID, role.Name)
 	if err != nil {
 		return err
@@ -23,6 +23,11 @@ func (p *Provisioner) ensureClientRole(ctx context.Context, realm, clientUUID st
 	if existing == nil {
 		slog.Info("Creating client role", "realm", realm, "clientUUID", clientUUID, "role", role.Name)
 		return p.client.CreateClientRole(ctx, realm, clientUUID, body)
+	}
+
+	if strategy == "create" {
+		slog.Info("Skipping existing client role (strategy=create)", "realm", realm, "clientUUID", clientUUID, "role", role.Name)
+		return nil
 	}
 
 	slog.Info("Updating client role", "realm", realm, "clientUUID", clientUUID, "role", role.Name)

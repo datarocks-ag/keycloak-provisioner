@@ -7,7 +7,7 @@ import (
 	"keycloak-provisioner/internal/config"
 )
 
-func (p *Provisioner) ensureRealm(ctx context.Context, realm config.Realm) error {
+func (p *Provisioner) ensureRealm(ctx context.Context, realm config.Realm, strategy string) error {
 	existing, err := p.client.GetRealm(ctx, realm.Realm)
 	if err != nil {
 		return err
@@ -18,6 +18,11 @@ func (p *Provisioner) ensureRealm(ctx context.Context, realm config.Realm) error
 	if existing == nil {
 		slog.Info("Creating realm", "realm", realm.Realm)
 		return p.client.CreateRealm(ctx, body)
+	}
+
+	if strategy == "create" {
+		slog.Info("Skipping existing realm (strategy=create)", "realm", realm.Realm)
+		return nil
 	}
 
 	slog.Info("Updating realm", "realm", realm.Realm)

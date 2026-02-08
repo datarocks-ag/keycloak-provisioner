@@ -61,4 +61,5 @@ No external Keycloak SDK — all HTTP via `net/http` + `encoding/json`.
 - **No SDK**: Raw `net/http` + `map[string]any` bodies (mirrors postgres-provisioner's raw SQL approach)
 - **YAML naming**: camelCase fields matching Keycloak realm export format
 - **Structured logging**: `log/slog` with JSON output
+- **Strategy**: `update` (default) or `create` (skip existing). Per-realm overrides global.
 - **Connection retry**: Exponential backoff (1s–30s, 15 retries, 5min timeout)
