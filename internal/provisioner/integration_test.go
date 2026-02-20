@@ -219,3 +219,541 @@ func TestIntegrationEmptyConfig(t *testing.T) {
 		t.Fatalf("empty config should succeed: %v", err)
 	}
 }
+
+func TestIntegrationUpdatePath(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// First run: create resources
+	initialYAML := `
+realms:
+  - realm: "update-realm"
+    displayName: "Original Name"
+    enabled: true
+    clients:
+      - clientId: "update-app"
+        secret: "secret-v1"
+        enabled: true
+        protocol: "openid-connect"
+        protocolMappers:
+          - name: "aud-mapper"
+            protocol: "openid-connect"
+            protocolMapper: "oidc-audience-mapper"
+            config:
+              "included.client.audience": "update-app"
+              "access.token.claim": "false"
+        clientRoles:
+          - name: "editor"
+            description: "Original editor"
+    roles:
+      - name: "realm-editor"
+        description: "Original realm editor"
+`
+	cfgPath := writeTestConfig(t, initialYAML)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p := provisioner.New(kc, cfg)
+	if err := p.Run(ctx); err != nil {
+		t.Fatalf("initial run: %v", err)
+	}
+
+	// Second run: update resources
+	updatedYAML := `
+realms:
+  - realm: "update-realm"
+    displayName: "Updated Name"
+    enabled: true
+    clients:
+      - clientId: "update-app"
+        secret: "secret-v2"
+        enabled: true
+        protocol: "openid-connect"
+        protocolMappers:
+          - name: "aud-mapper"
+            protocol: "openid-connect"
+            protocolMapper: "oidc-audience-mapper"
+            config:
+              "included.client.audience": "update-app"
+              "access.token.claim": "true"
+        clientRoles:
+          - name: "editor"
+            description: "Updated editor"
+    roles:
+      - name: "realm-editor"
+        description: "Updated realm editor"
+`
+	cfgPath2 := writeTestConfig(t, updatedYAML)
+	cfg2, err := config.Load(cfgPath2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p2 := provisioner.New(kc, cfg2)
+	if err := p2.Run(ctx); err != nil {
+		t.Fatalf("update run: %v", err)
+	}
+
+	// Verify realm was updated
+	realm, err := kc.GetRealm(ctx, "update-realm")
+	if err != nil {
+		t.Fatalf("getting realm: %v", err)
+	}
+	if realm["displayName"] != "Updated Name" {
+		t.Errorf("expected displayName 'Updated Name', got %v", realm["displayName"])
+	}
+
+	// Verify realm role was updated
+	role, err := kc.GetRealmRole(ctx, "update-realm", "realm-editor")
+	if err != nil {
+		t.Fatalf("getting realm role: %v", err)
+	}
+	if role["description"] != "Updated realm editor" {
+		t.Errorf("expected description 'Updated realm editor', got %v", role["description"])
+	}
+
+	// Verify client role was updated
+	clients, err := kc.GetClients(ctx, "update-realm", "update-app")
+	if err != nil {
+		t.Fatalf("getting clients: %v", err)
+	}
+	if len(clients) == 0 {
+		t.Fatal("client not found")
+	}
+	clientUUID, ok := clients[0]["id"].(string)
+	if !ok {
+		t.Fatal("expected client 'id' to be a string")
+	}
+
+	clientRole, err := kc.GetClientRole(ctx, "update-realm", clientUUID, "editor")
+	if err != nil {
+		t.Fatalf("getting client role: %v", err)
+	}
+	if clientRole["description"] != "Updated editor" {
+		t.Errorf("expected description 'Updated editor', got %v", clientRole["description"])
+	}
+
+	// Verify protocol mapper was updated
+	mappers, err := kc.GetProtocolMappers(ctx, "update-realm", clientUUID)
+	if err != nil {
+		t.Fatalf("getting protocol mappers: %v", err)
+	}
+	for _, m := range mappers {
+		if m["name"] == "aud-mapper" {
+			cfg, ok := m["config"].(map[string]any)
+			if !ok {
+				t.Fatal("expected mapper config to be a map")
+			}
+			if cfg["access.token.claim"] != "true" {
+				t.Errorf("expected access.token.claim 'true', got %v", cfg["access.token.claim"])
+			}
+			return
+		}
+	}
+	t.Error("protocol mapper 'aud-mapper' not found after update")
+}
+
+func TestIntegrationCreateStrategy(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// First run: create resources with default strategy
+	initialYAML := `
+realms:
+  - realm: "strategy-realm"
+    displayName: "Original"
+    enabled: true
+    clients:
+      - clientId: "strategy-app"
+        enabled: true
+        protocol: "openid-connect"
+        clientRoles:
+          - name: "viewer"
+            description: "Original viewer"
+    roles:
+      - name: "strategy-role"
+        description: "Original role"
+`
+	cfgPath := writeTestConfig(t, initialYAML)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p := provisioner.New(kc, cfg)
+	if err := p.Run(ctx); err != nil {
+		t.Fatalf("initial run: %v", err)
+	}
+
+	// Second run: strategy=create should skip existing resources
+	createYAML := `
+strategy: "create"
+realms:
+  - realm: "strategy-realm"
+    displayName: "Should Not Change"
+    enabled: true
+    clients:
+      - clientId: "strategy-app"
+        enabled: true
+        protocol: "openid-connect"
+        clientRoles:
+          - name: "viewer"
+            description: "Should not change"
+    roles:
+      - name: "strategy-role"
+        description: "Should not change"
+`
+	cfgPath2 := writeTestConfig(t, createYAML)
+	cfg2, err := config.Load(cfgPath2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p2 := provisioner.New(kc, cfg2)
+	if err := p2.Run(ctx); err != nil {
+		t.Fatalf("create-strategy run: %v", err)
+	}
+
+	// Verify realm was NOT updated
+	realm, err := kc.GetRealm(ctx, "strategy-realm")
+	if err != nil {
+		t.Fatalf("getting realm: %v", err)
+	}
+	if realm["displayName"] != "Original" {
+		t.Errorf("expected displayName to stay 'Original', got %v", realm["displayName"])
+	}
+
+	// Verify realm role was NOT updated
+	role, err := kc.GetRealmRole(ctx, "strategy-realm", "strategy-role")
+	if err != nil {
+		t.Fatalf("getting realm role: %v", err)
+	}
+	if role["description"] != "Original role" {
+		t.Errorf("expected description to stay 'Original role', got %v", role["description"])
+	}
+
+	// Verify client role was NOT updated
+	clients, err := kc.GetClients(ctx, "strategy-realm", "strategy-app")
+	if err != nil {
+		t.Fatalf("getting clients: %v", err)
+	}
+	if len(clients) == 0 {
+		t.Fatal("client not found")
+	}
+	clientUUID, ok := clients[0]["id"].(string)
+	if !ok {
+		t.Fatal("expected client 'id' to be a string")
+	}
+
+	clientRole, err := kc.GetClientRole(ctx, "strategy-realm", clientUUID, "viewer")
+	if err != nil {
+		t.Fatalf("getting client role: %v", err)
+	}
+	if clientRole["description"] != "Original viewer" {
+		t.Errorf("expected description to stay 'Original viewer', got %v", clientRole["description"])
+	}
+}
+
+func TestIntegrationMultipleClients(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	configYAML := `
+realms:
+  - realm: "multi-client-realm"
+    enabled: true
+    clients:
+      - clientId: "frontend-app"
+        enabled: true
+        publicClient: true
+        protocol: "openid-connect"
+        redirectUris:
+          - "http://localhost:3000/*"
+        clientRoles:
+          - name: "user"
+      - clientId: "backend-api"
+        enabled: true
+        publicClient: false
+        protocol: "openid-connect"
+        secret: "backend-secret"
+        serviceAccountsEnabled: true
+        clientRoles:
+          - name: "service"
+            description: "Service account role"
+        protocolMappers:
+          - name: "backend-audience"
+            protocol: "openid-connect"
+            protocolMapper: "oidc-audience-mapper"
+            config:
+              "included.client.audience": "backend-api"
+              "access.token.claim": "true"
+      - clientId: "admin-cli-ext"
+        enabled: true
+        protocol: "openid-connect"
+        bearerOnly: true
+    roles:
+      - name: "global-admin"
+        description: "Global admin across all clients"
+`
+	cfgPath := writeTestConfig(t, configYAML)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p := provisioner.New(kc, cfg)
+	if err := p.Run(ctx); err != nil {
+		t.Fatalf("provisioning: %v", err)
+	}
+
+	// Verify all three clients exist
+	for _, clientID := range []string{"frontend-app", "backend-api", "admin-cli-ext"} {
+		clients, err := kc.GetClients(ctx, "multi-client-realm", clientID)
+		if err != nil {
+			t.Fatalf("getting client %s: %v", clientID, err)
+		}
+		if len(clients) == 0 {
+			t.Errorf("client %s not found", clientID)
+		}
+	}
+
+	// Verify backend-api has its protocol mapper and client role
+	backendClients, err := kc.GetClients(ctx, "multi-client-realm", "backend-api")
+	if err != nil {
+		t.Fatalf("getting backend-api: %v", err)
+	}
+	backendUUID, ok := backendClients[0]["id"].(string)
+	if !ok {
+		t.Fatal("expected client 'id' to be a string")
+	}
+
+	mappers, err := kc.GetProtocolMappers(ctx, "multi-client-realm", backendUUID)
+	if err != nil {
+		t.Fatalf("getting protocol mappers: %v", err)
+	}
+	found := false
+	for _, m := range mappers {
+		if m["name"] == "backend-audience" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("protocol mapper 'backend-audience' not found on backend-api")
+	}
+
+	serviceRole, err := kc.GetClientRole(ctx, "multi-client-realm", backendUUID, "service")
+	if err != nil {
+		t.Fatalf("getting client role: %v", err)
+	}
+	if serviceRole == nil {
+		t.Error("client role 'service' not found on backend-api")
+	}
+
+	// Verify frontend-app has its client role
+	frontendClients, err := kc.GetClients(ctx, "multi-client-realm", "frontend-app")
+	if err != nil {
+		t.Fatalf("getting frontend-app: %v", err)
+	}
+	frontendUUID, ok := frontendClients[0]["id"].(string)
+	if !ok {
+		t.Fatal("expected client 'id' to be a string")
+	}
+
+	userRole, err := kc.GetClientRole(ctx, "multi-client-realm", frontendUUID, "user")
+	if err != nil {
+		t.Fatalf("getting client role: %v", err)
+	}
+	if userRole == nil {
+		t.Error("client role 'user' not found on frontend-app")
+	}
+
+	// Verify realm role
+	globalAdmin, err := kc.GetRealmRole(ctx, "multi-client-realm", "global-admin")
+	if err != nil {
+		t.Fatalf("getting realm role: %v", err)
+	}
+	if globalAdmin == nil {
+		t.Error("realm role 'global-admin' not found")
+	}
+}
+
+func TestIntegrationRealmStrategyOverride(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// First run: create two realms
+	initialYAML := `
+realms:
+  - realm: "override-update"
+    displayName: "Will Update"
+    enabled: true
+    roles:
+      - name: "role-a"
+        description: "Original A"
+  - realm: "override-create"
+    displayName: "Will Not Update"
+    enabled: true
+    roles:
+      - name: "role-b"
+        description: "Original B"
+`
+	cfgPath := writeTestConfig(t, initialYAML)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p := provisioner.New(kc, cfg)
+	if err := p.Run(ctx); err != nil {
+		t.Fatalf("initial run: %v", err)
+	}
+
+	// Second run: global strategy=update, but one realm overrides to create
+	overrideYAML := `
+strategy: "update"
+realms:
+  - realm: "override-update"
+    displayName: "Updated Name"
+    enabled: true
+    roles:
+      - name: "role-a"
+        description: "Updated A"
+  - realm: "override-create"
+    strategy: "create"
+    displayName: "Should Stay Original"
+    enabled: true
+    roles:
+      - name: "role-b"
+        description: "Should Stay Original B"
+`
+	cfgPath2 := writeTestConfig(t, overrideYAML)
+	cfg2, err := config.Load(cfgPath2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p2 := provisioner.New(kc, cfg2)
+	if err := p2.Run(ctx); err != nil {
+		t.Fatalf("override run: %v", err)
+	}
+
+	// Verify the update realm was updated
+	realm1, err := kc.GetRealm(ctx, "override-update")
+	if err != nil {
+		t.Fatalf("getting realm: %v", err)
+	}
+	if realm1["displayName"] != "Updated Name" {
+		t.Errorf("expected 'Updated Name', got %v", realm1["displayName"])
+	}
+
+	role1, err := kc.GetRealmRole(ctx, "override-update", "role-a")
+	if err != nil {
+		t.Fatalf("getting role: %v", err)
+	}
+	if role1["description"] != "Updated A" {
+		t.Errorf("expected 'Updated A', got %v", role1["description"])
+	}
+
+	// Verify the create realm was NOT updated
+	realm2, err := kc.GetRealm(ctx, "override-create")
+	if err != nil {
+		t.Fatalf("getting realm: %v", err)
+	}
+	if realm2["displayName"] != "Will Not Update" {
+		t.Errorf("expected 'Will Not Update', got %v", realm2["displayName"])
+	}
+
+	role2, err := kc.GetRealmRole(ctx, "override-create", "role-b")
+	if err != nil {
+		t.Fatalf("getting role: %v", err)
+	}
+	if role2["description"] != "Original B" {
+		t.Errorf("expected 'Original B', got %v", role2["description"])
+	}
+}
+
+func TestIntegrationCreateStrategyNewResourcesStillCreated(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// First run: create realm with one client
+	initialYAML := `
+realms:
+  - realm: "additive-realm"
+    enabled: true
+    clients:
+      - clientId: "existing-app"
+        enabled: true
+        protocol: "openid-connect"
+`
+	cfgPath := writeTestConfig(t, initialYAML)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p := provisioner.New(kc, cfg)
+	if err := p.Run(ctx); err != nil {
+		t.Fatalf("initial run: %v", err)
+	}
+
+	// Second run: strategy=create, add a new client and new role
+	// Existing resources should be skipped, new ones should be created
+	additiveYAML := `
+strategy: "create"
+realms:
+  - realm: "additive-realm"
+    enabled: true
+    clients:
+      - clientId: "existing-app"
+        enabled: true
+        protocol: "openid-connect"
+      - clientId: "new-app"
+        enabled: true
+        protocol: "openid-connect"
+    roles:
+      - name: "new-role"
+        description: "Brand new role"
+`
+	cfgPath2 := writeTestConfig(t, additiveYAML)
+	cfg2, err := config.Load(cfgPath2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p2 := provisioner.New(kc, cfg2)
+	if err := p2.Run(ctx); err != nil {
+		t.Fatalf("additive run: %v", err)
+	}
+
+	// Verify the new client was created
+	newClients, err := kc.GetClients(ctx, "additive-realm", "new-app")
+	if err != nil {
+		t.Fatalf("getting new client: %v", err)
+	}
+	if len(newClients) == 0 {
+		t.Error("new client 'new-app' should have been created even with strategy=create")
+	}
+
+	// Verify the new role was created
+	newRole, err := kc.GetRealmRole(ctx, "additive-realm", "new-role")
+	if err != nil {
+		t.Fatalf("getting new role: %v", err)
+	}
+	if newRole == nil {
+		t.Error("new role 'new-role' should have been created even with strategy=create")
+	}
+}
