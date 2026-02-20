@@ -1,10 +1,12 @@
 FROM golang:1.25-alpine AS builder
 
+ARG VERSION=dev
+
 WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /keycloak-provisioner ./cmd/keycloak-provisioner
+RUN CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${VERSION}" -o /keycloak-provisioner ./cmd/keycloak-provisioner
 
 FROM scratch
 COPY --from=builder /keycloak-provisioner /keycloak-provisioner
