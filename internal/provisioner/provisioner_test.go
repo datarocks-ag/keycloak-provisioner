@@ -650,3 +650,417 @@ func TestRunFullProvisioning(t *testing.T) {
 		t.Error("protocol mapper was not created")
 	}
 }
+
+func TestEnsureClientRoleUpdate(t *testing.T) {
+	var mu sync.Mutex
+	var updatedBody map[string]any
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/clients/{uuid}/roles/{name}": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]any{"name": "editor"})
+		},
+		"PUT /admin/realms/{realm}/clients/{uuid}/roles/{name}": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			defer mu.Unlock()
+			json.NewDecoder(r.Body).Decode(&updatedBody)
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	c := newTestClient(t, server.URL)
+	role := config.ClientRole{Name: "editor", Description: "Updated editor"}
+
+	p := New(c, &config.Config{})
+	if err := p.ensureClientRole(context.Background(), "test-realm", "uuid-123", role, "update"); err != nil {
+		t.Fatalf("ensureClientRole: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if updatedBody["description"] != "Updated editor" {
+		t.Errorf("expected Updated editor, got %v", updatedBody["description"])
+	}
+}
+
+func TestEnsureClientInvalidID(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/clients": func(w http.ResponseWriter, r *http.Request) {
+			// Return a client with a non-string id
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"id": 12345, "clientId": "my-app"},
+			})
+		},
+	})
+	defer server.Close()
+
+	c := newTestClient(t, server.URL)
+	clientCfg := config.Client{ClientID: "my-app"}
+
+	p := New(c, &config.Config{})
+	_, err := p.ensureClient(context.Background(), "test-realm", clientCfg, "update")
+	if err == nil {
+		t.Fatal("expected error for invalid id type")
+	}
+}
+
+func TestBuildClientBodyAllFields(t *testing.T) {
+	enabled := true
+	public := false
+	stdFlow := true
+	directAccess := false
+	serviceAccounts := true
+	bearerOnly := false
+	consent := true
+	frontchannel := false
+
+	c := config.Client{
+		ClientID:                  "app",
+		Secret:                    "s3cr3t",
+		Name:                      "My App",
+		Enabled:                   &enabled,
+		PublicClient:              &public,
+		Protocol:                  "openid-connect",
+		RootUrl:                   "https://app.example.com",
+		BaseUrl:                   "/",
+		AdminUrl:                  "https://app.example.com/admin",
+		RedirectUris:              []string{"https://app.example.com/*"},
+		WebOrigins:                []string{"https://app.example.com"},
+		StandardFlowEnabled:       &stdFlow,
+		DirectAccessGrantsEnabled: &directAccess,
+		ServiceAccountsEnabled:    &serviceAccounts,
+		BearerOnly:                &bearerOnly,
+		ConsentRequired:           &consent,
+		FrontchannelLogout:        &frontchannel,
+		DefaultClientScopes:       []string{"openid", "profile"},
+		OptionalClientScopes:      []string{"phone"},
+		Attributes:                map[string]string{"key": "val"},
+	}
+
+	body := buildClientBody(c)
+
+	checks := map[string]any{
+		"clientId":                  "app",
+		"secret":                    "s3cr3t",
+		"name":                      "My App",
+		"enabled":                   true,
+		"publicClient":              false,
+		"protocol":                  "openid-connect",
+		"rootUrl":                   "https://app.example.com",
+		"baseUrl":                   "/",
+		"adminUrl":                  "https://app.example.com/admin",
+		"standardFlowEnabled":       true,
+		"directAccessGrantsEnabled": false,
+		"serviceAccountsEnabled":    true,
+		"bearerOnly":                false,
+		"consentRequired":           true,
+		"frontchannelLogout":        false,
+	}
+
+	for key, want := range checks {
+		got, ok := body[key]
+		if !ok {
+			t.Errorf("missing key %q", key)
+			continue
+		}
+		if got != want {
+			t.Errorf("key %q: got %v, want %v", key, got, want)
+		}
+	}
+
+	if _, ok := body["redirectUris"]; !ok {
+		t.Error("missing redirectUris")
+	}
+	if _, ok := body["webOrigins"]; !ok {
+		t.Error("missing webOrigins")
+	}
+	if _, ok := body["defaultClientScopes"]; !ok {
+		t.Error("missing defaultClientScopes")
+	}
+	if _, ok := body["optionalClientScopes"]; !ok {
+		t.Error("missing optionalClientScopes")
+	}
+	if _, ok := body["attributes"]; !ok {
+		t.Error("missing attributes")
+	}
+}
+
+func TestBuildRealmBodyAllFields(t *testing.T) {
+	enabled := true
+	regAllowed := false
+	resetPw := true
+
+	realm := config.Realm{
+		Realm:                "test",
+		DisplayName:          "Test Realm",
+		Enabled:              &enabled,
+		LoginTheme:           "keycloak",
+		RegistrationAllowed:  &regAllowed,
+		ResetPasswordAllowed: &resetPw,
+	}
+
+	body := buildRealmBody(realm)
+
+	checks := map[string]any{
+		"realm":                "test",
+		"displayName":          "Test Realm",
+		"enabled":              true,
+		"loginTheme":           "keycloak",
+		"registrationAllowed":  false,
+		"resetPasswordAllowed": true,
+	}
+
+	for key, want := range checks {
+		got, ok := body[key]
+		if !ok {
+			t.Errorf("missing key %q", key)
+			continue
+		}
+		if got != want {
+			t.Errorf("key %q: got %v, want %v", key, got, want)
+		}
+	}
+}
+
+func TestBuildProtocolMapperBodyWithConsentRequired(t *testing.T) {
+	consent := true
+	pm := config.ProtocolMapper{
+		Name:            "mapper",
+		Protocol:        "openid-connect",
+		ProtocolMapper:  "oidc-audience-mapper",
+		ConsentRequired: &consent,
+		Config:          map[string]string{"key": "val"},
+	}
+
+	body := buildProtocolMapperBody(pm)
+
+	if body["consentRequired"] != true {
+		t.Errorf("expected consentRequired true, got %v", body["consentRequired"])
+	}
+	if body["protocol"] != "openid-connect" {
+		t.Errorf("expected protocol openid-connect, got %v", body["protocol"])
+	}
+}
+
+func TestProvisionRealmErrorOnGetRealm(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("error"))
+		},
+	})
+	defer server.Close()
+
+	c := newTestClient(t, server.URL)
+	cfg := &config.Config{
+		Realms: []config.Realm{{Realm: "test-realm"}},
+	}
+
+	p := New(c, cfg)
+	err := p.Run(context.Background())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestProvisionRealmErrorOnClient(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		},
+		"POST /admin/realms": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusCreated)
+		},
+		"GET /admin/realms/{realm}/clients": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("error"))
+		},
+	})
+	defer server.Close()
+
+	c := newTestClient(t, server.URL)
+	cfg := &config.Config{
+		Realms: []config.Realm{
+			{
+				Realm:   "test-realm",
+				Clients: []config.Client{{ClientID: "app"}},
+			},
+		},
+	}
+
+	p := New(c, cfg)
+	err := p.Run(context.Background())
+	if err == nil {
+		t.Fatal("expected error on client provisioning failure")
+	}
+}
+
+func TestProvisionRealmErrorOnProtocolMapper(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		},
+		"POST /admin/realms": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusCreated)
+		},
+		"GET /admin/realms/{realm}/clients": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{})
+		},
+		"POST /admin/realms/{realm}/clients": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Location", r.URL.String()+"/uuid-1")
+			w.WriteHeader(http.StatusCreated)
+		},
+		"GET /admin/realms/{realm}/clients/{uuid}/protocol-mappers/models": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("error"))
+		},
+	})
+	defer server.Close()
+
+	c := newTestClient(t, server.URL)
+	cfg := &config.Config{
+		Realms: []config.Realm{
+			{
+				Realm: "test-realm",
+				Clients: []config.Client{
+					{
+						ClientID: "app",
+						ProtocolMappers: []config.ProtocolMapper{
+							{Name: "mapper", ProtocolMapper: "oidc-audience-mapper"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	p := New(c, cfg)
+	err := p.Run(context.Background())
+	if err == nil {
+		t.Fatal("expected error on protocol mapper provisioning failure")
+	}
+}
+
+func TestProvisionRealmErrorOnClientRole(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		},
+		"POST /admin/realms": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusCreated)
+		},
+		"GET /admin/realms/{realm}/clients": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{})
+		},
+		"POST /admin/realms/{realm}/clients": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Location", r.URL.String()+"/uuid-1")
+			w.WriteHeader(http.StatusCreated)
+		},
+		"GET /admin/realms/{realm}/clients/{uuid}/protocol-mappers/models": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{})
+		},
+		"GET /admin/realms/{realm}/clients/{uuid}/roles/{name}": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("error"))
+		},
+	})
+	defer server.Close()
+
+	c := newTestClient(t, server.URL)
+	cfg := &config.Config{
+		Realms: []config.Realm{
+			{
+				Realm: "test-realm",
+				Clients: []config.Client{
+					{
+						ClientID:    "app",
+						ClientRoles: []config.ClientRole{{Name: "admin"}},
+					},
+				},
+			},
+		},
+	}
+
+	p := New(c, cfg)
+	err := p.Run(context.Background())
+	if err == nil {
+		t.Fatal("expected error on client role provisioning failure")
+	}
+}
+
+func TestProvisionRealmErrorOnRealmRole(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		},
+		"POST /admin/realms": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusCreated)
+		},
+		"GET /admin/realms/{realm}/roles/{name}": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("error"))
+		},
+	})
+	defer server.Close()
+
+	c := newTestClient(t, server.URL)
+	cfg := &config.Config{
+		Realms: []config.Realm{
+			{
+				Realm: "test-realm",
+				Roles: []config.RealmRole{{Name: "admin"}},
+			},
+		},
+	}
+
+	p := New(c, cfg)
+	err := p.Run(context.Background())
+	if err == nil {
+		t.Fatal("expected error on realm role provisioning failure")
+	}
+}
+
+func TestRunWithStrategy(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]any{"realm": "test-realm"})
+		},
+	})
+	defer server.Close()
+
+	c := newTestClient(t, server.URL)
+	cfg := &config.Config{
+		Strategy: "create",
+		Realms: []config.Realm{
+			{Realm: "test-realm"},
+		},
+	}
+
+	p := New(c, cfg)
+	if err := p.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+}
+
+func TestEnsureProtocolMapperInvalidID(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/clients/{uuid}/protocol-mappers/models": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"id": 123, "name": "mapper"}, // non-string id
+			})
+		},
+	})
+	defer server.Close()
+
+	c := newTestClient(t, server.URL)
+	pm := config.ProtocolMapper{
+		Name:           "mapper",
+		ProtocolMapper: "oidc-audience-mapper",
+	}
+
+	p := New(c, &config.Config{})
+	err := p.ensureProtocolMapper(context.Background(), "test-realm", "uuid-1", pm, "update")
+	if err == nil {
+		t.Fatal("expected error for non-string id")
+	}
+}
