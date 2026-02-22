@@ -136,7 +136,7 @@ jobs:
           CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${VERSION}" -o keycloak-provisioner ./cmd/keycloak-provisioner
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: keycloak-provisioner
           path: keycloak-provisioner
