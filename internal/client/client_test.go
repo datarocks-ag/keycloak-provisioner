@@ -1044,6 +1044,40 @@ func TestAddUserRealmRoleMappings(t *testing.T) {
 	}
 }
 
+func TestGetUserRealmRoleMappings_Error(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/users/{id}/role-mappings/realm": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("error"))
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	_, err := c.GetUserRealmRoleMappings(context.Background(), "test", "user-uuid-1")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestAddUserRealmRoleMappings_Error(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"POST /admin/realms/{realm}/users/{id}/role-mappings/realm": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte("bad"))
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	err := c.AddUserRealmRoleMappings(context.Background(), "test", "user-uuid-1", []map[string]any{
+		{"id": "role-1", "name": "admin"},
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
 func TestGetUserClientRoleMappings(t *testing.T) {
 	server := testServer(t, map[string]http.HandlerFunc{
 		"GET /admin/realms/{realm}/users/{id}/role-mappings/clients/{clientUUID}": func(w http.ResponseWriter, r *http.Request) {
@@ -1078,6 +1112,40 @@ func TestAddUserClientRoleMappings(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestGetUserClientRoleMappings_Error(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/users/{id}/role-mappings/clients/{clientUUID}": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("error"))
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	_, err := c.GetUserClientRoleMappings(context.Background(), "test", "user-uuid-1", "client-uuid-1")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestAddUserClientRoleMappings_Error(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"POST /admin/realms/{realm}/users/{id}/role-mappings/clients/{clientUUID}": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte("bad"))
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	err := c.AddUserClientRoleMappings(context.Background(), "test", "user-uuid-1", "client-uuid-1", []map[string]any{
+		{"id": "role-1", "name": "editor"},
+	})
+	if err == nil {
+		t.Fatal("expected error")
 	}
 }
 
