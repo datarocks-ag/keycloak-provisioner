@@ -1064,3 +1064,663 @@ func TestEnsureProtocolMapperInvalidID(t *testing.T) {
 		t.Fatal("expected error for non-string id")
 	}
 }
+
+func TestBuildRealmBodyWithSslRequired(t *testing.T) {
+	realm := config.Realm{
+		Realm:       "test",
+		SslRequired: "external",
+	}
+
+	body := buildRealmBody(realm)
+
+	if body["sslRequired"] != "external" {
+		t.Errorf("expected sslRequired=external, got %v", body["sslRequired"])
+	}
+}
+
+func TestBuildRealmBodyWithoutSslRequired(t *testing.T) {
+	realm := config.Realm{
+		Realm: "test",
+	}
+
+	body := buildRealmBody(realm)
+
+	if _, ok := body["sslRequired"]; ok {
+		t.Error("sslRequired should not be set when empty")
+	}
+}
+
+func TestEnsureMasterRealm(t *testing.T) {
+	var mu sync.Mutex
+	var updatedBody map[string]any
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]any{
+				"realm":       "master",
+				"sslRequired": "none",
+			})
+		},
+		"PUT /admin/realms/{realm}": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			defer mu.Unlock()
+			json.NewDecoder(r.Body).Decode(&updatedBody)
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	c := newTestClient(t, server.URL)
+	mr := &config.MasterRealmConfig{
+		SslRequired: "external",
+	}
+
+	p := New(c, &config.Config{MasterRealm: mr})
+	if err := p.ensureMasterRealm(context.Background(), mr); err != nil {
+		t.Fatalf("ensureMasterRealm: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if updatedBody["sslRequired"] != "external" {
+		t.Errorf("expected sslRequired=external, got %v", updatedBody["sslRequired"])
+	}
+}
+
+func TestEnsureMasterRealmNoChange(t *testing.T) {
+	var updateCalled atomic.Bool
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]any{
+				"realm":       "master",
+				"sslRequired": "external",
+			})
+		},
+		"PUT /admin/realms/{realm}": func(w http.ResponseWriter, r *http.Request) {
+			updateCalled.Store(true)
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	c := newTestClient(t, server.URL)
+	mr := &config.MasterRealmConfig{
+		SslRequired: "external",
+	}
+
+	p := New(c, &config.Config{MasterRealm: mr})
+	if err := p.ensureMasterRealm(context.Background(), mr); err != nil {
+		t.Fatalf("ensureMasterRealm: %v", err)
+	}
+
+	if updateCalled.Load() {
+		t.Error("expected PUT not to be called when sslRequired already matches")
+	}
+}
+
+func TestEnsureUserCreate(t *testing.T) {
+	var mu sync.Mutex
+	var createdBody map[string]any
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/users": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{})
+		},
+		"POST /admin/realms/{realm}/users": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			defer mu.Unlock()
+			json.NewDecoder(r.Body).Decode(&createdBody)
+			w.Header().Set("Location", r.URL.String()+"/user-uuid-1")
+			w.WriteHeader(http.StatusCreated)
+		},
+	})
+	defer server.Close()
+
+	c := newTestClient(t, server.URL)
+	enabled := true
+	user := config.User{
+		Username: "testuser",
+		Enabled:  &enabled,
+		Email:    "test@example.com",
+	}
+
+	p := New(c, &config.Config{})
+	if err := p.ensureUser(context.Background(), "test-realm", user, "update"); err != nil {
+		t.Fatalf("ensureUser: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if createdBody["username"] != "testuser" {
+		t.Errorf("expected username testuser, got %v", createdBody["username"])
+	}
+	if createdBody["enabled"] != true {
+		t.Errorf("expected enabled true, got %v", createdBody["enabled"])
+	}
+}
+
+func TestEnsureUserUpdate(t *testing.T) {
+	var mu sync.Mutex
+	var updatedBody map[string]any
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/users": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"id": "user-uuid-1", "username": "testuser"},
+			})
+		},
+		"PUT /admin/realms/{realm}/users/{id}": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			defer mu.Unlock()
+			json.NewDecoder(r.Body).Decode(&updatedBody)
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	c := newTestClient(t, server.URL)
+	user := config.User{
+		Username: "testuser",
+		Email:    "updated@example.com",
+	}
+
+	p := New(c, &config.Config{})
+	if err := p.ensureUser(context.Background(), "test-realm", user, "update"); err != nil {
+		t.Fatalf("ensureUser: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if updatedBody["email"] != "updated@example.com" {
+		t.Errorf("expected email updated@example.com, got %v", updatedBody["email"])
+	}
+}
+
+func TestEnsureUserCreateStrategySkipsExisting(t *testing.T) {
+	var updateCalled atomic.Bool
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/users": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"id": "user-uuid-1", "username": "testuser"},
+			})
+		},
+		"PUT /admin/realms/{realm}/users/{id}": func(w http.ResponseWriter, r *http.Request) {
+			updateCalled.Store(true)
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	c := newTestClient(t, server.URL)
+	user := config.User{
+		Username: "testuser",
+		Email:    "should-not-update@example.com",
+	}
+
+	p := New(c, &config.Config{})
+	if err := p.ensureUser(context.Background(), "test-realm", user, "create"); err != nil {
+		t.Fatalf("ensureUser: %v", err)
+	}
+
+	if updateCalled.Load() {
+		t.Error("expected PUT not to be called with strategy=create")
+	}
+}
+
+func TestEnsureUserWithPassword(t *testing.T) {
+	var mu sync.Mutex
+	var passwordBody map[string]any
+	passwordSet := false
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/users": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{})
+		},
+		"POST /admin/realms/{realm}/users": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Location", r.URL.String()+"/user-uuid-1")
+			w.WriteHeader(http.StatusCreated)
+		},
+		"PUT /admin/realms/{realm}/users/{id}/reset-password": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			defer mu.Unlock()
+			json.NewDecoder(r.Body).Decode(&passwordBody)
+			passwordSet = true
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	c := newTestClient(t, server.URL)
+	user := config.User{
+		Username: "testuser",
+		Password: "secret123",
+	}
+
+	p := New(c, &config.Config{})
+	if err := p.ensureUser(context.Background(), "test-realm", user, "update"); err != nil {
+		t.Fatalf("ensureUser: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !passwordSet {
+		t.Error("expected password to be set")
+	}
+	if passwordBody["value"] != "secret123" {
+		t.Errorf("expected password secret123, got %v", passwordBody["value"])
+	}
+}
+
+func TestEnsureUserWithRealmRoles(t *testing.T) {
+	var mu sync.Mutex
+	var addedRoles []map[string]any
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/users": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{})
+		},
+		"POST /admin/realms/{realm}/users": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Location", r.URL.String()+"/user-uuid-1")
+			w.WriteHeader(http.StatusCreated)
+		},
+		"GET /admin/realms/{realm}/users/{id}/role-mappings/realm": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{})
+		},
+		"GET /admin/realms/{realm}/roles/{name}": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]any{
+				"id":   "role-id-1",
+				"name": "admin",
+			})
+		},
+		"POST /admin/realms/{realm}/users/{id}/role-mappings/realm": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			defer mu.Unlock()
+			json.NewDecoder(r.Body).Decode(&addedRoles)
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	c := newTestClient(t, server.URL)
+	user := config.User{
+		Username: "testuser",
+		Roles: &config.UserRoles{
+			Realm: []string{"admin"},
+		},
+	}
+
+	p := New(c, &config.Config{})
+	if err := p.ensureUser(context.Background(), "test-realm", user, "update"); err != nil {
+		t.Fatalf("ensureUser: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(addedRoles) != 1 {
+		t.Fatalf("expected 1 role added, got %d", len(addedRoles))
+	}
+	if addedRoles[0]["name"] != "admin" {
+		t.Errorf("expected role name admin, got %v", addedRoles[0]["name"])
+	}
+}
+
+func TestEnsureServiceAccountRoles(t *testing.T) {
+	var mu sync.Mutex
+	var addedRoles []map[string]any
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/clients/{uuid}/service-account-user": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]any{
+				"id":       "sa-user-uuid",
+				"username": "service-account-my-client",
+			})
+		},
+		"GET /admin/realms/{realm}/users/{id}/role-mappings/realm": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{})
+		},
+		"GET /admin/realms/{realm}/roles/{name}": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]any{
+				"id":   "role-id-1",
+				"name": "admin",
+			})
+		},
+		"POST /admin/realms/{realm}/users/{id}/role-mappings/realm": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			defer mu.Unlock()
+			json.NewDecoder(r.Body).Decode(&addedRoles)
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	c := newTestClient(t, server.URL)
+	roles := &config.UserRoles{
+		Realm: []string{"admin"},
+	}
+
+	p := New(c, &config.Config{})
+	if err := p.ensureServiceAccountRoles(context.Background(), "test-realm", "client-uuid-1", "my-client", roles); err != nil {
+		t.Fatalf("ensureServiceAccountRoles: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(addedRoles) != 1 {
+		t.Fatalf("expected 1 role added, got %d", len(addedRoles))
+	}
+	if addedRoles[0]["name"] != "admin" {
+		t.Errorf("expected role name admin, got %v", addedRoles[0]["name"])
+	}
+}
+
+func TestEnsureUserRolesSkipsAlreadyAssigned(t *testing.T) {
+	var realmRolesAdded atomic.Bool
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/users/{id}/role-mappings/realm": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"id": "role-id-1", "name": "admin"},
+			})
+		},
+		"POST /admin/realms/{realm}/users/{id}/role-mappings/realm": func(w http.ResponseWriter, r *http.Request) {
+			realmRolesAdded.Store(true)
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	c := newTestClient(t, server.URL)
+	roles := &config.UserRoles{
+		Realm: []string{"admin"},
+	}
+
+	p := New(c, &config.Config{})
+	if err := p.ensureUserRoles(context.Background(), "test-realm", "user-uuid-1", "testuser", roles); err != nil {
+		t.Fatalf("ensureUserRoles: %v", err)
+	}
+
+	if realmRolesAdded.Load() {
+		t.Error("expected POST not to be called when role already assigned")
+	}
+}
+
+func TestBuildUserBody(t *testing.T) {
+	enabled := true
+	emailVerified := false
+
+	user := config.User{
+		Username:      "testuser",
+		Enabled:       &enabled,
+		Email:         "test@example.com",
+		FirstName:     "Test",
+		LastName:      "User",
+		EmailVerified: &emailVerified,
+	}
+
+	body := buildUserBody(user)
+
+	checks := map[string]any{
+		"username":      "testuser",
+		"enabled":       true,
+		"email":         "test@example.com",
+		"firstName":     "Test",
+		"lastName":      "User",
+		"emailVerified": false,
+	}
+
+	for key, want := range checks {
+		got, ok := body[key]
+		if !ok {
+			t.Errorf("missing key %q", key)
+			continue
+		}
+		if got != want {
+			t.Errorf("key %q: got %v, want %v", key, got, want)
+		}
+	}
+}
+
+func TestRunFullProvisioningWithUsers(t *testing.T) {
+	var mu sync.Mutex
+	userCreated := false
+	passwordSet := false
+	realmRolesAssigned := false
+	roleCreated := false
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		},
+		"POST /admin/realms": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusCreated)
+		},
+		"GET /admin/realms/{realm}/roles/{name}": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			created := roleCreated
+			mu.Unlock()
+			if created {
+				// After creation, return the role for user role assignment lookup
+				json.NewEncoder(w).Encode(map[string]any{"id": "role-id-1", "name": "app-admin"})
+			} else {
+				w.WriteHeader(http.StatusNotFound)
+			}
+		},
+		"POST /admin/realms/{realm}/roles": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			roleCreated = true
+			mu.Unlock()
+			w.WriteHeader(http.StatusCreated)
+		},
+		"GET /admin/realms/{realm}/users": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{})
+		},
+		"POST /admin/realms/{realm}/users": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			userCreated = true
+			mu.Unlock()
+			w.Header().Set("Location", r.URL.String()+"/user-uuid-1")
+			w.WriteHeader(http.StatusCreated)
+		},
+		"PUT /admin/realms/{realm}/users/{id}/reset-password": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			passwordSet = true
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		},
+		"GET /admin/realms/{realm}/users/{id}/role-mappings/realm": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{})
+		},
+		"POST /admin/realms/{realm}/users/{id}/role-mappings/realm": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			realmRolesAssigned = true
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	c := newTestClient(t, server.URL)
+	enabled := true
+	cfg := &config.Config{
+		Realms: []config.Realm{
+			{
+				Realm:   "test-realm",
+				Enabled: &enabled,
+				Roles:   []config.RealmRole{{Name: "app-admin"}},
+				Users: []config.User{
+					{
+						Username: "admin",
+						Password: "password",
+						Enabled:  &enabled,
+						Roles: &config.UserRoles{
+							Realm: []string{"app-admin"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	p := New(c, cfg)
+	if err := p.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !userCreated {
+		t.Error("user was not created")
+	}
+	if !passwordSet {
+		t.Error("password was not set")
+	}
+	if !realmRolesAssigned {
+		t.Error("realm roles were not assigned")
+	}
+}
+
+func TestRunWithMasterRealm(t *testing.T) {
+	var mu sync.Mutex
+	masterUpdated := false
+	masterUserCreated := false
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]any{
+				"realm":       "master",
+				"sslRequired": "none",
+			})
+		},
+		"PUT /admin/realms/{realm}": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			masterUpdated = true
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		},
+		"GET /admin/realms/{realm}/users": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{})
+		},
+		"POST /admin/realms/{realm}/users": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			masterUserCreated = true
+			mu.Unlock()
+			w.Header().Set("Location", r.URL.String()+"/user-uuid-1")
+			w.WriteHeader(http.StatusCreated)
+		},
+	})
+	defer server.Close()
+
+	c := newTestClient(t, server.URL)
+	cfg := &config.Config{
+		MasterRealm: &config.MasterRealmConfig{
+			SslRequired: "external",
+			Users: []config.User{
+				{Username: "admin-new"},
+			},
+		},
+	}
+
+	p := New(c, cfg)
+	if err := p.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !masterUpdated {
+		t.Error("master realm was not updated")
+	}
+	if !masterUserCreated {
+		t.Error("master realm user was not created")
+	}
+}
+
+func TestRunWithServiceAccountRoles(t *testing.T) {
+	var mu sync.Mutex
+	saRolesAssigned := false
+	roleCreated := false
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		},
+		"POST /admin/realms": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusCreated)
+		},
+		"GET /admin/realms/{realm}/clients": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{})
+		},
+		"POST /admin/realms/{realm}/clients": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Location", r.URL.String()+"/client-uuid-1")
+			w.WriteHeader(http.StatusCreated)
+		},
+		"GET /admin/realms/{realm}/clients/{uuid}/protocol-mappers/models": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{})
+		},
+		"GET /admin/realms/{realm}/clients/{uuid}/service-account-user": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]any{
+				"id":       "sa-user-uuid",
+				"username": "service-account-my-service",
+			})
+		},
+		"GET /admin/realms/{realm}/users/{id}/role-mappings/realm": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{})
+		},
+		"GET /admin/realms/{realm}/roles/{name}": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			created := roleCreated
+			mu.Unlock()
+			if created {
+				json.NewEncoder(w).Encode(map[string]any{"id": "role-id-1", "name": "app-admin"})
+			} else {
+				w.WriteHeader(http.StatusNotFound)
+			}
+		},
+		"POST /admin/realms/{realm}/roles": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			roleCreated = true
+			mu.Unlock()
+			w.WriteHeader(http.StatusCreated)
+		},
+		"POST /admin/realms/{realm}/users/{id}/role-mappings/realm": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			saRolesAssigned = true
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	c := newTestClient(t, server.URL)
+	saEnabled := true
+	cfg := &config.Config{
+		Realms: []config.Realm{
+			{
+				Realm: "test-realm",
+				Clients: []config.Client{
+					{
+						ClientID:               "my-service",
+						ServiceAccountsEnabled: &saEnabled,
+						ServiceAccountRoles: &config.UserRoles{
+							Realm: []string{"app-admin"},
+						},
+					},
+				},
+				Roles: []config.RealmRole{{Name: "app-admin"}},
+			},
+		},
+	}
+
+	p := New(c, cfg)
+	if err := p.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !saRolesAssigned {
+		t.Error("service account roles were not assigned")
+	}
+}

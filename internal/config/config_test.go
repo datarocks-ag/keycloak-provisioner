@@ -541,6 +541,190 @@ func TestValidationNullByteInClientSecret(t *testing.T) {
 	}
 }
 
+func TestValidationSslRequired(t *testing.T) {
+	for _, val := range []string{"external", "all", "none"} {
+		t.Run("valid_"+val, func(t *testing.T) {
+			yaml := `
+realms:
+  - realm: "test"
+    sslRequired: "` + val + `"
+`
+			path := writeTempConfig(t, yaml)
+			_, err := Load(path)
+			if err != nil {
+				t.Fatalf("unexpected error for sslRequired=%q: %v", val, err)
+			}
+		})
+	}
+
+	t.Run("invalid", func(t *testing.T) {
+		yaml := `
+realms:
+  - realm: "test"
+    sslRequired: "invalid"
+`
+		path := writeTempConfig(t, yaml)
+		_, err := Load(path)
+		if err == nil {
+			t.Fatal("expected validation error for invalid sslRequired")
+		}
+	})
+}
+
+func TestMasterRealmConfig(t *testing.T) {
+	t.Setenv("TEST_ADMIN_PW", "secret123")
+	yaml := `
+masterRealm:
+  sslRequired: external
+  users:
+    - username: admin-new
+      password: "${TEST_ADMIN_PW}"
+      enabled: true
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.MasterRealm == nil {
+		t.Fatal("expected masterRealm to be set")
+	}
+	if cfg.MasterRealm.SslRequired != "external" {
+		t.Errorf("expected sslRequired=external, got %s", cfg.MasterRealm.SslRequired)
+	}
+	if len(cfg.MasterRealm.Users) != 1 {
+		t.Fatalf("expected 1 user, got %d", len(cfg.MasterRealm.Users))
+	}
+	if cfg.MasterRealm.Users[0].Password != "secret123" {
+		t.Errorf("expected password secret123, got %s", cfg.MasterRealm.Users[0].Password)
+	}
+}
+
+func TestMasterRealmInvalidSslRequired(t *testing.T) {
+	yaml := `
+masterRealm:
+  sslRequired: "invalid"
+`
+	path := writeTempConfig(t, yaml)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for invalid masterRealm sslRequired")
+	}
+}
+
+func TestValidationUserMissingUsername(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    users:
+      - password: "pw"
+`
+	path := writeTempConfig(t, yaml)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for missing username")
+	}
+}
+
+func TestValidationDuplicateUsername(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    users:
+      - username: "dup"
+      - username: "dup"
+`
+	path := writeTempConfig(t, yaml)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for duplicate username")
+	}
+}
+
+func TestValidationNullByteInUsername(t *testing.T) {
+	yaml := "realms:\n  - realm: \"test\"\n    users:\n      - username: \"user\\x00evil\"\n"
+	path := writeTempConfig(t, yaml)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for null byte in username")
+	}
+}
+
+func TestValidationServiceAccountRolesWithoutServiceAccountsEnabled(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    clients:
+      - clientId: "app"
+        serviceAccountRoles:
+          realm:
+            - admin
+`
+	path := writeTempConfig(t, yaml)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error when serviceAccountRoles set without serviceAccountsEnabled")
+	}
+}
+
+func TestValidationServiceAccountRolesWithServiceAccountsEnabled(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    clients:
+      - clientId: "app"
+        serviceAccountsEnabled: true
+        serviceAccountRoles:
+          realm:
+            - admin
+`
+	path := writeTempConfig(t, yaml)
+	_, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestUserWithRoles(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    users:
+      - username: "testuser"
+        password: "pw"
+        enabled: true
+        email: "test@example.com"
+        firstName: "Test"
+        lastName: "User"
+        emailVerified: true
+        roles:
+          realm:
+            - admin
+          clients:
+            my-app:
+              - editor
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	u := cfg.Realms[0].Users[0]
+	if u.Username != "testuser" {
+		t.Errorf("expected testuser, got %s", u.Username)
+	}
+	if u.Roles == nil {
+		t.Fatal("expected roles to be set")
+	}
+	if len(u.Roles.Realm) != 1 || u.Roles.Realm[0] != "admin" {
+		t.Errorf("expected realm role [admin], got %v", u.Roles.Realm)
+	}
+	if len(u.Roles.Clients["my-app"]) != 1 || u.Roles.Clients["my-app"][0] != "editor" {
+		t.Errorf("expected client role [editor], got %v", u.Roles.Clients["my-app"])
+	}
+}
+
 func TestEnvVarExpansionInSlicesAndMaps(t *testing.T) {
 	t.Setenv("TEST_REDIRECT", "https://app.example.com/*")
 	t.Setenv("TEST_ORIGIN", "https://app.example.com")

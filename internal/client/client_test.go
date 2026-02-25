@@ -832,3 +832,288 @@ func TestDoRequest_NilBody(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+// --- User tests ---
+
+func TestGetUsers(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/users": func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Query().Get("username") != "testuser" {
+				t.Errorf("expected username=testuser, got %s", r.URL.Query().Get("username"))
+			}
+			if r.URL.Query().Get("exact") != "true" {
+				t.Errorf("expected exact=true, got %s", r.URL.Query().Get("exact"))
+			}
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"id": "user-uuid-1", "username": "testuser"},
+			})
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	result, err := c.GetUsers(context.Background(), "test", "testuser")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 user, got %d", len(result))
+	}
+	if result[0]["username"] != "testuser" {
+		t.Errorf("expected testuser, got %v", result[0]["username"])
+	}
+}
+
+func TestGetUsers_Error(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/users": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("error"))
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	_, err := c.GetUsers(context.Background(), "test", "testuser")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestCreateUser_Success(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"POST /admin/realms/{realm}/users": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Location", "http://localhost/admin/realms/test/users/user-uuid-abc")
+			w.WriteHeader(http.StatusCreated)
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	uuid, err := c.CreateUser(context.Background(), "test", map[string]any{"username": "newuser"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if uuid != "user-uuid-abc" {
+		t.Errorf("expected user-uuid-abc, got %s", uuid)
+	}
+}
+
+func TestCreateUser_NoLocationHeader(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"POST /admin/realms/{realm}/users": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusCreated)
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	_, err := c.CreateUser(context.Background(), "test", map[string]any{"username": "newuser"})
+	if err == nil {
+		t.Fatal("expected error for missing Location header")
+	}
+}
+
+func TestCreateUser_Error(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"POST /admin/realms/{realm}/users": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte("exists"))
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	_, err := c.CreateUser(context.Background(), "test", map[string]any{"username": "dup"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestUpdateUser_Success(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"PUT /admin/realms/{realm}/users/{id}": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	err := c.UpdateUser(context.Background(), "test", "user-uuid-1", map[string]any{"email": "new@example.com"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestUpdateUser_Error(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"PUT /admin/realms/{realm}/users/{id}": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte("bad"))
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	err := c.UpdateUser(context.Background(), "test", "user-uuid-1", map[string]any{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestResetUserPassword_Success(t *testing.T) {
+	var mu sync.Mutex
+	var body map[string]any
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"PUT /admin/realms/{realm}/users/{id}/reset-password": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			defer mu.Unlock()
+			json.NewDecoder(r.Body).Decode(&body)
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	err := c.ResetUserPassword(context.Background(), "test", "user-uuid-1", "newpassword")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if body["value"] != "newpassword" {
+		t.Errorf("expected password newpassword, got %v", body["value"])
+	}
+	if body["temporary"] != false {
+		t.Errorf("expected temporary=false, got %v", body["temporary"])
+	}
+}
+
+func TestResetUserPassword_Error(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"PUT /admin/realms/{realm}/users/{id}/reset-password": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte("bad"))
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	err := c.ResetUserPassword(context.Background(), "test", "user-uuid-1", "pw")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestGetUserRealmRoleMappings(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/users/{id}/role-mappings/realm": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"id": "role-1", "name": "admin"},
+			})
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	result, err := c.GetUserRealmRoleMappings(context.Background(), "test", "user-uuid-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 role, got %d", len(result))
+	}
+}
+
+func TestAddUserRealmRoleMappings(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"POST /admin/realms/{realm}/users/{id}/role-mappings/realm": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	err := c.AddUserRealmRoleMappings(context.Background(), "test", "user-uuid-1", []map[string]any{
+		{"id": "role-1", "name": "admin"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestGetUserClientRoleMappings(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/users/{id}/role-mappings/clients/{clientUUID}": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"id": "role-1", "name": "editor"},
+			})
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	result, err := c.GetUserClientRoleMappings(context.Background(), "test", "user-uuid-1", "client-uuid-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 role, got %d", len(result))
+	}
+}
+
+func TestAddUserClientRoleMappings(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"POST /admin/realms/{realm}/users/{id}/role-mappings/clients/{clientUUID}": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	err := c.AddUserClientRoleMappings(context.Background(), "test", "user-uuid-1", "client-uuid-1", []map[string]any{
+		{"id": "role-1", "name": "editor"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestGetServiceAccountUser(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/clients/{uuid}/service-account-user": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]any{
+				"id":       "sa-user-uuid",
+				"username": "service-account-my-client",
+			})
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	result, err := c.GetServiceAccountUser(context.Background(), "test", "client-uuid-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result["id"] != "sa-user-uuid" {
+		t.Errorf("expected sa-user-uuid, got %v", result["id"])
+	}
+}
+
+func TestGetServiceAccountUser_Error(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/clients/{uuid}/service-account-user": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte("not found"))
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	_, err := c.GetServiceAccountUser(context.Background(), "test", "client-uuid-1")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}

@@ -24,9 +24,21 @@ func New(client *client.Client, cfg *config.Config) *Provisioner {
 }
 
 // Run executes the full provisioning sequence:
-// For each realm: Realm -> Clients (+ protocol mappers + client roles) -> Realm roles
+// Master realm (if configured) -> For each realm: Realm -> Clients (+ protocol mappers + client roles + service account roles) -> Realm roles -> Users
 func (p *Provisioner) Run(ctx context.Context) error {
 	slog.Info("Starting provisioning")
+
+	if p.cfg.MasterRealm != nil {
+		if err := p.ensureMasterRealm(ctx, p.cfg.MasterRealm); err != nil {
+			return fmt.Errorf("provisioning master realm: %w", err)
+		}
+
+		for _, user := range p.cfg.MasterRealm.Users {
+			if err := p.ensureUser(ctx, "master", user, "update"); err != nil {
+				return fmt.Errorf("ensuring user %q in master realm: %w", user.Username, err)
+			}
+		}
+	}
 
 	for _, realm := range p.cfg.Realms {
 		strategy := config.EffectiveStrategy(realm.Strategy, p.cfg.Strategy)
@@ -45,7 +57,15 @@ func (p *Provisioner) provisionRealm(ctx context.Context, realm config.Realm, st
 		return fmt.Errorf("ensuring realm: %w", err)
 	}
 
-	// 2. Clients (+ protocol mappers + client roles) — always descend into children
+	// 2. Clients (+ protocol mappers + client roles)
+	// Track client UUIDs for service account role assignment later
+	type clientInfo struct {
+		uuid     string
+		clientID string
+		roles    *config.UserRoles
+	}
+	var saClients []clientInfo
+
 	for _, c := range realm.Clients {
 		clientUUID, err := p.ensureClient(ctx, realm.Realm, c, strategy)
 		if err != nil {
@@ -63,12 +83,30 @@ func (p *Provisioner) provisionRealm(ctx context.Context, realm config.Realm, st
 				return fmt.Errorf("ensuring client role %q for client %q: %w", cr.Name, c.ClientID, err)
 			}
 		}
+
+		if c.ServiceAccountRoles != nil {
+			saClients = append(saClients, clientInfo{uuid: clientUUID, clientID: c.ClientID, roles: c.ServiceAccountRoles})
+		}
 	}
 
 	// 3. Realm roles
 	for _, role := range realm.Roles {
 		if err := p.ensureRealmRole(ctx, realm.Realm, role, strategy); err != nil {
 			return fmt.Errorf("ensuring realm role %q: %w", role.Name, err)
+		}
+	}
+
+	// 4. Service account roles (after realm+client roles exist)
+	for _, sa := range saClients {
+		if err := p.ensureServiceAccountRoles(ctx, realm.Realm, sa.uuid, sa.clientID, sa.roles); err != nil {
+			return fmt.Errorf("ensuring service account roles for client %q: %w", sa.clientID, err)
+		}
+	}
+
+	// 5. Users (after all roles exist)
+	for _, user := range realm.Users {
+		if err := p.ensureUser(ctx, realm.Realm, user, strategy); err != nil {
+			return fmt.Errorf("ensuring user %q: %w", user.Username, err)
 		}
 	}
 
