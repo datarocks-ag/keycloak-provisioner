@@ -7,7 +7,11 @@ A Go CLI tool that idempotently provisions Keycloak resources from a YAML config
 
 ## Features
 
-- Idempotent provisioning of realms, clients, protocol mappers, realm roles, and client roles
+- Idempotent provisioning of realms, clients, protocol mappers, realm roles, client roles, users, and service account roles
+- Master realm configuration (SSL, users) without full provisioning
+- `sslRequired` setting on any realm (`external`, `all`, `none`)
+- User management with password setting and realm/client role assignment
+- Service account role mapping for machine-to-machine clients
 - YAML config with `${VAR}` environment variable expansion
 - Configurable strategy: `update` (default) or `create` (skip existing)
 - Exponential backoff retry for Keycloak connectivity
@@ -61,23 +65,37 @@ secret: "${MY_APP_CLIENT_SECRET}"    # replaced with env var value at load time
 
 ## Provisioning Order
 
-For each realm:
-
-1. **Realm** — created or updated
-2. **Clients** — created or updated (matched by `clientId`)
-   - **Protocol mappers** — created or updated (matched by `name`)
-   - **Client roles** — created or updated
-3. **Realm roles** — created or updated
+1. **Master realm** (if configured) — update `sslRequired`, provision users
+2. For each realm:
+   1. **Realm** — created or updated
+   2. **Clients** — created or updated (matched by `clientId`)
+      - **Protocol mappers** — created or updated (matched by `name`)
+      - **Client roles** — created or updated
+   3. **Realm roles** — created or updated
+   4. **Service account roles** — assigned (additive, after roles exist)
+   5. **Users** — created or updated, passwords set, roles assigned (additive)
 
 ## Config Example
 
 See [config.example.yaml](config.example.yaml) for a full example. The YAML field names mirror Keycloak's realm JSON export format (camelCase), so you can copy-paste from an exported realm.
 
 ```yaml
+# Optional: configure the master realm (update-only, never created)
+masterRealm:
+  sslRequired: external
+  users:
+    - username: "admin-new"
+      password: "${ADMIN_PASSWORD}"
+      enabled: true
+      roles:
+        realm:
+          - admin
+
 realms:
   - realm: "my-realm"
     displayName: "My Realm"
     enabled: true
+    sslRequired: "external"
     clients:
       - clientId: "my-app"
         secret: "${MY_APP_CLIENT_SECRET}"
@@ -92,10 +110,103 @@ realms:
               "included.client.audience": "my-app"
         clientRoles:
           - name: "admin"
+
+      # Service account with role assignments
+      - clientId: "my-service"
+        serviceAccountsEnabled: true
+        serviceAccountRoles:
+          realm:
+            - app-admin
+          clients:
+            my-app:
+              - admin
+
     roles:
       - name: "app-admin"
         description: "Application administrator"
+
+    users:
+      - username: "service-admin"
+        password: "${SERVICE_ADMIN_PASSWORD}"
+        enabled: true
+        email: "admin@example.com"
+        firstName: "Service"
+        lastName: "Admin"
+        emailVerified: true
+        roles:
+          realm:
+            - app-admin
+          clients:
+            my-app:
+              - admin
 ```
+
+## Master Realm
+
+The `masterRealm` section configures the built-in master realm. Since the master realm always exists, it is update-only — the provisioner will never attempt to create it. This section is deliberately separate from the `realms` list to prevent accidentally applying full provisioning to master.
+
+Supported fields:
+
+- `sslRequired` — set the SSL mode (`external`, `all`, `none`)
+- `users` — create/update users in the master realm (same schema as realm users)
+
+## SSL Required
+
+Set `sslRequired` on any realm (including master) to control whether Keycloak requires SSL:
+
+| Value | Meaning |
+|---|---|
+| `external` | SSL required for external requests (recommended for production) |
+| `all` | SSL required for all requests |
+| `none` | SSL not required (development only) |
+
+## Users
+
+Users can be provisioned in any realm (including master via `masterRealm.users`). Each user supports:
+
+| Field | Type | Description |
+|---|---|---|
+| `username` | string | **Required.** Username |
+| `password` | string | Password (set on every run via reset-password API) |
+| `enabled` | bool | Whether the user is enabled |
+| `email` | string | Email address |
+| `firstName` | string | First name |
+| `lastName` | string | Last name |
+| `emailVerified` | bool | Whether the email is marked as verified |
+| `roles` | object | Role assignments (see below) |
+
+### User Role Assignment
+
+Roles are assigned additively — existing role mappings are never removed. Both realm roles and client roles are supported:
+
+```yaml
+roles:
+  realm:
+    - app-admin          # realm-level role
+  clients:
+    my-app:              # client ID
+      - admin            # client-level role
+```
+
+The referenced roles and clients must already exist (either defined earlier in the config or pre-existing in Keycloak).
+
+## Service Account Roles
+
+Clients with `serviceAccountsEnabled: true` can have roles assigned to their service account user via `serviceAccountRoles`. This uses the same `roles` schema as users:
+
+```yaml
+clients:
+  - clientId: "my-service"
+    serviceAccountsEnabled: true
+    serviceAccountRoles:
+      realm:
+        - app-admin
+      clients:
+        another-client:
+          - some-role
+```
+
+Validation enforces that `serviceAccountsEnabled` is `true` when `serviceAccountRoles` is set.
 
 ## Connection Retry
 
