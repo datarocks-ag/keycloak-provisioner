@@ -480,3 +480,173 @@ func (c *Client) UpdateProtocolMapper(ctx context.Context, realm, clientUUID, ma
 	}
 	return nil
 }
+
+// GetUsers returns users matching the given username with exact match.
+func (c *Client) GetUsers(ctx context.Context, realm, username string) ([]map[string]any, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/users?username=" + url.QueryEscape(username) + "&exact=true"
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding users: %w", err)
+	}
+	return result, nil
+}
+
+// CreateUser creates a new user in the given realm.
+// Returns the UUID of the newly created user, extracted from the Location header.
+func (c *Client) CreateUser(ctx context.Context, realm string, body map[string]any) (string, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/users"
+	resp, err := c.doRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		return "", readError(resp)
+	}
+
+	location := resp.Header.Get("Location")
+	if location == "" {
+		return "", fmt.Errorf("creating user: no Location header in response")
+	}
+	idx := strings.LastIndex(location, "/")
+	if idx < 0 || idx == len(location)-1 {
+		return "", fmt.Errorf("creating user: unexpected Location header format: %s", location)
+	}
+	return location[idx+1:], nil
+}
+
+// UpdateUser updates an existing user by UUID.
+func (c *Client) UpdateUser(ctx context.Context, realm, userID string, body map[string]any) error {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/users/" + url.PathEscape(userID)
+	resp, err := c.doRequest(ctx, http.MethodPut, path, body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return readError(resp)
+	}
+	return nil
+}
+
+// ResetUserPassword sets a user's password (non-temporary).
+func (c *Client) ResetUserPassword(ctx context.Context, realm, userID, password string) error {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/users/" + url.PathEscape(userID) + "/reset-password"
+	body := map[string]any{
+		"type":      "password",
+		"value":     password,
+		"temporary": false,
+	}
+	resp, err := c.doRequest(ctx, http.MethodPut, path, body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return readError(resp)
+	}
+	return nil
+}
+
+// GetUserRealmRoleMappings returns the realm role mappings for a user.
+func (c *Client) GetUserRealmRoleMappings(ctx context.Context, realm, userID string) ([]map[string]any, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/users/" + url.PathEscape(userID) + "/role-mappings/realm"
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding realm role mappings: %w", err)
+	}
+	return result, nil
+}
+
+// AddUserRealmRoleMappings adds realm role mappings to a user.
+func (c *Client) AddUserRealmRoleMappings(ctx context.Context, realm, userID string, roles []map[string]any) error {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/users/" + url.PathEscape(userID) + "/role-mappings/realm"
+	resp, err := c.doRequest(ctx, http.MethodPost, path, roles)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return readError(resp)
+	}
+	return nil
+}
+
+// GetUserClientRoleMappings returns the client role mappings for a user.
+func (c *Client) GetUserClientRoleMappings(ctx context.Context, realm, userID, clientUUID string) ([]map[string]any, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/users/" + url.PathEscape(userID) + "/role-mappings/clients/" + url.PathEscape(clientUUID)
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding client role mappings: %w", err)
+	}
+	return result, nil
+}
+
+// AddUserClientRoleMappings adds client role mappings to a user.
+func (c *Client) AddUserClientRoleMappings(ctx context.Context, realm, userID, clientUUID string, roles []map[string]any) error {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/users/" + url.PathEscape(userID) + "/role-mappings/clients/" + url.PathEscape(clientUUID)
+	resp, err := c.doRequest(ctx, http.MethodPost, path, roles)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return readError(resp)
+	}
+	return nil
+}
+
+// GetServiceAccountUser returns the service account user for a client.
+func (c *Client) GetServiceAccountUser(ctx context.Context, realm, clientUUID string) (map[string]any, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/clients/" + url.PathEscape(clientUUID) + "/service-account-user"
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding service account user: %w", err)
+	}
+	return result, nil
+}

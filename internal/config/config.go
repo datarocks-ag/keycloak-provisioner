@@ -27,10 +27,26 @@ func EffectiveStrategy(strategies ...string) string {
 	return "update"
 }
 
+// validSslRequired is the allowlist of sslRequired values.
+var validSslRequired = map[string]bool{
+	"":         true, // not set, leave as-is
+	"external": true,
+	"all":      true,
+	"none":     true,
+}
+
 // Config is the top-level YAML configuration.
 type Config struct {
-	Strategy string  `yaml:"strategy"`
-	Realms   []Realm `yaml:"realms"`
+	Strategy    string             `yaml:"strategy"`
+	MasterRealm *MasterRealmConfig `yaml:"masterRealm"`
+	Realms      []Realm            `yaml:"realms"`
+}
+
+// MasterRealmConfig allows limited configuration of the master realm.
+// The master realm always exists, so it is update-only (never created).
+type MasterRealmConfig struct {
+	SslRequired string `yaml:"sslRequired"`
+	Users       []User `yaml:"users"`
 }
 
 // Realm defines a Keycloak realm to provision.
@@ -38,11 +54,13 @@ type Realm struct {
 	Realm                string      `yaml:"realm"`
 	DisplayName          string      `yaml:"displayName"`
 	Enabled              *bool       `yaml:"enabled"`
+	SslRequired          string      `yaml:"sslRequired"`
 	LoginTheme           string      `yaml:"loginTheme"`
 	RegistrationAllowed  *bool       `yaml:"registrationAllowed"`
 	ResetPasswordAllowed *bool       `yaml:"resetPasswordAllowed"`
 	Clients              []Client    `yaml:"clients"`
 	Roles                []RealmRole `yaml:"roles"`
+	Users                []User      `yaml:"users"`
 	Strategy             string      `yaml:"strategy"`
 }
 
@@ -70,6 +88,7 @@ type Client struct {
 	Attributes                map[string]string `yaml:"attributes"`
 	ProtocolMappers           []ProtocolMapper  `yaml:"protocolMappers"`
 	ClientRoles               []ClientRole      `yaml:"clientRoles"`
+	ServiceAccountRoles       *UserRoles        `yaml:"serviceAccountRoles"`
 }
 
 // ProtocolMapper defines a protocol mapper for a Keycloak client.
@@ -93,6 +112,24 @@ type ClientRole struct {
 	Description string `yaml:"description"`
 }
 
+// User defines a Keycloak user to provision within a realm.
+type User struct {
+	Username      string     `yaml:"username"`
+	Password      string     `yaml:"password"`
+	Enabled       *bool      `yaml:"enabled"`
+	Email         string     `yaml:"email"`
+	FirstName     string     `yaml:"firstName"`
+	LastName      string     `yaml:"lastName"`
+	EmailVerified *bool      `yaml:"emailVerified"`
+	Roles         *UserRoles `yaml:"roles"`
+}
+
+// UserRoles defines realm and client role assignments for a user or service account.
+type UserRoles struct {
+	Realm   []string            `yaml:"realm"`
+	Clients map[string][]string `yaml:"clients"`
+}
+
 // containsNullByte returns true if s contains a null byte (\x00).
 func containsNullByte(s string) bool {
 	return strings.ContainsRune(s, '\x00')
@@ -111,12 +148,46 @@ func expandEnvVars(s string) string {
 	})
 }
 
+// expandUserRoles expands env vars in a UserRoles struct.
+func expandUserRoles(roles *UserRoles) {
+	if roles == nil {
+		return
+	}
+	for i := range roles.Realm {
+		roles.Realm[i] = expandEnvVars(roles.Realm[i])
+	}
+	for k, v := range roles.Clients {
+		for i := range v {
+			roles.Clients[k][i] = expandEnvVars(v[i])
+		}
+	}
+}
+
+// expandUsers expands env vars in a slice of User structs.
+func expandUsers(users []User) {
+	for i := range users {
+		u := &users[i]
+		u.Username = expandEnvVars(u.Username)
+		u.Password = expandEnvVars(u.Password)
+		u.Email = expandEnvVars(u.Email)
+		u.FirstName = expandEnvVars(u.FirstName)
+		u.LastName = expandEnvVars(u.LastName)
+		expandUserRoles(u.Roles)
+	}
+}
+
 // expandConfig walks the config and expands env vars in string fields.
 func expandConfig(cfg *Config) {
+	if cfg.MasterRealm != nil {
+		cfg.MasterRealm.SslRequired = expandEnvVars(cfg.MasterRealm.SslRequired)
+		expandUsers(cfg.MasterRealm.Users)
+	}
+
 	for i := range cfg.Realms {
 		r := &cfg.Realms[i]
 		r.Realm = expandEnvVars(r.Realm)
 		r.DisplayName = expandEnvVars(r.DisplayName)
+		r.SslRequired = expandEnvVars(r.SslRequired)
 		r.LoginTheme = expandEnvVars(r.LoginTheme)
 
 		for j := range r.Clients {
@@ -156,12 +227,15 @@ func expandConfig(cfg *Config) {
 				c.ClientRoles[k].Name = expandEnvVars(c.ClientRoles[k].Name)
 				c.ClientRoles[k].Description = expandEnvVars(c.ClientRoles[k].Description)
 			}
+			expandUserRoles(c.ServiceAccountRoles)
 		}
 
 		for j := range r.Roles {
 			r.Roles[j].Name = expandEnvVars(r.Roles[j].Name)
 			r.Roles[j].Description = expandEnvVars(r.Roles[j].Description)
 		}
+
+		expandUsers(r.Users)
 	}
 }
 
@@ -220,6 +294,12 @@ func validate(cfg *Config) error {
 		return err
 	}
 
+	if cfg.MasterRealm != nil {
+		if err := validateMasterRealm(cfg.MasterRealm); err != nil {
+			return err
+		}
+	}
+
 	realmNames := make(map[string]bool)
 
 	for i, r := range cfg.Realms {
@@ -233,12 +313,16 @@ func validate(cfg *Config) error {
 			return fmt.Errorf("realms[%d].realm: contains null byte", i)
 		}
 		if r.Realm == "master" {
-			return fmt.Errorf("realms[%d].realm: provisioning the \"master\" realm is not allowed", i)
+			return fmt.Errorf("realms[%d].realm: provisioning the \"master\" realm is not allowed; use masterRealm instead", i)
 		}
 		if realmNames[r.Realm] {
 			return fmt.Errorf("realms[%d].realm: duplicate realm name %q", i, r.Realm)
 		}
 		realmNames[r.Realm] = true
+
+		if !validSslRequired[r.SslRequired] {
+			return fmt.Errorf("realms[%d].sslRequired: invalid value %q (must be \"external\", \"all\", or \"none\")", i, r.SslRequired)
+		}
 
 		if err := scanNullBytes(map[string]string{
 			fmt.Sprintf("realms[%d].displayName", i): r.DisplayName,
@@ -254,8 +338,77 @@ func validate(cfg *Config) error {
 		if err := validateRealmRoles(i, r.Roles); err != nil {
 			return err
 		}
+
+		if err := validateUsers(fmt.Sprintf("realms[%d]", i), r.Users); err != nil {
+			return err
+		}
 	}
 
+	return nil
+}
+
+func validateMasterRealm(mr *MasterRealmConfig) error {
+	if !validSslRequired[mr.SslRequired] {
+		return fmt.Errorf("masterRealm.sslRequired: invalid value %q (must be \"external\", \"all\", or \"none\")", mr.SslRequired)
+	}
+	if err := validateUsers("masterRealm", mr.Users); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateUsers(prefix string, users []User) error {
+	names := make(map[string]bool)
+
+	for i, u := range users {
+		p := fmt.Sprintf("%s.users[%d]", prefix, i)
+
+		if u.Username == "" {
+			return fmt.Errorf("%s.username: is required", p)
+		}
+		if containsNullByte(u.Username) {
+			return fmt.Errorf("%s.username: contains null byte", p)
+		}
+		if names[u.Username] {
+			return fmt.Errorf("%s.username: duplicate username %q", p, u.Username)
+		}
+		names[u.Username] = true
+
+		if err := scanNullBytes(map[string]string{
+			p + ".password":  u.Password,
+			p + ".email":     u.Email,
+			p + ".firstName": u.FirstName,
+			p + ".lastName":  u.LastName,
+		}); err != nil {
+			return err
+		}
+
+		if u.Roles != nil {
+			if err := validateUserRoles(p, u.Roles); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func validateUserRoles(prefix string, roles *UserRoles) error {
+	for i, r := range roles.Realm {
+		if containsNullByte(r) {
+			return fmt.Errorf("%s.roles.realm[%d]: contains null byte", prefix, i)
+		}
+	}
+	for clientID, clientRoles := range roles.Clients {
+		if containsNullByte(clientID) {
+			return fmt.Errorf("%s.roles.clients: client ID contains null byte", prefix)
+		}
+		for i, r := range clientRoles {
+			if containsNullByte(r) {
+				return fmt.Errorf("%s.roles.clients.%s[%d]: contains null byte", prefix, clientID, i)
+			}
+		}
+	}
 	return nil
 }
 
@@ -312,6 +465,15 @@ func validateClients(realmIdx int, clients []Client) error {
 
 		if err := validateClientRoles(prefix, c.ClientRoles); err != nil {
 			return err
+		}
+
+		if c.ServiceAccountRoles != nil {
+			if c.ServiceAccountsEnabled == nil || !*c.ServiceAccountsEnabled {
+				return fmt.Errorf("%s.serviceAccountRoles: serviceAccountsEnabled must be true when serviceAccountRoles is set", prefix)
+			}
+			if err := validateUserRoles(prefix+".serviceAccount", c.ServiceAccountRoles); err != nil {
+				return err
+			}
 		}
 	}
 

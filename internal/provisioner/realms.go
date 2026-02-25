@@ -2,6 +2,7 @@ package provisioner
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"keycloak-provisioner/internal/config"
@@ -40,6 +41,9 @@ func buildRealmBody(realm config.Realm) map[string]any {
 	if realm.Enabled != nil {
 		body["enabled"] = *realm.Enabled
 	}
+	if realm.SslRequired != "" {
+		body["sslRequired"] = realm.SslRequired
+	}
 	if realm.LoginTheme != "" {
 		body["loginTheme"] = realm.LoginTheme
 	}
@@ -51,4 +55,32 @@ func buildRealmBody(realm config.Realm) map[string]any {
 	}
 
 	return body
+}
+
+func (p *Provisioner) ensureMasterRealm(ctx context.Context, mr *config.MasterRealmConfig) error {
+	if mr.SslRequired != "" {
+		existing, err := p.client.GetRealm(ctx, "master")
+		if err != nil {
+			return fmt.Errorf("getting master realm: %w", err)
+		}
+		if existing == nil {
+			return fmt.Errorf("master realm not found (unexpected)")
+		}
+
+		currentSsl, _ := existing["sslRequired"].(string)
+		if currentSsl != mr.SslRequired {
+			slog.Info("Updating master realm sslRequired", "from", currentSsl, "to", mr.SslRequired)
+			body := map[string]any{
+				"realm":       "master",
+				"sslRequired": mr.SslRequired,
+			}
+			if err := p.client.UpdateRealm(ctx, "master", body); err != nil {
+				return fmt.Errorf("updating master realm: %w", err)
+			}
+		} else {
+			slog.Info("Master realm sslRequired already set", "value", currentSsl)
+		}
+	}
+
+	return nil
 }

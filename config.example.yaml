@@ -3,10 +3,25 @@
 # Set globally or per realm (realm strategy overrides global).
 # strategy: "update"
 
+# Master realm configuration (update-only, never created).
+# masterRealm:
+#   sslRequired: external  # "external", "all", or "none"
+#   users:
+#     - username: "admin-new"
+#       password: "${ADMIN_PASSWORD}"
+#       enabled: true
+#       email: "admin@example.com"
+#       firstName: "Admin"
+#       lastName: "User"
+#       roles:
+#         realm:
+#           - admin
+
 realms:
   - realm: "my-realm"
     displayName: "My Realm"
     enabled: true
+    sslRequired: "external"
     loginTheme: "keycloak"
     registrationAllowed: false
     resetPasswordAllowed: true
@@ -53,8 +68,34 @@ realms:
           - name: "user"
             description: "Regular user role"
 
+      # Service account client with role assignments
+      # - clientId: "my-service"
+      #   serviceAccountsEnabled: true
+      #   serviceAccountRoles:
+      #     realm:
+      #       - app-admin
+      #     clients:
+      #       another-client:
+      #         - some-role
+
     roles:
       - name: "app-admin"
         description: "Application administrator"
       - name: "app-user"
         description: "Application user"
+
+    # User management
+    # users:
+    #   - username: "service-admin"
+    #     password: "${SERVICE_ADMIN_PASSWORD}"
+    #     enabled: true
+    #     email: "admin@example.com"
+    #     firstName: "Service"
+    #     lastName: "Admin"
+    #     emailVerified: true
+    #     roles:
+    #       realm:
+    #         - app-admin
+    #       clients:
+    #         my-app:
+    #           - admin
