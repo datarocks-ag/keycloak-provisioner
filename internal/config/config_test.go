@@ -571,6 +571,54 @@ realms:
 	})
 }
 
+func TestSslRequiredNormalizedToLowercase(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"external", "external"},
+		{"all", "all"},
+		{"none", "none"},
+		{"EXTERNAL", "external"},
+		{"External", "external"},
+		{"ALL", "all"},
+		{"NONE", "none"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			yaml := `
+realms:
+  - realm: "test"
+    sslRequired: "` + tt.input + `"
+`
+			path := writeTempConfig(t, yaml)
+			cfg, err := Load(path)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if cfg.Realms[0].SslRequired != tt.want {
+				t.Errorf("expected sslRequired=%q, got %q", tt.want, cfg.Realms[0].SslRequired)
+			}
+		})
+	}
+
+	t.Run("masterRealm", func(t *testing.T) {
+		yaml := `
+masterRealm:
+  sslRequired: External
+`
+		path := writeTempConfig(t, yaml)
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.MasterRealm.SslRequired != "external" {
+			t.Errorf("expected sslRequired=external, got %q", cfg.MasterRealm.SslRequired)
+		}
+	})
+}
+
 func TestMasterRealmConfig(t *testing.T) {
 	t.Setenv("TEST_ADMIN_PW", "secret123")
 	yaml := `
