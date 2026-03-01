@@ -30,6 +30,22 @@ func setupKeycloak(t *testing.T) (*client.Client, func()) {
 		t.Fatalf("failed to start keycloak container: %v", err)
 	}
 
+	// Keycloak defaults master realm sslRequired=EXTERNAL, which blocks
+	// token requests over HTTP from outside the container (Docker bridge).
+	// Use kcadm.sh inside the container (where localhost is allowed) to
+	// disable SSL so our HTTP-based client can authenticate.
+	exitCode, _, err := kcContainer.Exec(ctx, []string{
+		"/opt/keycloak/bin/kcadm.sh", "update", "realms/master",
+		"-s", "sslRequired=NONE",
+		"--server", "http://localhost:8080",
+		"--realm", "master",
+		"--user", "admin",
+		"--password", "admin",
+	})
+	if err != nil || exitCode != 0 {
+		t.Fatalf("failed to disable SSL on master realm: exit=%d err=%v", exitCode, err)
+	}
+
 	baseURL, err := kcContainer.GetAuthServerURL(ctx)
 	if err != nil {
 		t.Fatalf("failed to get auth server URL: %v", err)
@@ -680,6 +696,104 @@ realms:
 	}
 	if role2["description"] != "Original B" {
 		t.Errorf("expected 'Original B', got %v", role2["description"])
+	}
+}
+
+func TestIntegrationSslRequired(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Test 1: Set sslRequired on a realm using lowercase config value
+	configYAML := `
+masterRealm:
+  sslRequired: none
+realms:
+  - realm: "ssl-test-realm"
+    enabled: true
+    sslRequired: none
+`
+	cfgPath := writeTestConfig(t, configYAML)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+
+	// Verify normalization happened during Load (lowercase)
+	if cfg.MasterRealm.SslRequired != "none" {
+		t.Fatalf("expected config normalized to none, got %q", cfg.MasterRealm.SslRequired)
+	}
+	if cfg.Realms[0].SslRequired != "none" {
+		t.Fatalf("expected config normalized to none, got %q", cfg.Realms[0].SslRequired)
+	}
+
+	p := provisioner.New(kc, cfg)
+	if err := p.Run(ctx); err != nil {
+		t.Fatalf("provisioning run failed: %v", err)
+	}
+
+	// Verify master realm sslRequired was set (Keycloak returns lowercase)
+	master, err := kc.GetRealm(ctx, "master")
+	if err != nil {
+		t.Fatalf("getting master realm: %v", err)
+	}
+	if master["sslRequired"] != "none" {
+		t.Errorf("expected master sslRequired=none, got %v", master["sslRequired"])
+	}
+
+	// Verify realm sslRequired was set
+	realm, err := kc.GetRealm(ctx, "ssl-test-realm")
+	if err != nil {
+		t.Fatalf("getting realm: %v", err)
+	}
+	if realm == nil {
+		t.Fatal("realm not found after provisioning")
+	}
+	if realm["sslRequired"] != "none" {
+		t.Errorf("expected sslRequired=none, got %v", realm["sslRequired"])
+	}
+
+	// Test 2: Idempotent re-run with same value should not error
+	p2 := provisioner.New(kc, cfg)
+	if err := p2.Run(ctx); err != nil {
+		t.Fatalf("idempotent re-run failed: %v", err)
+	}
+
+	// Test 3: Change sslRequired to a different value
+	configYAML2 := `
+masterRealm:
+  sslRequired: external
+realms:
+  - realm: "ssl-test-realm"
+    enabled: true
+    sslRequired: external
+`
+	cfgPath2 := writeTestConfig(t, configYAML2)
+	cfg2, err := config.Load(cfgPath2)
+	if err != nil {
+		t.Fatalf("failed to load updated config: %v", err)
+	}
+
+	p3 := provisioner.New(kc, cfg2)
+	if err := p3.Run(ctx); err != nil {
+		t.Fatalf("update run failed: %v", err)
+	}
+
+	master2, err := kc.GetRealm(ctx, "master")
+	if err != nil {
+		t.Fatalf("getting master realm: %v", err)
+	}
+	if master2["sslRequired"] != "external" {
+		t.Errorf("expected master sslRequired=external, got %v", master2["sslRequired"])
+	}
+
+	realm2, err := kc.GetRealm(ctx, "ssl-test-realm")
+	if err != nil {
+		t.Fatalf("getting realm: %v", err)
+	}
+	if realm2["sslRequired"] != "external" {
+		t.Errorf("expected sslRequired=external, got %v", realm2["sslRequired"])
 	}
 }
 

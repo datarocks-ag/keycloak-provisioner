@@ -28,8 +28,9 @@ func EffectiveStrategy(strategies ...string) string {
 }
 
 // validSslRequired is the allowlist of sslRequired values.
+// Keycloak uses lowercase values in its REST API.
 var validSslRequired = map[string]bool{
-	"":         true, // not set, leave as-is
+	"":         true,
 	"external": true,
 	"all":      true,
 	"none":     true,
@@ -177,9 +178,14 @@ func expandUsers(users []User) {
 }
 
 // expandConfig walks the config and expands env vars in string fields.
+// normalizeSslRequired lowercases the sslRequired value to match Keycloak's API.
+func normalizeSslRequired(value string) string {
+	return strings.ToLower(value)
+}
+
 func expandConfig(cfg *Config) {
 	if cfg.MasterRealm != nil {
-		cfg.MasterRealm.SslRequired = expandEnvVars(cfg.MasterRealm.SslRequired)
+		cfg.MasterRealm.SslRequired = normalizeSslRequired(expandEnvVars(cfg.MasterRealm.SslRequired))
 		expandUsers(cfg.MasterRealm.Users)
 	}
 
@@ -187,7 +193,7 @@ func expandConfig(cfg *Config) {
 		r := &cfg.Realms[i]
 		r.Realm = expandEnvVars(r.Realm)
 		r.DisplayName = expandEnvVars(r.DisplayName)
-		r.SslRequired = expandEnvVars(r.SslRequired)
+		r.SslRequired = normalizeSslRequired(expandEnvVars(r.SslRequired))
 		r.LoginTheme = expandEnvVars(r.LoginTheme)
 
 		for j := range r.Clients {
