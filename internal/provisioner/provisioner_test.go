@@ -1313,6 +1313,88 @@ func TestEnsureUserWithPassword(t *testing.T) {
 	}
 }
 
+func TestEnsureUserWithInitialPassword_NewUser(t *testing.T) {
+	var mu sync.Mutex
+	var passwordBody map[string]any
+	passwordSet := false
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/users": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{})
+		},
+		"POST /admin/realms/{realm}/users": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Location", r.URL.String()+"/user-uuid-1")
+			w.WriteHeader(http.StatusCreated)
+		},
+		"PUT /admin/realms/{realm}/users/{id}/reset-password": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			defer mu.Unlock()
+			json.NewDecoder(r.Body).Decode(&passwordBody)
+			passwordSet = true
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	c := newTestClient(t, server.URL)
+	user := config.User{
+		Username:        "newuser",
+		InitialPassword: "changeme",
+	}
+
+	p := New(c, &config.Config{})
+	if err := p.ensureUser(context.Background(), "test-realm", user, "update"); err != nil {
+		t.Fatalf("ensureUser: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !passwordSet {
+		t.Error("expected initial password to be set for new user")
+	}
+	if passwordBody["value"] != "changeme" {
+		t.Errorf("expected password changeme, got %v", passwordBody["value"])
+	}
+	if passwordBody["temporary"] != true {
+		t.Errorf("expected temporary=true, got %v", passwordBody["temporary"])
+	}
+}
+
+func TestEnsureUserWithInitialPassword_ExistingUser(t *testing.T) {
+	var passwordResetCalled atomic.Bool
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/users": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"id": "existing-uuid", "username": "existinguser"},
+			})
+		},
+		"PUT /admin/realms/{realm}/users/{id}": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		},
+		"PUT /admin/realms/{realm}/users/{id}/reset-password": func(w http.ResponseWriter, r *http.Request) {
+			passwordResetCalled.Store(true)
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	c := newTestClient(t, server.URL)
+	user := config.User{
+		Username:        "existinguser",
+		InitialPassword: "changeme",
+	}
+
+	p := New(c, &config.Config{})
+	if err := p.ensureUser(context.Background(), "test-realm", user, "update"); err != nil {
+		t.Fatalf("ensureUser: %v", err)
+	}
+
+	if passwordResetCalled.Load() {
+		t.Error("expected initial password not to be set for existing user")
+	}
+}
+
 func TestEnsureUserWithRealmRoles(t *testing.T) {
 	var mu sync.Mutex
 	var addedRoles []map[string]any

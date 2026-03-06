@@ -167,7 +167,8 @@ Users can be provisioned in any realm (including master via `masterRealm.users`)
 | Field | Type | Description |
 |---|---|---|
 | `username` | string | **Required.** Username |
-| `password` | string | Password (set on every run via reset-password API) |
+| `password` | string | Permanent password (set on every run via reset-password API). Mutually exclusive with `initialPassword`. |
+| `initialPassword` | string | Temporary password — only set when the user is first created. The user must change it on first login. Ignored on subsequent runs if the user already exists. Mutually exclusive with `password`. |
 | `enabled` | bool | Whether the user is enabled |
 | `email` | string | Email address |
 | `firstName` | string | First name |
