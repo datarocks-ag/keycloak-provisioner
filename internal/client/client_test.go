@@ -976,7 +976,7 @@ func TestResetUserPassword_Success(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	err := c.ResetUserPassword(context.Background(), "test", "user-uuid-1", "newpassword")
+	err := c.ResetUserPassword(context.Background(), "test", "user-uuid-1", "newpassword", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1001,7 +1001,7 @@ func TestResetUserPassword_Error(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	err := c.ResetUserPassword(context.Background(), "test", "user-uuid-1", "pw")
+	err := c.ResetUserPassword(context.Background(), "test", "user-uuid-1", "pw", false)
 	if err == nil {
 		t.Fatal("expected error")
 	}

@@ -17,6 +17,7 @@ func (p *Provisioner) ensureUser(ctx context.Context, realm string, user config.
 	body := buildUserBody(user)
 
 	var userID string
+	created := false
 
 	if len(existing) == 0 {
 		slog.Info("Creating user", "realm", realm, "username", user.Username)
@@ -25,6 +26,7 @@ func (p *Provisioner) ensureUser(ctx context.Context, realm string, user config.
 			return err
 		}
 		userID = id
+		created = true
 	} else {
 		id, ok := existing[0]["id"].(string)
 		if !ok {
@@ -45,7 +47,12 @@ func (p *Provisioner) ensureUser(ctx context.Context, realm string, user config.
 
 	if user.Password != "" {
 		slog.Info("Setting user password", "realm", realm, "username", user.Username)
-		if err := p.client.ResetUserPassword(ctx, realm, userID, user.Password); err != nil {
+		if err := p.client.ResetUserPassword(ctx, realm, userID, user.Password, false); err != nil {
+			return err
+		}
+	} else if user.InitialPassword != "" && created {
+		slog.Info("Setting initial (temporary) password", "realm", realm, "username", user.Username)
+		if err := p.client.ResetUserPassword(ctx, realm, userID, user.InitialPassword, true); err != nil {
 			return err
 		}
 	}

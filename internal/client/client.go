@@ -541,13 +541,14 @@ func (c *Client) UpdateUser(ctx context.Context, realm, userID string, body map[
 	return nil
 }
 
-// ResetUserPassword sets a user's password (non-temporary).
-func (c *Client) ResetUserPassword(ctx context.Context, realm, userID, password string) error {
+// ResetUserPassword sets a user's password. When temporary is true, the user
+// must change the password on first login.
+func (c *Client) ResetUserPassword(ctx context.Context, realm, userID, password string, temporary bool) error {
 	path := "/admin/realms/" + url.PathEscape(realm) + "/users/" + url.PathEscape(userID) + "/reset-password"
 	body := map[string]any{
 		"type":      "password",
 		"value":     password,
-		"temporary": false,
+		"temporary": temporary,
 	}
 	resp, err := c.doRequest(ctx, http.MethodPut, path, body)
 	if err != nil {

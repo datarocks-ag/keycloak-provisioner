@@ -87,7 +87,7 @@ realms:
     # User management
     # users:
     #   - username: "service-admin"
-    #     password: "${SERVICE_ADMIN_PASSWORD}"
+    #     password: "${SERVICE_ADMIN_PASSWORD}"    # permanent password, reset on every run
     #     enabled: true
     #     email: "admin@example.com"
     #     firstName: "Service"
@@ -99,3 +99,11 @@ realms:
     #       clients:
     #         my-app:
     #           - admin
+    #
+    #   # Use initialPassword instead of password for one-time setup.
+    #   # Only set when the user is first created; ignored on subsequent runs.
+    #   # The user must change the password on first login.
+    #   - username: "new-user"
+    #     initialPassword: "changeme"
+    #     enabled: true
+    #     email: "user@example.com"

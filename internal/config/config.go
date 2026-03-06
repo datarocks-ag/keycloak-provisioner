@@ -115,14 +115,15 @@ type ClientRole struct {
 
 // User defines a Keycloak user to provision within a realm.
 type User struct {
-	Username      string     `yaml:"username"`
-	Password      string     `yaml:"password"`
-	Enabled       *bool      `yaml:"enabled"`
-	Email         string     `yaml:"email"`
-	FirstName     string     `yaml:"firstName"`
-	LastName      string     `yaml:"lastName"`
-	EmailVerified *bool      `yaml:"emailVerified"`
-	Roles         *UserRoles `yaml:"roles"`
+	Username          string     `yaml:"username"`
+	Password        string     `yaml:"password"`
+	InitialPassword string     `yaml:"initialPassword"`
+	Enabled           *bool      `yaml:"enabled"`
+	Email             string     `yaml:"email"`
+	FirstName         string     `yaml:"firstName"`
+	LastName          string     `yaml:"lastName"`
+	EmailVerified     *bool      `yaml:"emailVerified"`
+	Roles             *UserRoles `yaml:"roles"`
 }
 
 // UserRoles defines realm and client role assignments for a user or service account.
@@ -170,6 +171,7 @@ func expandUsers(users []User) {
 		u := &users[i]
 		u.Username = expandEnvVars(u.Username)
 		u.Password = expandEnvVars(u.Password)
+		u.InitialPassword = expandEnvVars(u.InitialPassword)
 		u.Email = expandEnvVars(u.Email)
 		u.FirstName = expandEnvVars(u.FirstName)
 		u.LastName = expandEnvVars(u.LastName)
@@ -380,11 +382,16 @@ func validateUsers(prefix string, users []User) error {
 		}
 		names[u.Username] = true
 
+		if u.Password != "" && u.InitialPassword != "" {
+			return fmt.Errorf("%s: password and initialPassword are mutually exclusive", p)
+		}
+
 		if err := scanNullBytes(map[string]string{
-			p + ".password":  u.Password,
-			p + ".email":     u.Email,
-			p + ".firstName": u.FirstName,
-			p + ".lastName":  u.LastName,
+			p + ".password":        u.Password,
+			p + ".initialPassword": u.InitialPassword,
+			p + ".email":           u.Email,
+			p + ".firstName":       u.FirstName,
+			p + ".lastName":        u.LastName,
 		}); err != nil {
 			return err
 		}
