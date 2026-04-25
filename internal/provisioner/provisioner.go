@@ -5,20 +5,20 @@ import (
 	"fmt"
 	"log/slog"
 
-	"keycloak-provisioner/internal/client"
 	"keycloak-provisioner/internal/config"
 )
 
 // Provisioner orchestrates idempotent Keycloak resource provisioning.
 type Provisioner struct {
-	client *client.Client
+	client KeycloakAPI
 	cfg    *config.Config
 }
 
-// New creates a new Provisioner.
-func New(client *client.Client, cfg *config.Config) *Provisioner {
+// New creates a new Provisioner. The api argument is the Keycloak adapter to
+// use; *client.Client is the production implementation.
+func New(api KeycloakAPI, cfg *config.Config) *Provisioner {
 	return &Provisioner{
-		client: client,
+		client: api,
 		cfg:    cfg,
 	}
 }
@@ -33,8 +33,9 @@ func (p *Provisioner) Run(ctx context.Context) error {
 			return fmt.Errorf("provisioning master realm: %w", err)
 		}
 
+		masterStrategy := config.EffectiveStrategy(p.cfg.Strategy)
 		for _, user := range p.cfg.MasterRealm.Users {
-			if err := p.ensureUser(ctx, "master", user, "update"); err != nil {
+			if err := p.ensureUser(ctx, "master", user, masterStrategy); err != nil {
 				return fmt.Errorf("ensuring user %q in master realm: %w", user.Username, err)
 			}
 		}
