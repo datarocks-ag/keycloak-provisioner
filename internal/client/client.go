@@ -48,7 +48,14 @@ func New(baseURL, username, password string) *Client {
 // Connect authenticates to Keycloak with retry logic.
 // Warns if the base URL does not use HTTPS.
 func (c *Client) Connect(ctx context.Context) error {
-	if strings.HasPrefix(c.baseURL, "http://") {
+	parsed, err := url.Parse(c.baseURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("invalid Keycloak URL %q: must include scheme and host", c.baseURL)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("invalid Keycloak URL %q: scheme must be http or https", c.baseURL)
+	}
+	if parsed.Scheme == "http" {
 		slog.Warn("Keycloak URL uses plain HTTP — credentials will be sent unencrypted", "url", c.baseURL)
 	}
 	ctx, cancel := context.WithTimeout(ctx, totalTimeout)
@@ -124,6 +131,9 @@ func (c *Client) authenticate(ctx context.Context) error {
 	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
 		return fmt.Errorf("decoding token response: %w", err)
 	}
+	if tokenResp.AccessToken == "" {
+		return fmt.Errorf("token response missing access_token")
+	}
 
 	c.mu.Lock()
 	c.accessToken = tokenResp.AccessToken
@@ -133,16 +143,24 @@ func (c *Client) authenticate(ctx context.Context) error {
 	return nil
 }
 
-func (c *Client) ensureToken(ctx context.Context) error {
+// currentToken returns the current access token, refreshing if expired.
+// All read/write to accessToken happens under c.mu.
+func (c *Client) currentToken(ctx context.Context) (string, error) {
 	c.mu.Lock()
 	expired := time.Now().After(c.expiresAt)
 	c.mu.Unlock()
 
 	if expired {
 		slog.Debug("Refreshing Keycloak access token")
-		return c.authenticate(ctx)
+		if err := c.authenticate(ctx); err != nil {
+			return "", err
+		}
 	}
-	return nil
+
+	c.mu.Lock()
+	token := c.accessToken
+	c.mu.Unlock()
+	return token, nil
 }
 
 func (c *Client) doRequest(ctx context.Context, method, path string, body any) (*http.Response, error) {
@@ -157,7 +175,8 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any) (
 	}
 
 	for attempt := 0; attempt < 2; attempt++ {
-		if err := c.ensureToken(ctx); err != nil {
+		token, err := c.currentToken(ctx)
+		if err != nil {
 			return nil, fmt.Errorf("ensuring token: %w", err)
 		}
 
@@ -172,10 +191,6 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any) (
 		if err != nil {
 			return nil, fmt.Errorf("creating request: %w", err)
 		}
-
-		c.mu.Lock()
-		token := c.accessToken
-		c.mu.Unlock()
 
 		req.Header.Set("Authorization", "Bearer "+token)
 		if body != nil {
