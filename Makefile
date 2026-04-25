@@ -1,4 +1,4 @@
-.PHONY: build test test-integration lint vet fmt mod-tidy docker clean
+.PHONY: build test test-integration lint vet fmt mod-tidy cover docker clean
 
 BINARY := keycloak-provisioner
 
@@ -23,8 +23,12 @@ fmt:
 mod-tidy:
 	go mod tidy
 
+cover:
+	go test -coverprofile=coverage.out ./...
+	go tool cover -func=coverage.out
+
 docker:
 	docker build -t $(BINARY) .
 
 clean:
-	rm -f $(BINARY)
+	rm -f $(BINARY) coverage.out

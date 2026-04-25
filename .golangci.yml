@@ -7,6 +7,10 @@ linters:
     - staticcheck
     - unused
     - ineffassign
+    - gosec
+    - misspell
+    - revive
+    - unconvert
 
   settings:
     errcheck:
@@ -16,6 +20,39 @@ linters:
         - (*encoding/json.Encoder).Encode
         - (*encoding/json.Decoder).Decode
         - os.Unsetenv
+    gosec:
+      excludes:
+        # G104 is covered by errcheck (with our exclusions); avoid double-reporting.
+        - G104
+        # G304 file inclusion via variable: config path is intentionally user-supplied.
+        - G304
+        # G706 log injection: slog uses structured key-value attrs, not string concatenation.
+        - G706
+    revive:
+      rules:
+        - name: package-comments
+          disabled: true
+        - name: unused-parameter
+          disabled: true
+
+  exclusions:
+    rules:
+      # Test files: relax some lint categories to keep test code terse.
+      - path: _test\.go
+        linters:
+          - gosec
+          - errcheck
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+  settings:
+    gofumpt:
+      module-path: keycloak-provisioner
+    goimports:
+      local-prefixes:
+        - keycloak-provisioner
 
 issues:
   exclude-dirs:

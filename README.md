@@ -12,8 +12,9 @@ A Go CLI tool that idempotently provisions Keycloak resources from a YAML config
 - `sslRequired` setting on any realm (`external`, `all`, `none`)
 - User management with password setting and realm/client role assignment
 - Service account role mapping for machine-to-machine clients
-- YAML config with `${VAR}` environment variable expansion
+- YAML config with `${VAR}` environment variable expansion (and `$${VAR}` escape for literals)
 - Configurable strategy: `update` (default) or `create` (skip existing)
+- `--dry-run` mode that logs all intended changes without applying them
 - Exponential backoff retry for Keycloak connectivity
 - Structured JSON logging via `log/slog`
 - No external Keycloak SDK — pure `net/http`
@@ -38,6 +39,14 @@ This starts Keycloak and runs the provisioner with the example config.
 
 **Security note:** Use HTTPS in production. The provisioner logs a warning when using plain HTTP.
 
+## Command-line Flags
+
+| Flag | Description |
+|---|---|
+| `--config <path>` | Path to YAML config; overrides `KEYCLOAK_CONFIG_PATH` |
+| `--dry-run` | Log all intended changes without applying them |
+| `--version` | Print version and exit |
+
 ## Strategy
 
 Control whether existing resources are updated or skipped using the `strategy` field:
@@ -57,11 +66,22 @@ realms:
 
 ## Environment Variable Expansion
 
-String values support `${VAR}` syntax. If the variable is set in the environment, it is replaced; if unset, the placeholder is preserved as-is.
+String values support `${VAR}` syntax. If the variable is set in the environment, it is replaced; if unset, the placeholder is preserved as-is. Use `$${VAR}` to keep a literal `${VAR}` in the rendered config.
 
 ```yaml
-secret: "${MY_APP_CLIENT_SECRET}"    # replaced with env var value at load time
+secret: "${MY_APP_CLIENT_SECRET}"     # replaced with env var value at load time
+literal: "$${MY_APP_CLIENT_SECRET}"   # rendered as the literal string ${MY_APP_CLIENT_SECRET}
 ```
+
+Unknown YAML fields are rejected at load time so typos surface immediately.
+
+## Dry-Run
+
+```bash
+keycloak-provisioner --dry-run
+```
+
+In dry-run mode, every mutating call logs a `DRY-RUN:` message and is skipped. Read calls pass through to Keycloak so drift between current state and config is still observed. Resources that would be created return synthetic IDs internally so the full intended sequence (clients inside a new realm, role assignments to new users, service-account role mappings on new clients) is reported in one run.
 
 ## Provisioning Order
 
