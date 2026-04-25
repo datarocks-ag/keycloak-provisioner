@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -10,7 +11,7 @@ func writeTempConfig(t *testing.T, content string) string {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("writing temp config: %v", err)
 	}
 	return path
@@ -851,5 +852,68 @@ realms:
 	}
 	if r.Roles[0].Description != "Realm admin desc" {
 		t.Errorf("realm role description not expanded: %s", r.Roles[0].Description)
+	}
+}
+
+func TestLoadRejectsUnknownFields(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "ok"
+    badTypo: "should fail"
+`
+	path := writeTempConfig(t, yaml)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for unknown YAML field")
+	}
+	if !strings.Contains(err.Error(), "badTypo") {
+		t.Errorf("expected error to mention unknown field, got: %v", err)
+	}
+}
+
+func TestExpandEnvVarsEscape(t *testing.T) {
+	t.Setenv("EVE_CLIENT_ID", "real-client")
+
+	yaml := `
+realms:
+  - realm: "r"
+    clients:
+      - clientId: "$${EVE_CLIENT_ID}"
+        secret: "${EVE_CLIENT_ID}"
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	c := cfg.Realms[0].Clients[0]
+	if c.ClientID != "${EVE_CLIENT_ID}" {
+		t.Errorf("escape not honoured: got %q want %q", c.ClientID, "${EVE_CLIENT_ID}")
+	}
+	if c.Secret != "real-client" {
+		t.Errorf("expansion broken: got %q want %q", c.Secret, "real-client")
+	}
+}
+
+func TestExpandEnvVarsAttributeKeys(t *testing.T) {
+	t.Setenv("ATTR_KEY", "post.logout.redirect.uris")
+	t.Setenv("ATTR_VAL", "+")
+
+	yaml := `
+realms:
+  - realm: "r"
+    clients:
+      - clientId: "app"
+        attributes:
+          "${ATTR_KEY}": "${ATTR_VAL}"
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	attrs := cfg.Realms[0].Clients[0].Attributes
+	if attrs["post.logout.redirect.uris"] != "+" {
+		t.Errorf("attribute key not expanded: %v", attrs)
 	}
 }
