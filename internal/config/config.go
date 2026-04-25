@@ -2,7 +2,9 @@ package config
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"strings"
@@ -270,6 +272,14 @@ func Load(path string) (*Config, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 	if err := dec.Decode(&cfg); err != nil {
+		return nil, fmt.Errorf("parsing config YAML: %w", err)
+	}
+	// Reject trailing YAML documents (everything after the first `---`).
+	var trailing yaml.Node
+	if err := dec.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return nil, fmt.Errorf("parsing config YAML: file contains multiple YAML documents; only one is supported")
+		}
 		return nil, fmt.Errorf("parsing config YAML: %w", err)
 	}
 

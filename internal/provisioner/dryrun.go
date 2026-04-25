@@ -235,7 +235,7 @@ func (d *dryRunAPI) AddUserRealmRoleMappings(_ context.Context, realm, userID st
 }
 
 func (d *dryRunAPI) GetUserClientRoleMappings(ctx context.Context, realm, userID, clientUUID string) ([]map[string]any, error) {
-	if isSyntheticID(userID) || d.realmIsSynthetic(realm) {
+	if isSyntheticID(userID) || isSyntheticID(clientUUID) || d.realmIsSynthetic(realm) {
 		return nil, nil
 	}
 	return d.inner.GetUserClientRoleMappings(ctx, realm, userID, clientUUID)

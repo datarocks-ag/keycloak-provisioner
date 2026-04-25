@@ -855,6 +855,24 @@ realms:
 	}
 }
 
+func TestLoadRejectsMultipleDocuments(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "first"
+---
+realms:
+  - realm: "second"
+`
+	path := writeTempConfig(t, yaml)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for multi-document YAML")
+	}
+	if !strings.Contains(err.Error(), "multiple YAML documents") {
+		t.Errorf("expected multi-document error, got: %v", err)
+	}
+}
+
 func TestLoadRejectsUnknownFields(t *testing.T) {
 	yaml := `
 realms:

@@ -301,6 +301,20 @@ func TestDryRunSyntheticUserShortCircuitsRoleLookups(t *testing.T) {
 	}
 }
 
+// Real (existing) user assigned a role on a newly-created (synthetic) client:
+// GetUserClientRoleMappings must short-circuit so the dry-run can continue.
+func TestDryRunSyntheticClientShortCircuitsUserRoleMappings(t *testing.T) {
+	inner := newFakeAPI()
+	d := NewDryRunAdapter(inner)
+	ctx := context.Background()
+
+	clientUUID, _ := d.CreateClient(ctx, "r", map[string]any{"clientId": "new-client"})
+
+	if mappings, _ := d.GetUserClientRoleMappings(ctx, "r", "real-user-uuid", clientUUID); mappings != nil {
+		t.Errorf("expected nil for synthetic client UUID, got %v", mappings)
+	}
+}
+
 func TestDryRunSubResourcesShortCircuitedForCreatedRealm(t *testing.T) {
 	inner := newFakeAPI()
 	d := NewDryRunAdapter(inner)

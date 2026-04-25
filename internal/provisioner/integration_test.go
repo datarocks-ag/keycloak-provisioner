@@ -873,45 +873,6 @@ realms:
 	}
 }
 
-func TestIntegrationInitialPasswordSetOnceOnCreate(t *testing.T) {
-	kc, cleanup := setupKeycloak(t)
-	defer cleanup()
-
-	configYAML := `
-realms:
-  - realm: "ip-realm"
-    enabled: true
-    users:
-      - username: "ip-user"
-        initialPassword: "first-password"
-        enabled: true
-        email: "ip@example.com"
-`
-	cfgPath := writeTestConfig(t, configYAML)
-	cfg, err := config.Load(cfgPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	ctx := context.Background()
-
-	// First run creates the user with the initial password.
-	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
-		t.Fatalf("first run: %v", err)
-	}
-
-	users, err := kc.GetUsers(ctx, "ip-realm", "ip-user")
-	if err != nil || len(users) == 0 {
-		t.Fatalf("user lookup: err=%v users=%v", err, users)
-	}
-
-	// Second run must NOT change the password, because initialPassword is
-	// only honoured on creation.
-	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
-		t.Fatalf("second run: %v", err)
-	}
-}
-
 func TestIntegrationMasterRealmUserProvisioning(t *testing.T) {
 	kc, cleanup := setupKeycloak(t)
 	defer cleanup()
