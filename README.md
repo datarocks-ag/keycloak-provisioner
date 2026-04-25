@@ -5,6 +5,8 @@
 
 A Go CLI tool that idempotently provisions Keycloak resources from a YAML config file. Designed as a Docker Compose init container.
 
+Release notes are maintained in [CHANGELOG.md](CHANGELOG.md).
+
 ## Features
 
 - Idempotent provisioning of realms, clients, protocol mappers, realm roles, client roles, users, and service account roles
