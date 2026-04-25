@@ -246,12 +246,19 @@ func TestDryRunNewlyCreatedRealmRoleIsLookupable(t *testing.T) {
 	if err := d.CreateRealmRole(ctx, "r", map[string]any{"name": "admin"}); err != nil {
 		t.Fatal(err)
 	}
-	role, err := d.GetRealmRole(ctx, "r", "admin")
+	first, err := d.GetRealmRole(ctx, "r", "admin")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if role == nil || role["name"] != "admin" {
-		t.Errorf("expected synthetic role lookup to succeed, got %v", role)
+	if first == nil || first["name"] != "admin" {
+		t.Errorf("expected synthetic role lookup to succeed, got %v", first)
+	}
+
+	// Repeated lookups must return a stable id so multiple users assigned the
+	// same role get identical role records.
+	second, _ := d.GetRealmRole(ctx, "r", "admin")
+	if second["id"] != first["id"] {
+		t.Errorf("synthetic realm role id not stable: %v vs %v", first["id"], second["id"])
 	}
 }
 
@@ -263,12 +270,17 @@ func TestDryRunNewlyCreatedClientRoleIsLookupable(t *testing.T) {
 	if err := d.CreateClientRole(ctx, "r", "real-uuid", map[string]any{"name": "edit"}); err != nil {
 		t.Fatal(err)
 	}
-	role, err := d.GetClientRole(ctx, "r", "real-uuid", "edit")
+	first, err := d.GetClientRole(ctx, "r", "real-uuid", "edit")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if role == nil || role["name"] != "edit" {
-		t.Errorf("expected synthetic client role lookup to succeed, got %v", role)
+	if first == nil || first["name"] != "edit" {
+		t.Errorf("expected synthetic client role lookup to succeed, got %v", first)
+	}
+
+	second, _ := d.GetClientRole(ctx, "r", "real-uuid", "edit")
+	if second["id"] != first["id"] {
+		t.Errorf("synthetic client role id not stable: %v vs %v", first["id"], second["id"])
 	}
 }
 

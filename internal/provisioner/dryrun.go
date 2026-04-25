@@ -24,15 +24,16 @@ const dryRunIDPrefix = "dryrun-"
 //   - Drift between current state and config IS visible (real reads pass through).
 //   - Roles created in the same dry-run are tracked, so user role assignments
 //     against newly-created roles do not error.
-//   - Errors from the wrapped API still propagate.
+//   - Errors from the wrapped API propagate only for operations that still call it
+//     (pass-through reads); skipped mutating operations always return nil.
 func NewDryRunAdapter(inner KeycloakAPI) KeycloakAPI {
 	return &dryRunAPI{
 		inner:              inner,
 		createdRealms:      make(map[string]bool),
 		createdClients:     make(map[clientKey]string),
 		createdSA:          make(map[saKey]string),
-		createdRealmRoles:  make(map[realmRoleKey]bool),
-		createdClientRoles: make(map[clientRoleKey]bool),
+		createdRealmRoles:  make(map[realmRoleKey]string),
+		createdClientRoles: make(map[clientRoleKey]string),
 	}
 }
 
@@ -51,8 +52,8 @@ type dryRunAPI struct {
 	createdRealms      map[string]bool
 	createdClients     map[clientKey]string
 	createdSA          map[saKey]string
-	createdRealmRoles  map[realmRoleKey]bool
-	createdClientRoles map[clientRoleKey]bool
+	createdRealmRoles  map[realmRoleKey]string  // -> synthetic role id
+	createdClientRoles map[clientRoleKey]string // -> synthetic role id
 }
 
 func (d *dryRunAPI) realmIsSynthetic(realm string) bool {
@@ -123,10 +124,10 @@ func (d *dryRunAPI) UpdateClient(_ context.Context, realm, uuid string, body map
 
 func (d *dryRunAPI) GetRealmRole(ctx context.Context, realm, name string) (map[string]any, error) {
 	d.mu.Lock()
-	found := d.createdRealmRoles[realmRoleKey{realm, name}]
+	id, found := d.createdRealmRoles[realmRoleKey{realm, name}]
 	d.mu.Unlock()
 	if found {
-		return map[string]any{"name": name, "id": d.newID("realm-role")}, nil
+		return map[string]any{"name": name, "id": id}, nil
 	}
 	if d.realmIsSynthetic(realm) {
 		return nil, nil
@@ -137,8 +138,9 @@ func (d *dryRunAPI) GetRealmRole(ctx context.Context, realm, name string) (map[s
 func (d *dryRunAPI) CreateRealmRole(_ context.Context, realm string, body map[string]any) error {
 	name, _ := body["name"].(string)
 	slog.Info("DRY-RUN: would create realm role", "realm", realm, "role", name)
+	id := d.newID("realm-role")
 	d.mu.Lock()
-	d.createdRealmRoles[realmRoleKey{realm, name}] = true
+	d.createdRealmRoles[realmRoleKey{realm, name}] = id
 	d.mu.Unlock()
 	return nil
 }
@@ -152,10 +154,10 @@ func (d *dryRunAPI) UpdateRealmRole(_ context.Context, realm, name string, _ map
 
 func (d *dryRunAPI) GetClientRole(ctx context.Context, realm, clientUUID, name string) (map[string]any, error) {
 	d.mu.Lock()
-	found := d.createdClientRoles[clientRoleKey{realm, clientUUID, name}]
+	id, found := d.createdClientRoles[clientRoleKey{realm, clientUUID, name}]
 	d.mu.Unlock()
 	if found {
-		return map[string]any{"name": name, "id": d.newID("client-role"), "containerId": clientUUID}, nil
+		return map[string]any{"name": name, "id": id, "containerId": clientUUID}, nil
 	}
 	if isSyntheticID(clientUUID) || d.realmIsSynthetic(realm) {
 		return nil, nil
@@ -166,8 +168,9 @@ func (d *dryRunAPI) GetClientRole(ctx context.Context, realm, clientUUID, name s
 func (d *dryRunAPI) CreateClientRole(_ context.Context, realm, clientUUID string, body map[string]any) error {
 	name, _ := body["name"].(string)
 	slog.Info("DRY-RUN: would create client role", "realm", realm, "clientUUID", clientUUID, "role", name)
+	id := d.newID("client-role")
 	d.mu.Lock()
-	d.createdClientRoles[clientRoleKey{realm, clientUUID, name}] = true
+	d.createdClientRoles[clientRoleKey{realm, clientUUID, name}] = id
 	d.mu.Unlock()
 	return nil
 }

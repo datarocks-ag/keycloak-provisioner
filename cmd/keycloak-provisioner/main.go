@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"os"
@@ -19,6 +21,10 @@ var version = "dev"
 func main() {
 	opts, err := cli.Parse(os.Args[1:], cli.OSLookup, os.Stderr)
 	if err != nil {
+		// flag already wrote usage to stderr; exit 0 for help, 2 for misuse.
+		if errors.Is(err, flag.ErrHelp) {
+			return
+		}
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}

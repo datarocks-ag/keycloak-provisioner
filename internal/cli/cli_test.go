@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"errors"
+	"flag"
 	"log/slog"
 	"strings"
 	"testing"
@@ -91,6 +93,13 @@ func TestParseVersionShortCircuits(t *testing.T) {
 	}
 	if opts.Username != "" || opts.Password != "" {
 		t.Error("version path must not require credentials")
+	}
+}
+
+func TestParseHelpReturnsErrHelp(t *testing.T) {
+	_, err := Parse([]string{"--help"}, envFromMap(nil), &bytes.Buffer{})
+	if !errors.Is(err, flag.ErrHelp) {
+		t.Fatalf("expected flag.ErrHelp, got %v", err)
 	}
 }
 
