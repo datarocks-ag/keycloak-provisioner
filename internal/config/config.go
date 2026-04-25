@@ -1,7 +1,10 @@
 package config
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"strings"
@@ -115,15 +118,15 @@ type ClientRole struct {
 
 // User defines a Keycloak user to provision within a realm.
 type User struct {
-	Username          string     `yaml:"username"`
+	Username        string     `yaml:"username"`
 	Password        string     `yaml:"password"`
 	InitialPassword string     `yaml:"initialPassword"`
-	Enabled           *bool      `yaml:"enabled"`
-	Email             string     `yaml:"email"`
-	FirstName         string     `yaml:"firstName"`
-	LastName          string     `yaml:"lastName"`
-	EmailVerified     *bool      `yaml:"emailVerified"`
-	Roles             *UserRoles `yaml:"roles"`
+	Enabled         *bool      `yaml:"enabled"`
+	Email           string     `yaml:"email"`
+	FirstName       string     `yaml:"firstName"`
+	LastName        string     `yaml:"lastName"`
+	EmailVerified   *bool      `yaml:"emailVerified"`
+	Roles           *UserRoles `yaml:"roles"`
 }
 
 // UserRoles defines realm and client role assignments for a user or service account.
@@ -137,16 +140,23 @@ func containsNullByte(s string) bool {
 	return strings.ContainsRune(s, '\x00')
 }
 
-var envVarPattern = regexp.MustCompile(`\$\{([^}]+)}`)
+// envVarPattern matches `$${VAR}` (escaped, kept literal as `${VAR}`)
+// or `${VAR}` (substituted).
+var envVarPattern = regexp.MustCompile(`\$\$\{([^}]+)}|\$\{([^}]+)}`)
 
 // expandEnvVars replaces ${VAR} references with their environment variable values.
+// `$${VAR}` is an escape that yields the literal `${VAR}`.
+// Unresolved `${VAR}` references are left as-is.
 func expandEnvVars(s string) string {
 	return envVarPattern.ReplaceAllStringFunc(s, func(match string) string {
-		varName := envVarPattern.FindStringSubmatch(match)[1]
-		if val, ok := os.LookupEnv(varName); ok {
+		groups := envVarPattern.FindStringSubmatch(match)
+		if groups[1] != "" {
+			return "${" + groups[1] + "}"
+		}
+		if val, ok := os.LookupEnv(groups[2]); ok {
 			return val
 		}
-		return match // leave unresolved vars as-is
+		return match
 	})
 }
 
@@ -219,8 +229,12 @@ func expandConfig(cfg *Config) {
 			for k := range c.OptionalClientScopes {
 				c.OptionalClientScopes[k] = expandEnvVars(c.OptionalClientScopes[k])
 			}
-			for k, v := range c.Attributes {
-				c.Attributes[k] = expandEnvVars(v)
+			if len(c.Attributes) > 0 {
+				expanded := make(map[string]string, len(c.Attributes))
+				for k, v := range c.Attributes {
+					expanded[expandEnvVars(k)] = expandEnvVars(v)
+				}
+				c.Attributes = expanded
 			}
 			for k := range c.ProtocolMappers {
 				pm := &c.ProtocolMappers[k]
@@ -255,7 +269,17 @@ func Load(path string) (*Config, error) {
 	}
 
 	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&cfg); err != nil {
+		return nil, fmt.Errorf("parsing config YAML: %w", err)
+	}
+	// Reject trailing YAML documents (everything after the first `---`).
+	var trailing yaml.Node
+	if err := dec.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return nil, fmt.Errorf("parsing config YAML: file contains multiple YAML documents; only one is supported")
+		}
 		return nil, fmt.Errorf("parsing config YAML: %w", err)
 	}
 

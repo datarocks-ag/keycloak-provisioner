@@ -2,11 +2,15 @@ package main
 
 import (
 	"context"
+	"errors"
+	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"keycloak-provisioner/internal/cli"
 	"keycloak-provisioner/internal/client"
 	"keycloak-provisioner/internal/config"
 	"keycloak-provisioner/internal/provisioner"
@@ -15,66 +19,51 @@ import (
 var version = "dev"
 
 func main() {
-	setupLogging()
-	slog.Info("Starting keycloak-provisioner", "version", version)
+	opts, err := cli.Parse(os.Args[1:], cli.OSLookup, os.Stderr)
+	if err != nil {
+		// flag already wrote usage to stderr; exit 0 for help, 2 for misuse.
+		if errors.Is(err, flag.ErrHelp) {
+			return
+		}
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	if opts.ShowVersion {
+		fmt.Println(version)
+		return
+	}
+
+	cli.SetupLogging(os.Stdout, opts.LogLevel)
+	slog.Info("Starting keycloak-provisioner", "version", version, "dryRun", opts.DryRun)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	keycloakURL := envOrDefault("KEYCLOAK_URL", "http://localhost:8080")
-	username := requireEnv("KEYCLOAK_USER")
-	password := requireEnv("KEYCLOAK_PASSWORD")
-	configPath := envOrDefault("KEYCLOAK_CONFIG_PATH", "./config.yaml")
-
-	slog.Info("Loading configuration", "path", configPath)
-	cfg, err := config.Load(configPath)
+	slog.Info("Loading configuration", "path", opts.ConfigPath)
+	cfg, err := config.Load(opts.ConfigPath)
 	if err != nil {
 		slog.Error("Failed to load configuration", "error", err)
 		os.Exit(1)
 	}
 	slog.Info("Configuration loaded", "realms", len(cfg.Realms))
 
-	slog.Info("Connecting to Keycloak", "url", keycloakURL)
-	kc := client.New(keycloakURL, username, password)
+	slog.Info("Connecting to Keycloak", "url", opts.KeycloakURL)
+	kc := client.New(opts.KeycloakURL, opts.Username, opts.Password)
 	if err := kc.Connect(ctx); err != nil {
 		slog.Error("Failed to connect to Keycloak", "error", err)
 		os.Exit(1)
 	}
 
-	p := provisioner.New(kc, cfg)
-	if err := p.Run(ctx); err != nil {
+	var api provisioner.KeycloakAPI = kc
+	if opts.DryRun {
+		slog.Info("Dry-run mode enabled — mutations will be logged but not applied")
+		api = provisioner.NewDryRunAdapter(kc)
+	}
+
+	if err := provisioner.New(api, cfg).Run(ctx); err != nil {
 		slog.Error("Provisioning failed", "error", err)
 		os.Exit(1)
 	}
 
 	slog.Info("keycloak-provisioner finished successfully")
-}
-
-func setupLogging() {
-	level := slog.LevelInfo
-	switch envOrDefault("LOG_LEVEL", "info") {
-	case "debug":
-		level = slog.LevelDebug
-	case "warn":
-		level = slog.LevelWarn
-	case "error":
-		level = slog.LevelError
-	}
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})))
-}
-
-func requireEnv(key string) string {
-	val := os.Getenv(key)
-	if val == "" {
-		slog.Error("Required environment variable not set", "variable", key)
-		os.Exit(1)
-	}
-	return val
-}
-
-func envOrDefault(key, defaultVal string) string {
-	if val := os.Getenv(key); val != "" {
-		return val
-	}
-	return defaultVal
 }

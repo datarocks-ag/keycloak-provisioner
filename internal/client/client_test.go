@@ -1185,3 +1185,38 @@ func TestGetServiceAccountUser_Error(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestConnect_RejectsInvalidURL(t *testing.T) {
+	cases := []struct {
+		name    string
+		baseURL string
+	}{
+		{"empty", ""},
+		{"missing scheme", "keycloak.example.com:8080"},
+		{"unsupported scheme", "ftp://keycloak.example.com"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := New(tc.baseURL, "admin", "admin")
+			if err := c.Connect(context.Background()); err == nil {
+				t.Fatal("expected error for invalid URL")
+			}
+		})
+	}
+}
+
+func TestAuthenticate_RejectsEmptyAccessToken(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "",
+			"expires_in":   300,
+		})
+	}))
+	defer server.Close()
+
+	c := New(server.URL, "admin", "admin")
+	if err := c.authenticate(context.Background()); err == nil {
+		t.Fatal("expected error for empty access token")
+	}
+}

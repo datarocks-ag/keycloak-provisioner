@@ -7,14 +7,15 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
-
-	keycloak "github.com/stillya/testcontainers-keycloak"
-	"github.com/testcontainers/testcontainers-go"
 
 	"keycloak-provisioner/internal/client"
 	"keycloak-provisioner/internal/config"
 	"keycloak-provisioner/internal/provisioner"
+
+	keycloak "github.com/stillya/testcontainers-keycloak"
+	"github.com/testcontainers/testcontainers-go"
 )
 
 func setupKeycloak(t *testing.T) (*client.Client, func()) {
@@ -69,7 +70,7 @@ func writeTestConfig(t *testing.T, yaml string) string {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(path, []byte(yaml), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -869,5 +870,112 @@ realms:
 	}
 	if newRole == nil {
 		t.Error("new role 'new-role' should have been created even with strategy=create")
+	}
+}
+
+func TestIntegrationMasterRealmUserProvisioning(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	configYAML := `
+masterRealm:
+  users:
+    - username: "extra-master-admin"
+      password: "secret-pw"
+      enabled: true
+      email: "extra@example.com"
+      firstName: "Extra"
+      lastName: "Admin"
+      emailVerified: true
+`
+	cfgPath := writeTestConfig(t, configYAML)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("provisioning master user: %v", err)
+	}
+
+	users, err := kc.GetUsers(ctx, "master", "extra-master-admin")
+	if err != nil {
+		t.Fatalf("looking up master user: %v", err)
+	}
+	if len(users) != 1 {
+		t.Fatalf("expected 1 master user, got %d", len(users))
+	}
+	if users[0]["email"] != "extra@example.com" {
+		t.Errorf("unexpected email: %v", users[0]["email"])
+	}
+}
+
+func TestIntegrationMissingRoleErrorsOnUserAssignment(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	// app-user references a realm role that is NOT defined in the config and
+	// does not exist in Keycloak. This must surface as a clear error.
+	configYAML := `
+realms:
+  - realm: "missing-role-realm"
+    enabled: true
+    users:
+      - username: "broken-user"
+        enabled: true
+        roles:
+          realm:
+            - does-not-exist
+`
+	cfgPath := writeTestConfig(t, configYAML)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = provisioner.New(kc, cfg).Run(context.Background())
+	if err == nil {
+		t.Fatal("expected provisioning error for non-existent role")
+	}
+	if !strings.Contains(err.Error(), "does-not-exist") {
+		t.Errorf("expected error to mention missing role, got: %v", err)
+	}
+}
+
+func TestIntegrationDryRunDoesNotMutate(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	configYAML := `
+realms:
+  - realm: "dryrun-realm"
+    displayName: "Dry Run"
+    enabled: true
+    clients:
+      - clientId: "dryrun-app"
+        enabled: true
+    roles:
+      - name: "dryrun-role"
+`
+	cfgPath := writeTestConfig(t, configYAML)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	api := provisioner.NewDryRunAdapter(kc)
+	if err := provisioner.New(api, cfg).Run(ctx); err != nil {
+		t.Fatalf("dry-run: %v", err)
+	}
+
+	// Realm must NOT exist after dry-run.
+	got, err := kc.GetRealm(ctx, "dryrun-realm")
+	if err != nil {
+		t.Fatalf("looking up realm: %v", err)
+	}
+	if got != nil {
+		t.Errorf("dry-run created the realm — got %v", got)
 	}
 }
