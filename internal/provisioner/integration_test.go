@@ -23,7 +23,8 @@ func setupKeycloak(t *testing.T) (*client.Client, func()) {
 	ctx := context.Background()
 
 	kcContainer, err := keycloak.Run(ctx,
-		"keycloak/keycloak:26.0",
+		// 26.2+ is required for Standard Token Exchange (RFC 8693).
+		"keycloak/keycloak:26.2",
 		keycloak.WithAdminUsername("admin"),
 		keycloak.WithAdminPassword("admin"),
 	)
@@ -941,6 +942,62 @@ realms:
 	if !strings.Contains(err.Error(), "does-not-exist") {
 		t.Errorf("expected error to mention missing role, got: %v", err)
 	}
+}
+
+func TestIntegrationStandardTokenExchange(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	configYAML := `
+realms:
+  - realm: "token-exchange-realm"
+    enabled: true
+    clients:
+      - clientId: "exchange-service"
+        enabled: true
+        publicClient: false
+        secret: "exchange-secret"
+        protocol: "openid-connect"
+        standardTokenExchangeEnabled: true
+`
+	cfgPath := writeTestConfig(t, configYAML)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+
+	// First run creates the client with token exchange enabled.
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("provisioning run failed: %v", err)
+	}
+
+	assertTokenExchangeEnabled := func() {
+		t.Helper()
+		clients, err := kc.GetClients(ctx, "token-exchange-realm", "exchange-service")
+		if err != nil {
+			t.Fatalf("getting client: %v", err)
+		}
+		if len(clients) == 0 {
+			t.Fatal("client not found after provisioning")
+		}
+		attrs, ok := clients[0]["attributes"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected client attributes map, got %T", clients[0]["attributes"])
+		}
+		if attrs["standard.token.exchange.enabled"] != "true" {
+			t.Errorf("expected standard.token.exchange.enabled=true, got %v", attrs["standard.token.exchange.enabled"])
+		}
+	}
+
+	assertTokenExchangeEnabled()
+
+	// Second run is idempotent and keeps the attribute set.
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("idempotent re-run failed: %v", err)
+	}
+	assertTokenExchangeEnabled()
 }
 
 func TestIntegrationDryRunDoesNotMutate(t *testing.T) {

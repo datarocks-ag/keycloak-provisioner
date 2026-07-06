@@ -231,6 +231,27 @@ clients:
 
 Validation enforces that `serviceAccountsEnabled` is `true` when `serviceAccountRoles` is set.
 
+## Token Exchange (RFC 8693)
+
+Set `standardTokenExchangeEnabled: true` on a client to enable Keycloak's [Standard Token Exchange](https://www.keycloak.org/securing-apps/token-exchange) — the OAuth 2.0 Token Exchange grant (`urn:ietf:params:oauth:grant-type:token-exchange`, RFC 8693). This lets the client exchange its access token for a token targeting another client in the same realm.
+
+```yaml
+clients:
+  - clientId: "exchange-service"
+    publicClient: false
+    secret: "${EXCHANGE_SERVICE_SECRET}"
+    standardTokenExchangeEnabled: true
+```
+
+Requirements:
+
+- **Confidential client.** The requesting client must authenticate its exchange requests at the token endpoint. `publicClient` must not be `true` (omitting it is fine — Keycloak defaults clients to confidential), and the client must not be `bearerOnly`. Validation rejects both cases.
+- **Keycloak 26.2+.** Standard Token Exchange is a supported feature from 26.2 onward (earlier versions only had the non-standard preview feature).
+
+Under the hood this sets the `standard.token.exchange.enabled` client attribute. Setting the typed field takes precedence over the same key set manually in `attributes`.
+
+Setting `standardTokenExchangeEnabled: false` explicitly disables the feature — the attribute is written as `false`, correcting drift if it was enabled out-of-band. Omitting the field leaves the attribute unmanaged (existing values in Keycloak are left untouched).
+
 ## Connection Retry
 
 On startup, the tool retries connecting to Keycloak with exponential backoff (1s initial, 30s cap, 15 retries, 5min total timeout). This handles Docker Compose startup ordering without requiring `wait-for-it` scripts.

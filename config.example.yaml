@@ -78,6 +78,16 @@ realms:
       #       another-client:
       #         - some-role
 
+      # Token exchange (RFC 8693) requester client.
+      # Enables the OAuth 2.0 Token Exchange grant so this client can exchange
+      # its access token for a token targeting another client in the realm.
+      # Requires a confidential client (publicClient not true, not bearer-only)
+      # and Keycloak 26.2+.
+      # - clientId: "exchange-service"
+      #   publicClient: false
+      #   secret: "${EXCHANGE_SERVICE_SECRET}"
+      #   standardTokenExchangeEnabled: true
+
     roles:
       - name: "app-admin"
         description: "Application administrator"

@@ -734,6 +734,74 @@ realms:
 	}
 }
 
+func TestValidationStandardTokenExchangeRequiresConfidentialClient(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    clients:
+      - clientId: "app"
+        publicClient: true
+        standardTokenExchangeEnabled: true
+`
+	path := writeTempConfig(t, yaml)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for token exchange on a public client")
+	}
+	if !strings.Contains(err.Error(), "standardTokenExchangeEnabled") {
+		t.Errorf("expected error to mention standardTokenExchangeEnabled, got: %v", err)
+	}
+}
+
+func TestValidationStandardTokenExchangeOnConfidentialClient(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    clients:
+      - clientId: "app"
+        publicClient: false
+        standardTokenExchangeEnabled: true
+`
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidationStandardTokenExchangeRejectsBearerOnly(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    clients:
+      - clientId: "app"
+        bearerOnly: true
+        standardTokenExchangeEnabled: true
+`
+	path := writeTempConfig(t, yaml)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for token exchange on a bearer-only client")
+	}
+	if !strings.Contains(err.Error(), "bearer-only") {
+		t.Errorf("expected error to mention bearer-only, got: %v", err)
+	}
+}
+
+func TestValidationStandardTokenExchangeDefaultsConfidential(t *testing.T) {
+	// publicClient omitted defaults to confidential in Keycloak, so this is valid.
+	yaml := `
+realms:
+  - realm: "test"
+    clients:
+      - clientId: "app"
+        standardTokenExchangeEnabled: true
+`
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestUserWithRoles(t *testing.T) {
 	yaml := `
 realms:

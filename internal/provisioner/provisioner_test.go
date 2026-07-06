@@ -785,6 +785,82 @@ func TestBuildClientBodyAllFields(t *testing.T) {
 	}
 }
 
+func TestBuildClientBodyStandardTokenExchange(t *testing.T) {
+	enabled := true
+	disabled := false
+
+	t.Run("enabled sets attribute true", func(t *testing.T) {
+		body := buildClientBody(config.Client{
+			ClientID:                     "app",
+			StandardTokenExchangeEnabled: &enabled,
+		})
+		attrs, ok := body["attributes"].(map[string]string)
+		if !ok {
+			t.Fatalf("expected attributes map, got %T", body["attributes"])
+		}
+		if attrs["standard.token.exchange.enabled"] != "true" {
+			t.Errorf("got %q, want \"true\"", attrs["standard.token.exchange.enabled"])
+		}
+	})
+
+	t.Run("disabled sets attribute false", func(t *testing.T) {
+		body := buildClientBody(config.Client{
+			ClientID:                     "app",
+			StandardTokenExchangeEnabled: &disabled,
+		})
+		attrs, _ := body["attributes"].(map[string]string)
+		if attrs["standard.token.exchange.enabled"] != "false" {
+			t.Errorf("got %q, want \"false\"", attrs["standard.token.exchange.enabled"])
+		}
+	})
+
+	t.Run("nil omits attribute", func(t *testing.T) {
+		body := buildClientBody(config.Client{ClientID: "app"})
+		if _, ok := body["attributes"]; ok {
+			t.Errorf("expected no attributes key, got %v", body["attributes"])
+		}
+	})
+
+	t.Run("merges with existing attributes without mutating config", func(t *testing.T) {
+		userAttrs := map[string]string{"post.logout.redirect.uris": "+"}
+		c := config.Client{
+			ClientID:                     "app",
+			Attributes:                   userAttrs,
+			StandardTokenExchangeEnabled: &enabled,
+		}
+		body := buildClientBody(c)
+		attrs, ok := body["attributes"].(map[string]string)
+		if !ok {
+			t.Fatalf("expected attributes map, got %T", body["attributes"])
+		}
+		if attrs["post.logout.redirect.uris"] != "+" {
+			t.Errorf("user attribute lost: %v", attrs)
+		}
+		if attrs["standard.token.exchange.enabled"] != "true" {
+			t.Errorf("token exchange attribute missing: %v", attrs)
+		}
+		if _, mutated := userAttrs["standard.token.exchange.enabled"]; mutated {
+			t.Error("config Attributes map was mutated")
+		}
+	})
+
+	t.Run("typed field wins over conflicting raw attribute", func(t *testing.T) {
+		c := config.Client{
+			ClientID:                     "app",
+			Attributes:                   map[string]string{"standard.token.exchange.enabled": "false"},
+			StandardTokenExchangeEnabled: &enabled,
+		}
+		body := buildClientBody(c)
+		attrs, ok := body["attributes"].(map[string]string)
+		if !ok {
+			t.Fatalf("expected attributes map, got %T", body["attributes"])
+		}
+		if attrs["standard.token.exchange.enabled"] != "true" {
+			t.Errorf("typed field should win: got %q, want \"true\"", attrs["standard.token.exchange.enabled"])
+		}
+	})
+}
+
 func TestBuildRealmBodyAllFields(t *testing.T) {
 	enabled := true
 	regAllowed := false
