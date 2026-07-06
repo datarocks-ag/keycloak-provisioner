@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 
 	"keycloak-provisioner/internal/config"
 )
@@ -102,9 +103,27 @@ func buildClientBody(c config.Client) map[string]any {
 	if len(c.OptionalClientScopes) > 0 {
 		body["optionalClientScopes"] = c.OptionalClientScopes
 	}
-	if len(c.Attributes) > 0 {
-		body["attributes"] = c.Attributes
+	if attrs := buildClientAttributes(c); len(attrs) > 0 {
+		body["attributes"] = attrs
 	}
 
 	return body
+}
+
+// standardTokenExchangeAttr is the Keycloak client attribute that enables
+// OAuth 2.0 Token Exchange (RFC 8693). Keycloak 26.2+.
+const standardTokenExchangeAttr = "standard.token.exchange.enabled"
+
+// buildClientAttributes merges the client's raw attributes with attributes
+// derived from typed fields. It returns a fresh map so the config's own
+// Attributes map is never mutated. Typed fields win over raw attributes.
+func buildClientAttributes(c config.Client) map[string]string {
+	attrs := make(map[string]string, len(c.Attributes)+1)
+	for k, v := range c.Attributes {
+		attrs[k] = v
+	}
+	if c.StandardTokenExchangeEnabled != nil {
+		attrs[standardTokenExchangeAttr] = strconv.FormatBool(*c.StandardTokenExchangeEnabled)
+	}
+	return attrs
 }

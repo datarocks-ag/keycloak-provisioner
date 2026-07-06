@@ -70,29 +70,32 @@ type Realm struct {
 
 // Client defines a Keycloak client to provision within a realm.
 type Client struct {
-	ClientID                  string            `yaml:"clientId"`
-	Secret                    string            `yaml:"secret"`
-	Name                      string            `yaml:"name"`
-	Enabled                   *bool             `yaml:"enabled"`
-	PublicClient              *bool             `yaml:"publicClient"`
-	Protocol                  string            `yaml:"protocol"`
-	RootUrl                   string            `yaml:"rootUrl"`
-	BaseUrl                   string            `yaml:"baseUrl"`
-	AdminUrl                  string            `yaml:"adminUrl"`
-	RedirectUris              []string          `yaml:"redirectUris"`
-	WebOrigins                []string          `yaml:"webOrigins"`
-	StandardFlowEnabled       *bool             `yaml:"standardFlowEnabled"`
-	DirectAccessGrantsEnabled *bool             `yaml:"directAccessGrantsEnabled"`
-	ServiceAccountsEnabled    *bool             `yaml:"serviceAccountsEnabled"`
-	BearerOnly                *bool             `yaml:"bearerOnly"`
-	ConsentRequired           *bool             `yaml:"consentRequired"`
-	FrontchannelLogout        *bool             `yaml:"frontchannelLogout"`
-	DefaultClientScopes       []string          `yaml:"defaultClientScopes"`
-	OptionalClientScopes      []string          `yaml:"optionalClientScopes"`
-	Attributes                map[string]string `yaml:"attributes"`
-	ProtocolMappers           []ProtocolMapper  `yaml:"protocolMappers"`
-	ClientRoles               []ClientRole      `yaml:"clientRoles"`
-	ServiceAccountRoles       *UserRoles        `yaml:"serviceAccountRoles"`
+	ClientID                  string   `yaml:"clientId"`
+	Secret                    string   `yaml:"secret"`
+	Name                      string   `yaml:"name"`
+	Enabled                   *bool    `yaml:"enabled"`
+	PublicClient              *bool    `yaml:"publicClient"`
+	Protocol                  string   `yaml:"protocol"`
+	RootUrl                   string   `yaml:"rootUrl"`
+	BaseUrl                   string   `yaml:"baseUrl"`
+	AdminUrl                  string   `yaml:"adminUrl"`
+	RedirectUris              []string `yaml:"redirectUris"`
+	WebOrigins                []string `yaml:"webOrigins"`
+	StandardFlowEnabled       *bool    `yaml:"standardFlowEnabled"`
+	DirectAccessGrantsEnabled *bool    `yaml:"directAccessGrantsEnabled"`
+	ServiceAccountsEnabled    *bool    `yaml:"serviceAccountsEnabled"`
+	// StandardTokenExchangeEnabled toggles OAuth 2.0 Token Exchange (RFC 8693)
+	// for this client. Requires a confidential client. Keycloak 26.2+.
+	StandardTokenExchangeEnabled *bool             `yaml:"standardTokenExchangeEnabled"`
+	BearerOnly                   *bool             `yaml:"bearerOnly"`
+	ConsentRequired              *bool             `yaml:"consentRequired"`
+	FrontchannelLogout           *bool             `yaml:"frontchannelLogout"`
+	DefaultClientScopes          []string          `yaml:"defaultClientScopes"`
+	OptionalClientScopes         []string          `yaml:"optionalClientScopes"`
+	Attributes                   map[string]string `yaml:"attributes"`
+	ProtocolMappers              []ProtocolMapper  `yaml:"protocolMappers"`
+	ClientRoles                  []ClientRole      `yaml:"clientRoles"`
+	ServiceAccountRoles          *UserRoles        `yaml:"serviceAccountRoles"`
 }
 
 // ProtocolMapper defines a protocol mapper for a Keycloak client.
@@ -510,6 +513,18 @@ func validateClients(realmIdx int, clients []Client) error {
 			}
 			if err := validateUserRoles(prefix+".serviceAccount", c.ServiceAccountRoles); err != nil {
 				return err
+			}
+		}
+
+		// Token exchange (RFC 8693) requires the requesting client to
+		// authenticate at the token endpoint. Public clients cannot, and
+		// bearer-only clients are barred from the token endpoint entirely.
+		if c.StandardTokenExchangeEnabled != nil && *c.StandardTokenExchangeEnabled {
+			if c.PublicClient != nil && *c.PublicClient {
+				return fmt.Errorf("%s.standardTokenExchangeEnabled: requires a confidential client (publicClient must be false)", prefix)
+			}
+			if c.BearerOnly != nil && *c.BearerOnly {
+				return fmt.Errorf("%s.standardTokenExchangeEnabled: not supported on a bearer-only client (it cannot call the token endpoint)", prefix)
 			}
 		}
 	}
