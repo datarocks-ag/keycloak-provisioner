@@ -1220,3 +1220,377 @@ func TestAuthenticate_RejectsEmptyAccessToken(t *testing.T) {
 		t.Fatal("expected error for empty access token")
 	}
 }
+
+// --- Group tests ---
+
+func TestGetGroups(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/groups": func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Query().Get("search") != "engineering" {
+				t.Errorf("expected search query param engineering, got %s", r.URL.Query().Get("search"))
+			}
+			if r.URL.Query().Get("exact") != "true" {
+				t.Errorf("expected exact=true, got %s", r.URL.Query().Get("exact"))
+			}
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"id": "g-1", "name": "engineering"},
+			})
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	result, err := c.GetGroups(context.Background(), "test", "engineering")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 group, got %d", len(result))
+	}
+}
+
+func TestGetGroups_Error(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/groups": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("error"))
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	_, err := c.GetGroups(context.Background(), "test", "eng")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestGetGroup(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/groups/{id}": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]any{
+				"id":         "g-1",
+				"name":       "engineering",
+				"attributes": map[string]any{"department": []string{"eng"}},
+			})
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	result, err := c.GetGroup(context.Background(), "test", "g-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil || result["name"] != "engineering" {
+		t.Errorf("unexpected group: %v", result)
+	}
+}
+
+func TestGetGroup_NotFound(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/groups/{id}": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	result, err := c.GetGroup(context.Background(), "test", "g-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != nil {
+		t.Errorf("expected nil for not found, got %v", result)
+	}
+}
+
+func TestGetGroup_Error(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/groups/{id}": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("error"))
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	_, err := c.GetGroup(context.Background(), "test", "g-1")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestGetSubGroups(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/groups/{id}/children": func(w http.ResponseWriter, r *http.Request) {
+			if r.PathValue("id") != "parent-uuid" {
+				t.Errorf("expected parent-uuid, got %s", r.PathValue("id"))
+			}
+			if r.URL.Query().Get("search") != "backend" {
+				t.Errorf("expected search=backend, got %s", r.URL.Query().Get("search"))
+			}
+			if r.URL.Query().Get("exact") != "true" {
+				t.Errorf("expected exact=true, got %s", r.URL.Query().Get("exact"))
+			}
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"id": "child-1", "name": "backend"},
+			})
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	result, err := c.GetSubGroups(context.Background(), "test", "parent-uuid", "backend")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 subgroup, got %d", len(result))
+	}
+}
+
+func TestGetSubGroups_Error(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/groups/{id}/children": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("error"))
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	_, err := c.GetSubGroups(context.Background(), "test", "parent-uuid", "backend")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestCreateGroup_Success(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"POST /admin/realms/{realm}/groups": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Location", "http://localhost/admin/realms/test/groups/group-uuid")
+			w.WriteHeader(http.StatusCreated)
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	uuid, err := c.CreateGroup(context.Background(), "test", map[string]any{"name": "eng"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if uuid != "group-uuid" {
+		t.Errorf("expected group-uuid, got %s", uuid)
+	}
+}
+
+func TestCreateGroup_NoLocationHeader(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"POST /admin/realms/{realm}/groups": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusCreated)
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	_, err := c.CreateGroup(context.Background(), "test", map[string]any{"name": "eng"})
+	if err == nil {
+		t.Fatal("expected error for missing Location header")
+	}
+}
+
+func TestCreateGroup_Error(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"POST /admin/realms/{realm}/groups": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte("conflict"))
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	_, err := c.CreateGroup(context.Background(), "test", map[string]any{"name": "eng"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestCreateSubGroup_Success(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"POST /admin/realms/{realm}/groups/{id}/children": func(w http.ResponseWriter, r *http.Request) {
+			if r.PathValue("id") != "parent-uuid" {
+				t.Errorf("expected parent-uuid, got %s", r.PathValue("id"))
+			}
+			w.Header().Set("Location", "http://localhost/admin/realms/test/groups/child-uuid")
+			w.WriteHeader(http.StatusCreated)
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	uuid, err := c.CreateSubGroup(context.Background(), "test", "parent-uuid", map[string]any{"name": "backend"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if uuid != "child-uuid" {
+		t.Errorf("expected child-uuid, got %s", uuid)
+	}
+}
+
+func TestCreateSubGroup_Error(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"POST /admin/realms/{realm}/groups/{id}/children": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte("conflict"))
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	_, err := c.CreateSubGroup(context.Background(), "test", "parent-uuid", map[string]any{"name": "backend"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestUpdateGroup_Success(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"PUT /admin/realms/{realm}/groups/{id}": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	if err := c.UpdateGroup(context.Background(), "test", "g-1", map[string]any{"name": "eng"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestUpdateGroup_Error(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"PUT /admin/realms/{realm}/groups/{id}": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte("bad request"))
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	err := c.UpdateGroup(context.Background(), "test", "g-1", map[string]any{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestGetGroupRealmRoleMappings(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/groups/{id}/role-mappings/realm": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{{"id": "r-1", "name": "developer"}})
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	result, err := c.GetGroupRealmRoleMappings(context.Background(), "test", "g-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 mapping, got %d", len(result))
+	}
+}
+
+func TestAddGroupRealmRoleMappings_Success(t *testing.T) {
+	var received []map[string]any
+	server := testServer(t, map[string]http.HandlerFunc{
+		"POST /admin/realms/{realm}/groups/{id}/role-mappings/realm": func(w http.ResponseWriter, r *http.Request) {
+			json.NewDecoder(r.Body).Decode(&received)
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	roles := []map[string]any{{"id": "r-1", "name": "developer"}}
+	if err := c.AddGroupRealmRoleMappings(context.Background(), "test", "g-1", roles); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(received) != 1 || received[0]["name"] != "developer" {
+		t.Errorf("unexpected received roles: %v", received)
+	}
+}
+
+func TestAddGroupRealmRoleMappings_Error(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"POST /admin/realms/{realm}/groups/{id}/role-mappings/realm": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte("bad request"))
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	err := c.AddGroupRealmRoleMappings(context.Background(), "test", "g-1", []map[string]any{{"id": "r-1"}})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestGetGroupClientRoleMappings(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/groups/{id}/role-mappings/clients/{clientUuid}": func(w http.ResponseWriter, r *http.Request) {
+			if r.PathValue("clientUuid") != "c-uuid" {
+				t.Errorf("expected c-uuid, got %s", r.PathValue("clientUuid"))
+			}
+			json.NewEncoder(w).Encode([]map[string]any{{"id": "cr-1", "name": "admin"}})
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	result, err := c.GetGroupClientRoleMappings(context.Background(), "test", "g-1", "c-uuid")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 mapping, got %d", len(result))
+	}
+}
+
+func TestAddGroupClientRoleMappings_Success(t *testing.T) {
+	var received []map[string]any
+	server := testServer(t, map[string]http.HandlerFunc{
+		"POST /admin/realms/{realm}/groups/{id}/role-mappings/clients/{clientUuid}": func(w http.ResponseWriter, r *http.Request) {
+			json.NewDecoder(r.Body).Decode(&received)
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	roles := []map[string]any{{"id": "cr-1", "name": "admin"}}
+	if err := c.AddGroupClientRoleMappings(context.Background(), "test", "g-1", "c-uuid", roles); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(received) != 1 || received[0]["name"] != "admin" {
+		t.Errorf("unexpected received roles: %v", received)
+	}
+}
+
+func TestAddGroupClientRoleMappings_Error(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"POST /admin/realms/{realm}/groups/{id}/role-mappings/clients/{clientUuid}": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte("bad request"))
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	err := c.AddGroupClientRoleMappings(context.Background(), "test", "g-1", "c-uuid", []map[string]any{{"id": "cr-1"}})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}

@@ -65,6 +65,7 @@ type Realm struct {
 	Clients              []Client    `yaml:"clients"`
 	Roles                []RealmRole `yaml:"roles"`
 	Users                []User      `yaml:"users"`
+	Groups               []Group     `yaml:"groups"`
 	Strategy             string      `yaml:"strategy"`
 }
 
@@ -136,6 +137,16 @@ type User struct {
 type UserRoles struct {
 	Realm   []string            `yaml:"realm"`
 	Clients map[string][]string `yaml:"clients"`
+}
+
+// Group defines a Keycloak group to provision within a realm. Groups may nest
+// arbitrarily via SubGroups and may be granted realm and client roles.
+type Group struct {
+	Name        string              `yaml:"name"`
+	Attributes  map[string][]string `yaml:"attributes"`  // Keycloak group attributes are multivalued
+	RealmRoles  []string            `yaml:"realmRoles"`  // realm role names to grant the group
+	ClientRoles map[string][]string `yaml:"clientRoles"` // clientId -> client role names to grant; clientId keys support ${VAR} expansion
+	SubGroups   []Group             `yaml:"subGroups"`
 }
 
 // containsNullByte returns true if s contains a null byte (\x00).
@@ -261,6 +272,46 @@ func expandConfig(cfg *Config) {
 		}
 
 		expandUsers(r.Users)
+
+		for j := range r.Groups {
+			expandGroup(&r.Groups[j])
+		}
+	}
+}
+
+// expandGroup recursively expands env vars in a group's string fields and subgroups.
+func expandGroup(g *Group) {
+	g.Name = expandEnvVars(g.Name)
+	for k := range g.Attributes {
+		for i := range g.Attributes[k] {
+			g.Attributes[k][i] = expandEnvVars(g.Attributes[k][i])
+		}
+	}
+	for i := range g.RealmRoles {
+		g.RealmRoles[i] = expandEnvVars(g.RealmRoles[i])
+	}
+	renames := make(map[string]string)
+	for clientID, roles := range g.ClientRoles {
+		for i := range roles {
+			roles[i] = expandEnvVars(roles[i])
+		}
+		if expanded := expandEnvVars(clientID); expanded != clientID {
+			renames[clientID] = expanded
+		}
+	}
+	// Apply renames after iterating to avoid mutating the map mid-range. When an
+	// expanded client ID collides with an existing key (e.g. "${X}" expands to a
+	// literal "app" key that is also present, or two vars expand to the same ID),
+	// merge the role lists rather than silently dropping one side.
+	for oldID, newID := range renames {
+		if newID == oldID {
+			continue
+		}
+		g.ClientRoles[newID] = append(g.ClientRoles[newID], g.ClientRoles[oldID]...)
+		delete(g.ClientRoles, oldID)
+	}
+	for i := range g.SubGroups {
+		expandGroup(&g.SubGroups[i])
 	}
 }
 
@@ -375,6 +426,10 @@ func validate(cfg *Config) error {
 		}
 
 		if err := validateUsers(fmt.Sprintf("realms[%d]", i), r.Users); err != nil {
+			return err
+		}
+
+		if err := validateGroups(fmt.Sprintf("realms[%d].groups", i), r.Groups); err != nil {
 			return err
 		}
 	}
@@ -620,6 +675,71 @@ func validateRealmRoles(realmIdx int, roles []RealmRole) error {
 			return fmt.Errorf("%s.name: duplicate realm role name %q", prefix, r.Name)
 		}
 		names[r.Name] = true
+	}
+
+	return nil
+}
+
+// validateGroups recursively validates a level of groups. prefix is the config
+// path to the slice (e.g. "realms[0].groups"). Sibling names must be unique.
+func validateGroups(prefix string, groups []Group) error {
+	names := make(map[string]bool)
+
+	for i, g := range groups {
+		path := fmt.Sprintf("%s[%d]", prefix, i)
+
+		if g.Name == "" {
+			return fmt.Errorf("%s.name: is required", path)
+		}
+		if containsNullByte(g.Name) {
+			return fmt.Errorf("%s.name: contains null byte", path)
+		}
+		if names[g.Name] {
+			return fmt.Errorf("%s.name: duplicate group name %q", path, g.Name)
+		}
+		names[g.Name] = true
+
+		for k, values := range g.Attributes {
+			if k == "" {
+				return fmt.Errorf("%s.attributes: attribute key is required", path)
+			}
+			if containsNullByte(k) {
+				return fmt.Errorf("%s.attributes: contains null byte", path)
+			}
+			if err := scanSliceNullBytes(fmt.Sprintf("%s.attributes[%q]", path, k), values); err != nil {
+				return err
+			}
+		}
+
+		for i, role := range g.RealmRoles {
+			if role == "" {
+				return fmt.Errorf("%s.realmRoles[%d]: is required", path, i)
+			}
+		}
+		if err := scanSliceNullBytes(path+".realmRoles", g.RealmRoles); err != nil {
+			return err
+		}
+
+		for clientID, roles := range g.ClientRoles {
+			if clientID == "" {
+				return fmt.Errorf("%s.clientRoles: client ID is required", path)
+			}
+			if containsNullByte(clientID) {
+				return fmt.Errorf("%s.clientRoles: contains null byte", path)
+			}
+			for i, role := range roles {
+				if role == "" {
+					return fmt.Errorf("%s.clientRoles[%q][%d]: is required", path, clientID, i)
+				}
+			}
+			if err := scanSliceNullBytes(fmt.Sprintf("%s.clientRoles[%q]", path, clientID), roles); err != nil {
+				return err
+			}
+		}
+
+		if err := validateGroups(path+".subGroups", g.SubGroups); err != nil {
+			return err
+		}
 	}
 
 	return nil

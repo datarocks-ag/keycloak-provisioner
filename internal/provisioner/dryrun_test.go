@@ -18,6 +18,12 @@ type fakeAPI struct {
 	realmRoleMaps   map[string][]map[string]any // key: realm/userID
 	clientRoleMaps  map[string][]map[string]any // key: realm/userID/clientUUID
 
+	groupsByRealm       map[string][]map[string]any // key: realm
+	groupsByID          map[string]map[string]any   // key: realm/groupID
+	subGroupsByParent   map[string][]map[string]any // key: realm/parentID
+	groupRealmRoleMaps  map[string][]map[string]any // key: realm/groupID
+	groupClientRoleMaps map[string][]map[string]any // key: realm/groupID/clientUUID
+
 	createCalls atomicCounter
 	updateCalls atomicCounter
 }
@@ -37,13 +43,21 @@ func newFakeAPI() *fakeAPI {
 		saUsers:         make(map[string]map[string]any),
 		realmRoleMaps:   make(map[string][]map[string]any),
 		clientRoleMaps:  make(map[string][]map[string]any),
+
+		groupsByRealm:       make(map[string][]map[string]any),
+		groupsByID:          make(map[string]map[string]any),
+		subGroupsByParent:   make(map[string][]map[string]any),
+		groupRealmRoleMaps:  make(map[string][]map[string]any),
+		groupClientRoleMaps: make(map[string][]map[string]any),
 	}
 }
 
 func (f *fakeAPI) GetRealm(_ context.Context, name string) (map[string]any, error) {
 	return f.realms[name], nil
 }
+
 func (f *fakeAPI) CreateRealm(context.Context, map[string]any) error { f.createCalls.inc(); return nil }
+
 func (f *fakeAPI) UpdateRealm(context.Context, string, map[string]any) error {
 	f.updateCalls.inc()
 	return nil
@@ -144,6 +158,51 @@ func (f *fakeAPI) AddUserClientRoleMappings(context.Context, string, string, str
 
 func (f *fakeAPI) GetServiceAccountUser(_ context.Context, realm, uuid string) (map[string]any, error) {
 	return f.saUsers[realm+"/"+uuid], nil
+}
+
+func (f *fakeAPI) GetGroups(_ context.Context, realm, search string) ([]map[string]any, error) {
+	return f.groupsByRealm[realm], nil
+}
+
+func (f *fakeAPI) GetGroup(_ context.Context, realm, id string) (map[string]any, error) {
+	return f.groupsByID[realm+"/"+id], nil
+}
+
+func (f *fakeAPI) GetSubGroups(_ context.Context, realm, parentID, search string) ([]map[string]any, error) {
+	return f.subGroupsByParent[realm+"/"+parentID], nil
+}
+
+func (f *fakeAPI) CreateGroup(context.Context, string, map[string]any) (string, error) {
+	f.createCalls.inc()
+	return "real-group-uuid", nil
+}
+
+func (f *fakeAPI) CreateSubGroup(context.Context, string, string, map[string]any) (string, error) {
+	f.createCalls.inc()
+	return "real-subgroup-uuid", nil
+}
+
+func (f *fakeAPI) UpdateGroup(context.Context, string, string, map[string]any) error {
+	f.updateCalls.inc()
+	return nil
+}
+
+func (f *fakeAPI) GetGroupRealmRoleMappings(_ context.Context, realm, groupID string) ([]map[string]any, error) {
+	return f.groupRealmRoleMaps[realm+"/"+groupID], nil
+}
+
+func (f *fakeAPI) AddGroupRealmRoleMappings(context.Context, string, string, []map[string]any) error {
+	f.updateCalls.inc()
+	return nil
+}
+
+func (f *fakeAPI) GetGroupClientRoleMappings(_ context.Context, realm, groupID, uuid string) ([]map[string]any, error) {
+	return f.groupClientRoleMaps[realm+"/"+groupID+"/"+uuid], nil
+}
+
+func (f *fakeAPI) AddGroupClientRoleMappings(context.Context, string, string, string, []map[string]any) error {
+	f.updateCalls.inc()
+	return nil
 }
 
 func TestDryRunSkipsAllMutations(t *testing.T) {

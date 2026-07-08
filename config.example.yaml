@@ -117,3 +117,23 @@ realms:
     #     initialPassword: "changeme"
     #     enabled: true
     #     email: "user@example.com"
+
+    groups:
+      - name: "engineering"
+        # Group attributes are multivalued (list of strings per key).
+        attributes:
+          department:
+            - "engineering"
+        # Realm roles to grant the group (must exist / be defined above).
+        realmRoles:
+          - "app-admin"
+        # Client roles to grant, keyed by clientId.
+        clientRoles:
+          my-app:
+            - "admin"
+        # Groups may nest arbitrarily deep via subGroups.
+        subGroups:
+          - name: "backend"
+          - name: "frontend"
+            realmRoles:
+              - "app-user"

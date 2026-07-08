@@ -45,4 +45,16 @@ type KeycloakAPI interface {
 
 	// Service accounts
 	GetServiceAccountUser(ctx context.Context, realm, clientUUID string) (map[string]any, error)
+
+	// Groups
+	GetGroups(ctx context.Context, realm, search string) ([]map[string]any, error)
+	GetGroup(ctx context.Context, realm, id string) (map[string]any, error)
+	GetSubGroups(ctx context.Context, realm, parentID, search string) ([]map[string]any, error)
+	CreateGroup(ctx context.Context, realm string, body map[string]any) (string, error)
+	CreateSubGroup(ctx context.Context, realm, parentID string, body map[string]any) (string, error)
+	UpdateGroup(ctx context.Context, realm, id string, body map[string]any) error
+	GetGroupRealmRoleMappings(ctx context.Context, realm, groupID string) ([]map[string]any, error)
+	AddGroupRealmRoleMappings(ctx context.Context, realm, groupID string, roles []map[string]any) error
+	GetGroupClientRoleMappings(ctx context.Context, realm, groupID, clientUUID string) ([]map[string]any, error)
+	AddGroupClientRoleMappings(ctx context.Context, realm, groupID, clientUUID string, roles []map[string]any) error
 }

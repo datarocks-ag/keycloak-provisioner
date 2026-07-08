@@ -112,6 +112,15 @@ realms:
         description: "Application administrator"
       - name: "app-user"
         description: "Application user"
+    groups:
+      - name: "engineering"
+        attributes:
+          department: ["engineering"]
+        realmRoles: ["app-admin"]
+        clientRoles:
+          test-app: ["admin"]
+        subGroups:
+          - name: "backend"
 `
 	cfgPath := writeTestConfig(t, configYAML)
 	cfg, err := config.Load(cfgPath)
@@ -185,6 +194,80 @@ realms:
 	if !found {
 		t.Error("protocol mapper 'audience-mapper' not found")
 	}
+
+	// Verify group exists with its attribute
+	groups, err := kc.GetGroups(ctx, "test-realm", "engineering")
+	if err != nil {
+		t.Fatalf("getting groups: %v", err)
+	}
+	if len(groups) == 0 {
+		t.Fatal("group 'engineering' not found after provisioning")
+	}
+	groupUUID, ok := groups[0]["id"].(string)
+	if !ok {
+		t.Fatal("expected group 'id' to be a string")
+	}
+
+	// The group list returns a brief representation; fetch the full group for attributes.
+	fullGroup, err := kc.GetGroup(ctx, "test-realm", groupUUID)
+	if err != nil {
+		t.Fatalf("getting full group: %v", err)
+	}
+	if attrs, ok := fullGroup["attributes"].(map[string]any); ok {
+		if dept, ok := attrs["department"].([]any); !ok || len(dept) == 0 || dept[0] != "engineering" {
+			t.Errorf("expected group attribute department=[engineering], got %v", attrs["department"])
+		}
+	} else {
+		t.Error("expected group to have attributes")
+	}
+
+	// Verify subgroup exists
+	subGroups, err := kc.GetSubGroups(ctx, "test-realm", groupUUID, "backend")
+	if err != nil {
+		t.Fatalf("getting subgroups: %v", err)
+	}
+	foundSub := false
+	for _, sg := range subGroups {
+		if sg["name"] == "backend" {
+			foundSub = true
+			break
+		}
+	}
+	if !foundSub {
+		t.Error("subgroup 'backend' not found")
+	}
+
+	// Verify realm role mapping
+	realmMappings, err := kc.GetGroupRealmRoleMappings(ctx, "test-realm", groupUUID)
+	if err != nil {
+		t.Fatalf("getting group realm role mappings: %v", err)
+	}
+	foundRealmRole := false
+	for _, m := range realmMappings {
+		if m["name"] == "app-admin" {
+			foundRealmRole = true
+			break
+		}
+	}
+	if !foundRealmRole {
+		t.Error("realm role 'app-admin' not mapped to group 'engineering'")
+	}
+
+	// Verify client role mapping
+	clientMappings, err := kc.GetGroupClientRoleMappings(ctx, "test-realm", groupUUID, clientUUID)
+	if err != nil {
+		t.Fatalf("getting group client role mappings: %v", err)
+	}
+	foundClientRole := false
+	for _, m := range clientMappings {
+		if m["name"] == "admin" {
+			foundClientRole = true
+			break
+		}
+	}
+	if !foundClientRole {
+		t.Error("client role 'admin' not mapped to group 'engineering'")
+	}
 }
 
 func TestIntegrationIdempotency(t *testing.T) {
@@ -200,6 +283,11 @@ realms:
         enabled: true
     roles:
       - name: "test-role"
+    groups:
+      - name: "idempotent-group"
+        realmRoles: ["test-role"]
+        subGroups:
+          - name: "idempotent-subgroup"
 `
 	cfgPath := writeTestConfig(t, configYAML)
 	cfg, err := config.Load(cfgPath)
@@ -219,6 +307,49 @@ realms:
 	p2 := provisioner.New(kc, cfg)
 	if err := p2.Run(ctx); err != nil {
 		t.Fatalf("second (idempotent) run: %v", err)
+	}
+
+	// After two runs, group state must be stable — no duplicate top-level group,
+	// subgroup, or realm-role mapping. This exercises the create/skip idempotency
+	// of ensureGroup, its subgroup recursion, and the additive role-mapping diff.
+	groups, err := kc.GetGroups(ctx, "idempotent-realm", "idempotent-group")
+	if err != nil {
+		t.Fatalf("getting groups: %v", err)
+	}
+	if len(groups) != 1 {
+		t.Fatalf("expected exactly 1 top-level group after two runs, got %d", len(groups))
+	}
+	groupUUID, ok := groups[0]["id"].(string)
+	if !ok {
+		t.Fatal("expected group 'id' to be a string")
+	}
+
+	subGroups, err := kc.GetSubGroups(ctx, "idempotent-realm", groupUUID, "idempotent-subgroup")
+	if err != nil {
+		t.Fatalf("getting subgroups: %v", err)
+	}
+	subCount := 0
+	for _, sg := range subGroups {
+		if sg["name"] == "idempotent-subgroup" {
+			subCount++
+		}
+	}
+	if subCount != 1 {
+		t.Errorf("expected exactly 1 'idempotent-subgroup' after two runs, got %d", subCount)
+	}
+
+	mappings, err := kc.GetGroupRealmRoleMappings(ctx, "idempotent-realm", groupUUID)
+	if err != nil {
+		t.Fatalf("getting group realm role mappings: %v", err)
+	}
+	roleCount := 0
+	for _, m := range mappings {
+		if m["name"] == "test-role" {
+			roleCount++
+		}
+	}
+	if roleCount != 1 {
+		t.Errorf("expected 'test-role' mapped exactly once after two runs, got %d", roleCount)
 	}
 }
 
