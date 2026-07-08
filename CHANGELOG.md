@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _No unreleased changes._
 
+## [1.5.0] — 2026-07-08
+
+### Added
+
+- Group provisioning as a realm-scoped resource: `name`, multivalued
+  `attributes`, nested `subGroups`, and realm/client role assignments.
+  Groups are reconciled idempotently under the existing create/update
+  strategy and run after roles so their assignments resolve to roles
+  created earlier in the same run. Role assignments are additive —
+  configured roles not yet mapped are granted, existing mappings are
+  never removed.
+- Dry-run reporting for group creation, updates, and role mappings.
+- Unit, validation, and integration coverage for groups; README and
+  config example documentation.
+
+## [1.4.0] — 2026-07-06
+
+### Added
+
+- `standardTokenExchangeEnabled` toggle on clients, mapping to
+  Keycloak's `standard.token.exchange.enabled` attribute (Standard Token
+  Exchange, RFC 8693, supported since Keycloak 26.2). The typed field is
+  merged into the client attributes without mutating the config's own map
+  and takes precedence over a manually-set raw attribute. Validation
+  rejects the toggle on public and bearer-only clients, which cannot
+  authenticate at the token endpoint.
+- Unit, validation, and integration coverage for token exchange; README
+  and config example documentation.
+
+### Changed
+
+- Integration-test Keycloak image bumped to 26.2 (required for Standard
+  Token Exchange).
+- GoReleaser now runs only on tag pushes and replaces existing artifacts.
+- Bumped `github.com/stillya/testcontainers-keycloak`, and CI
+  `actions/checkout` v6 → v7 and `codecov/codecov-action` v6 → v7.
+
 ## [1.3.0] — 2026-04-25
 
 ### Added
@@ -125,7 +162,9 @@ Initial release.
   (testcontainers-based Keycloak), Trivy scan, GHCR publish, GoReleaser.
 - LICENSE.
 
-[Unreleased]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.4.0...v1.5.0
+[1.4.0]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.1.0...v1.2.0
