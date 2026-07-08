@@ -312,17 +312,7 @@ func (c *Client) CreateClient(ctx context.Context, realm string, body map[string
 	if resp.StatusCode != http.StatusCreated {
 		return "", readError(resp)
 	}
-
-	location := resp.Header.Get("Location")
-	if location == "" {
-		return "", fmt.Errorf("creating client: no Location header in response")
-	}
-	// Location is typically: .../clients/{uuid}
-	idx := strings.LastIndex(location, "/")
-	if idx < 0 || idx == len(location)-1 {
-		return "", fmt.Errorf("creating client: unexpected Location header format: %s", location)
-	}
-	return location[idx+1:], nil
+	return parseLocationID(resp, "creating client")
 }
 
 // UpdateClient updates an existing client by UUID.
@@ -665,4 +655,203 @@ func (c *Client) GetServiceAccountUser(ctx context.Context, realm, clientUUID st
 		return nil, fmt.Errorf("decoding service account user: %w", err)
 	}
 	return result, nil
+}
+
+// parseLocationID extracts the trailing ID segment from a response's Location
+// header (e.g. ".../groups/{uuid}" -> "{uuid}"). op labels errors.
+func parseLocationID(resp *http.Response, op string) (string, error) {
+	location := resp.Header.Get("Location")
+	if location == "" {
+		return "", fmt.Errorf("%s: no Location header in response", op)
+	}
+	idx := strings.LastIndex(location, "/")
+	if idx < 0 || idx == len(location)-1 {
+		return "", fmt.Errorf("%s: unexpected Location header format: %s", op, location)
+	}
+	return location[idx+1:], nil
+}
+
+// GetGroups returns top-level groups matching the given name (exact match).
+func (c *Client) GetGroups(ctx context.Context, realm, search string) ([]map[string]any, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/groups?search=" + url.QueryEscape(search) + "&exact=true"
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding groups: %w", err)
+	}
+	return result, nil
+}
+
+// GetGroup returns the full representation of a group by UUID, or nil if not found.
+// Unlike GetGroups, this includes attributes and other detail fields.
+func (c *Client) GetGroup(ctx context.Context, realm, id string) (map[string]any, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/groups/" + url.PathEscape(id)
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding group: %w", err)
+	}
+	return result, nil
+}
+
+// GetSubGroups returns the direct children of the given parent group matching
+// the given name (exact match). Querying by name avoids the server's default
+// child-page cap (Keycloak paginates /children with a small default max).
+func (c *Client) GetSubGroups(ctx context.Context, realm, parentID, search string) ([]map[string]any, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/groups/" + url.PathEscape(parentID) + "/children?search=" + url.QueryEscape(search) + "&exact=true"
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding subgroups: %w", err)
+	}
+	return result, nil
+}
+
+// CreateGroup creates a new top-level group in the given realm.
+// Returns the UUID of the newly created group, extracted from the Location header.
+func (c *Client) CreateGroup(ctx context.Context, realm string, body map[string]any) (string, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/groups"
+	resp, err := c.doRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		return "", readError(resp)
+	}
+	return parseLocationID(resp, "creating group")
+}
+
+// CreateSubGroup creates a new group nested under the given parent group.
+// Returns the UUID of the newly created subgroup, extracted from the Location header.
+func (c *Client) CreateSubGroup(ctx context.Context, realm, parentID string, body map[string]any) (string, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/groups/" + url.PathEscape(parentID) + "/children"
+	resp, err := c.doRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		return "", readError(resp)
+	}
+	return parseLocationID(resp, "creating subgroup")
+}
+
+// UpdateGroup updates an existing group by UUID.
+func (c *Client) UpdateGroup(ctx context.Context, realm, id string, body map[string]any) error {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/groups/" + url.PathEscape(id)
+	resp, err := c.doRequest(ctx, http.MethodPut, path, body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return readError(resp)
+	}
+	return nil
+}
+
+// GetGroupRealmRoleMappings returns the realm roles currently mapped to a group.
+func (c *Client) GetGroupRealmRoleMappings(ctx context.Context, realm, groupID string) ([]map[string]any, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/groups/" + url.PathEscape(groupID) + "/role-mappings/realm"
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding group realm role mappings: %w", err)
+	}
+	return result, nil
+}
+
+// AddGroupRealmRoleMappings grants the given realm roles to a group.
+// Each entry must contain at least the role "id" and "name".
+func (c *Client) AddGroupRealmRoleMappings(ctx context.Context, realm, groupID string, roles []map[string]any) error {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/groups/" + url.PathEscape(groupID) + "/role-mappings/realm"
+	resp, err := c.doRequest(ctx, http.MethodPost, path, roles)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return readError(resp)
+	}
+	return nil
+}
+
+// GetGroupClientRoleMappings returns the client roles of the given client currently mapped to a group.
+func (c *Client) GetGroupClientRoleMappings(ctx context.Context, realm, groupID, clientUUID string) ([]map[string]any, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/groups/" + url.PathEscape(groupID) + "/role-mappings/clients/" + url.PathEscape(clientUUID)
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding group client role mappings: %w", err)
+	}
+	return result, nil
+}
+
+// AddGroupClientRoleMappings grants the given client roles to a group.
+// Each entry must contain at least the role "id" and "name".
+func (c *Client) AddGroupClientRoleMappings(ctx context.Context, realm, groupID, clientUUID string, roles []map[string]any) error {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/groups/" + url.PathEscape(groupID) + "/role-mappings/clients/" + url.PathEscape(clientUUID)
+	resp, err := c.doRequest(ctx, http.MethodPost, path, roles)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return readError(resp)
+	}
+	return nil
 }

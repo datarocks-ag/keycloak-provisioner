@@ -9,7 +9,7 @@ Release notes are maintained in [CHANGELOG.md](CHANGELOG.md).
 
 ## Features
 
-- Idempotent provisioning of realms, clients, protocol mappers, realm roles, client roles, users, and service account roles
+- Idempotent provisioning of realms, clients, protocol mappers, realm roles, client roles, users, service account roles, and groups (with nested subgroups and role assignments)
 - Master realm configuration (SSL, users) without full provisioning
 - `sslRequired` setting on any realm (`external`, `all`, `none`)
 - User management with password setting and realm/client role assignment
@@ -96,6 +96,15 @@ In dry-run mode, every mutating call logs a `DRY-RUN:` message and is skipped. R
    3. **Realm roles** — created or updated
    4. **Service account roles** — assigned (additive, after roles exist)
    5. **Users** — created or updated, passwords set, roles assigned (additive)
+   6. **Groups** — created or updated (matched by `name`)
+      - **Attributes** — set from config
+      - **Realm/client role assignments** — granted if not already mapped (additive)
+      - **Subgroups** — created or updated recursively
+
+Groups run after roles so their realm/client role assignments resolve to
+roles created earlier in the same run. Role assignments are additive: the
+provisioner grants any configured role that is not yet mapped, and never
+removes existing mappings.
 
 ## Config Example
 
@@ -161,6 +170,19 @@ realms:
           clients:
             my-app:
               - admin
+
+    groups:
+      - name: "engineering"
+        attributes:
+          department:
+            - "engineering"
+        realmRoles:
+          - "app-admin"
+        clientRoles:
+          my-app:
+            - "admin"
+        subGroups:
+          - name: "backend"
 ```
 
 ## Master Realm

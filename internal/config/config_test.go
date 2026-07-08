@@ -1003,3 +1003,283 @@ realms:
 		t.Errorf("attribute key not expanded: %v", attrs)
 	}
 }
+
+func TestValidGroups(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    groups:
+      - name: "engineering"
+        attributes:
+          department: ["eng"]
+        realmRoles: ["developer"]
+        clientRoles:
+          my-app: ["admin"]
+        subGroups:
+          - name: "backend"
+          - name: "frontend"
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	g := cfg.Realms[0].Groups[0]
+	if g.Name != "engineering" {
+		t.Errorf("expected engineering, got %s", g.Name)
+	}
+	if len(g.SubGroups) != 2 {
+		t.Fatalf("expected 2 subgroups, got %d", len(g.SubGroups))
+	}
+	if g.Attributes["department"][0] != "eng" {
+		t.Errorf("unexpected attribute: %v", g.Attributes)
+	}
+}
+
+func TestValidationMissingGroupName(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    groups:
+      - attributes:
+          department: ["eng"]
+`
+	path := writeTempConfig(t, yaml)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for missing group name")
+	}
+}
+
+func TestValidationDuplicateGroupName(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    groups:
+      - name: "dup"
+      - name: "dup"
+`
+	path := writeTempConfig(t, yaml)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for duplicate group name")
+	}
+}
+
+func TestValidationDuplicateSubGroupName(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    groups:
+      - name: "engineering"
+        subGroups:
+          - name: "dup"
+          - name: "dup"
+`
+	path := writeTempConfig(t, yaml)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for duplicate subgroup name")
+	}
+}
+
+func TestValidationMissingSubGroupName(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    groups:
+      - name: "engineering"
+        subGroups:
+          - realmRoles: ["developer"]
+`
+	path := writeTempConfig(t, yaml)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for missing subgroup name")
+	}
+}
+
+func TestValidationNullByteInGroupName(t *testing.T) {
+	yaml := "realms:\n  - realm: \"test\"\n    groups:\n      - name: \"grp\x00evil\"\n"
+	path := writeTempConfig(t, yaml)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for null byte in group name")
+	}
+}
+
+func TestEnvVarExpansionInGroups(t *testing.T) {
+	t.Setenv("TEST_GROUP_NAME", "engineering")
+	t.Setenv("TEST_GROUP_ATTR", "eng")
+	t.Setenv("TEST_GROUP_ROLE", "developer")
+	t.Setenv("TEST_GROUP_CLIENT_ROLE", "admin")
+	t.Setenv("TEST_SUBGROUP_NAME", "backend")
+
+	yaml := `
+realms:
+  - realm: "test"
+    groups:
+      - name: "${TEST_GROUP_NAME}"
+        attributes:
+          department: ["${TEST_GROUP_ATTR}"]
+        realmRoles: ["${TEST_GROUP_ROLE}"]
+        clientRoles:
+          my-app: ["${TEST_GROUP_CLIENT_ROLE}"]
+        subGroups:
+          - name: "${TEST_SUBGROUP_NAME}"
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	g := cfg.Realms[0].Groups[0]
+	if g.Name != "engineering" {
+		t.Errorf("group name not expanded: %s", g.Name)
+	}
+	if g.Attributes["department"][0] != "eng" {
+		t.Errorf("group attribute not expanded: %v", g.Attributes)
+	}
+	if g.RealmRoles[0] != "developer" {
+		t.Errorf("group realm role not expanded: %s", g.RealmRoles[0])
+	}
+	if g.ClientRoles["my-app"][0] != "admin" {
+		t.Errorf("group client role not expanded: %v", g.ClientRoles)
+	}
+	if g.SubGroups[0].Name != "backend" {
+		t.Errorf("subgroup name not expanded: %s", g.SubGroups[0].Name)
+	}
+}
+
+func TestEnvVarExpansionInGroupClientRoleKeys(t *testing.T) {
+	t.Setenv("TEST_CLIENT_ID", "resolved-app")
+
+	yaml := `
+realms:
+  - realm: "test"
+    groups:
+      - name: "engineering"
+        clientRoles:
+          "${TEST_CLIENT_ID}": ["admin"]
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	g := cfg.Realms[0].Groups[0]
+	if roles, ok := g.ClientRoles["resolved-app"]; !ok || len(roles) != 1 || roles[0] != "admin" {
+		t.Errorf("expected clientRoles re-keyed to resolved-app: got %v", g.ClientRoles)
+	}
+	if _, ok := g.ClientRoles["${TEST_CLIENT_ID}"]; ok {
+		t.Error("expected original templated key to be removed")
+	}
+}
+
+func TestEnvVarExpansionInGroupClientRoleKeyCollisionMerges(t *testing.T) {
+	t.Setenv("TEST_CLIENT_ID", "app")
+
+	yaml := `
+realms:
+  - realm: "test"
+    groups:
+      - name: "engineering"
+        clientRoles:
+          "${TEST_CLIENT_ID}": ["admin"]
+          "app": ["user"]
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	roles := cfg.Realms[0].Groups[0].ClientRoles["app"]
+	if len(roles) != 2 {
+		t.Fatalf("expected merged roles for colliding key, got %v", roles)
+	}
+	has := map[string]bool{}
+	for _, r := range roles {
+		has[r] = true
+	}
+	if !has["admin"] || !has["user"] {
+		t.Errorf("expected both admin and user after merge, got %v", roles)
+	}
+}
+
+func TestValidationNullByteInGroupAttributeValue(t *testing.T) {
+	yaml := "realms:\n  - realm: \"test\"\n    groups:\n      - name: \"g\"\n        attributes:\n          dept: [\"e\x00vil\"]\n"
+	path := writeTempConfig(t, yaml)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for null byte in group attribute value")
+	}
+}
+
+func TestValidationNullByteInGroupRealmRole(t *testing.T) {
+	yaml := "realms:\n  - realm: \"test\"\n    groups:\n      - name: \"g\"\n        realmRoles: [\"dev\x00\"]\n"
+	path := writeTempConfig(t, yaml)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for null byte in group realm role")
+	}
+}
+
+func TestValidationNullByteInGroupClientRole(t *testing.T) {
+	yaml := "realms:\n  - realm: \"test\"\n    groups:\n      - name: \"g\"\n        clientRoles:\n          app: [\"adm\x00in\"]\n"
+	path := writeTempConfig(t, yaml)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for null byte in group client role")
+	}
+}
+
+func TestValidationEmptyGroupRealmRole(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    groups:
+      - name: "g"
+        realmRoles: [""]
+`
+	path := writeTempConfig(t, yaml)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for empty group realm role")
+	}
+}
+
+func TestValidationEmptyGroupClientRole(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    groups:
+      - name: "g"
+        clientRoles:
+          app: [""]
+`
+	path := writeTempConfig(t, yaml)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for empty group client role")
+	}
+}
+
+func TestValidationEmptyGroupAttributeKey(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    groups:
+      - name: "g"
+        attributes:
+          "": ["v"]
+`
+	path := writeTempConfig(t, yaml)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for empty group attribute key")
+	}
+}
