@@ -110,6 +110,9 @@ func (p *Provisioner) ensureUserGroups(ctx context.Context, realm, userID, usern
 		if err := p.client.AddUserToGroup(ctx, realm, userID, groupID); err != nil {
 			return fmt.Errorf("adding user %q to group %q: %w", username, normalized, err)
 		}
+		// Mark as member so duplicate paths in the config (after
+		// normalization) are not added again in the same run.
+		memberOf[normalized] = true
 	}
 
 	return nil
