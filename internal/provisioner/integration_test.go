@@ -121,6 +121,13 @@ realms:
           test-app: ["admin"]
         subGroups:
           - name: "backend"
+    users:
+      - username: "dev-user"
+        enabled: true
+        groups:
+          - "engineering"
+          - "/engineering/backend"
+          - "does-not-exist"  # missing group: warned and skipped, must not fail the run
 `
 	cfgPath := writeTestConfig(t, configYAML)
 	cfg, err := config.Load(cfgPath)
@@ -267,6 +274,38 @@ realms:
 	}
 	if !foundClientRole {
 		t.Error("client role 'admin' not mapped to group 'engineering'")
+	}
+
+	// Verify user group memberships (missing group was skipped with a warning)
+	users, err := kc.GetUsers(ctx, "test-realm", "dev-user")
+	if err != nil {
+		t.Fatalf("getting users: %v", err)
+	}
+	if len(users) != 1 {
+		t.Fatalf("expected 1 user, got %d", len(users))
+	}
+	userUUID, ok := users[0]["id"].(string)
+	if !ok {
+		t.Fatal("expected user 'id' to be a string")
+	}
+	memberships, err := kc.GetUserGroups(ctx, "test-realm", userUUID)
+	if err != nil {
+		t.Fatalf("getting user groups: %v", err)
+	}
+	memberPaths := make(map[string]bool, len(memberships))
+	for _, g := range memberships {
+		if path, ok := g["path"].(string); ok {
+			memberPaths[path] = true
+		}
+	}
+	if !memberPaths["/engineering"] {
+		t.Error("user 'dev-user' is not a member of group '/engineering'")
+	}
+	if !memberPaths["/engineering/backend"] {
+		t.Error("user 'dev-user' is not a member of group '/engineering/backend'")
+	}
+	if len(memberPaths) != 2 {
+		t.Errorf("expected exactly 2 group memberships, got %v", memberPaths)
 	}
 }
 

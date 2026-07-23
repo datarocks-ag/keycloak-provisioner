@@ -109,6 +109,12 @@ realms:
     #       clients:
     #         my-app:
     #           - admin
+    #     # Group memberships by path (leading slash optional; additive —
+    #     # never removed). Groups must exist or be defined under "groups"
+    #     # below; a missing group is logged as a warning and skipped.
+    #     groups:
+    #       - "engineering"
+    #       - "/engineering/backend"
     #
     #   # Use initialPassword instead of password for one-time setup.
     #   # Only set when the user is first created; ignored on subsequent runs.

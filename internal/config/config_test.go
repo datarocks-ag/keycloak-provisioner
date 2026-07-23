@@ -1283,3 +1283,74 @@ realms:
 		t.Fatal("expected validation error for empty group attribute key")
 	}
 }
+
+func TestUserWithGroups(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    users:
+      - username: "alice"
+        groups:
+          - "engineering"
+          - "/engineering/backend"
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	groups := cfg.Realms[0].Users[0].Groups
+	if len(groups) != 2 {
+		t.Fatalf("expected 2 groups, got %d", len(groups))
+	}
+	if groups[0] != "engineering" || groups[1] != "/engineering/backend" {
+		t.Errorf("unexpected groups: %v", groups)
+	}
+}
+
+func TestEnvVarExpansionInUserGroups(t *testing.T) {
+	t.Setenv("TEAM_GROUP", "engineering")
+	yaml := `
+realms:
+  - realm: "test"
+    users:
+      - username: "alice"
+        groups:
+          - "/${TEAM_GROUP}/backend"
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if got := cfg.Realms[0].Users[0].Groups[0]; got != "/engineering/backend" {
+		t.Errorf("expected /engineering/backend, got %q", got)
+	}
+}
+
+func TestValidationEmptyUserGroup(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    users:
+      - username: "alice"
+        groups:
+          - "/"
+`
+	path := writeTempConfig(t, yaml)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for empty group path")
+	}
+}
+
+func TestValidationNullByteInUserGroup(t *testing.T) {
+	yaml := "realms:\n  - realm: \"test\"\n    users:\n      - username: \"alice\"\n        groups:\n          - \"eng\\x00evil\"\n"
+	path := writeTempConfig(t, yaml)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for null byte in group path")
+	}
+}

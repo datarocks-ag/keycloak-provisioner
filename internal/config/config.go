@@ -131,6 +131,11 @@ type User struct {
 	LastName        string     `yaml:"lastName"`
 	EmailVerified   *bool      `yaml:"emailVerified"`
 	Roles           *UserRoles `yaml:"roles"`
+	// Groups lists group paths the user should be a member of, matching
+	// Keycloak's path notation (e.g. "/engineering/backend"; the leading
+	// slash is optional). Membership is additive — the provisioner never
+	// removes a user from a group.
+	Groups []string `yaml:"groups"`
 }
 
 // UserRoles defines realm and client role assignments for a user or service account.
@@ -200,6 +205,9 @@ func expandUsers(users []User) {
 		u.FirstName = expandEnvVars(u.FirstName)
 		u.LastName = expandEnvVars(u.LastName)
 		expandUserRoles(u.Roles)
+		for j := range u.Groups {
+			u.Groups[j] = expandEnvVars(u.Groups[j])
+		}
 	}
 }
 
@@ -482,6 +490,15 @@ func validateUsers(prefix string, users []User) error {
 			if err := validateUserRoles(p, u.Roles); err != nil {
 				return err
 			}
+		}
+
+		for j, g := range u.Groups {
+			if strings.Trim(g, "/") == "" {
+				return fmt.Errorf("%s.groups[%d]: group path is required", p, j)
+			}
+		}
+		if err := scanSliceNullBytes(p+".groups", u.Groups); err != nil {
+			return err
 		}
 	}
 

@@ -12,7 +12,7 @@ Release notes are maintained in [CHANGELOG.md](CHANGELOG.md).
 - Idempotent provisioning of realms, clients, protocol mappers, realm roles, client roles, users, service account roles, and groups (with nested subgroups and role assignments)
 - Master realm configuration (SSL, users) without full provisioning
 - `sslRequired` setting on any realm (`external`, `all`, `none`)
-- User management with password setting and realm/client role assignment
+- User management with password setting, realm/client role assignment, and group membership
 - Service account role mapping for machine-to-machine clients
 - YAML config with `${VAR}` environment variable expansion (and `$${VAR}` escape for literals)
 - Configurable strategy: `update` (default) or `create` (skip existing)
@@ -95,16 +95,17 @@ In dry-run mode, every mutating call logs a `DRY-RUN:` message and is skipped. R
       - **Client roles** — created or updated
    3. **Realm roles** — created or updated
    4. **Service account roles** — assigned (additive, after roles exist)
-   5. **Users** — created or updated, passwords set, roles assigned (additive)
-   6. **Groups** — created or updated (matched by `name`)
+   5. **Groups** — created or updated (matched by `name`)
       - **Attributes** — set from config
       - **Realm/client role assignments** — granted if not already mapped (additive)
       - **Subgroups** — created or updated recursively
+   6. **Users** — created or updated, passwords set, roles assigned, group memberships added (additive)
 
 Groups run after roles so their realm/client role assignments resolve to
-roles created earlier in the same run. Role assignments are additive: the
-provisioner grants any configured role that is not yet mapped, and never
-removes existing mappings.
+roles created earlier in the same run, and before users so group memberships
+resolve to groups defined in the same config. Role assignments and group
+memberships are additive: the provisioner grants any configured role or
+membership that is not yet present, and never removes existing ones.
 
 ## Config Example
 
@@ -170,6 +171,8 @@ realms:
           clients:
             my-app:
               - admin
+        groups:
+          - "/engineering/backend"
 
     groups:
       - name: "engineering"
@@ -219,6 +222,7 @@ Users can be provisioned in any realm (including master via `masterRealm.users`)
 | `lastName` | string | Last name |
 | `emailVerified` | bool | Whether the email is marked as verified |
 | `roles` | object | Role assignments (see below) |
+| `groups` | list | Group memberships by path (see below) |
 
 ### User Role Assignment
 
@@ -234,6 +238,18 @@ roles:
 ```
 
 The referenced roles and clients must already exist (either defined earlier in the config or pre-existing in Keycloak).
+
+### User Group Membership
+
+Users can be added to groups by path, using Keycloak's path notation (the leading slash is optional). Nested groups are addressed by their full path:
+
+```yaml
+groups:
+  - "engineering"              # top-level group
+  - "/engineering/backend"     # nested group
+```
+
+Memberships are additive — the provisioner never removes a user from a group. The referenced groups must exist (either defined in the same config's `groups` section, which is provisioned before users, or pre-existing in Keycloak). A group that cannot be found is logged as a warning and skipped; it does not abort the run.
 
 ## Service Account Roles
 

@@ -24,7 +24,7 @@ func New(api KeycloakAPI, cfg *config.Config) *Provisioner {
 }
 
 // Run executes the full provisioning sequence:
-// Master realm (if configured) -> For each realm: Realm -> Clients (+ protocol mappers + client roles) -> Realm roles -> Service account roles -> Users -> Groups
+// Master realm (if configured) -> For each realm: Realm -> Clients (+ protocol mappers + client roles) -> Realm roles -> Service account roles -> Groups -> Users
 func (p *Provisioner) Run(ctx context.Context) error {
 	slog.Info("Starting provisioning")
 
@@ -104,18 +104,19 @@ func (p *Provisioner) provisionRealm(ctx context.Context, realm config.Realm, st
 		}
 	}
 
-	// 5. Users (after all roles exist)
-	for _, user := range realm.Users {
-		if err := p.ensureUser(ctx, realm.Realm, user, strategy); err != nil {
-			return fmt.Errorf("ensuring user %q: %w", user.Username, err)
-		}
-	}
-
-	// 6. Groups (+ attributes + subgroups + realm/client role assignments).
-	// Runs after roles so that role assignments resolve to existing roles.
+	// 5. Groups (+ attributes + subgroups + realm/client role assignments).
+	// Runs after roles so that role assignments resolve to existing roles,
+	// and before users so users can join groups defined in the same config.
 	for _, g := range realm.Groups {
 		if err := p.ensureGroup(ctx, realm.Realm, "", g, strategy); err != nil {
 			return fmt.Errorf("ensuring group %q: %w", g.Name, err)
+		}
+	}
+
+	// 6. Users (after all roles and groups exist)
+	for _, user := range realm.Users {
+		if err := p.ensureUser(ctx, realm.Realm, user, strategy); err != nil {
+			return fmt.Errorf("ensuring user %q: %w", user.Username, err)
 		}
 	}
 

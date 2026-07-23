@@ -43,6 +43,10 @@ type KeycloakAPI interface {
 	GetUserClientRoleMappings(ctx context.Context, realm, userID, clientUUID string) ([]map[string]any, error)
 	AddUserClientRoleMappings(ctx context.Context, realm, userID, clientUUID string, roles []map[string]any) error
 
+	// Group memberships
+	GetUserGroups(ctx context.Context, realm, userID string) ([]map[string]any, error)
+	AddUserToGroup(ctx context.Context, realm, userID, groupID string) error
+
 	// Service accounts
 	GetServiceAccountUser(ctx context.Context, realm, clientUUID string) (map[string]any, error)
 
