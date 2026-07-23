@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _No unreleased changes._
 
+## [1.6.0] — 2026-07-23
+
+### Added
+
+- Group membership for users: a `groups` list of group paths (e.g.
+  `/engineering/backend`; leading slash optional) on any user, including
+  master realm users. Memberships are additive — users are never removed
+  from groups. A referenced group that does not exist is logged as a
+  warning and skipped without aborting the run.
+- Dry-run reporting for group membership additions.
+- Unit, validation, and integration coverage for group memberships;
+  README and config example documentation.
+
+### Changed
+
+- Groups are now provisioned before users (previously after) so user
+  group memberships resolve to groups defined in the same config.
+
 ## [1.5.0] — 2026-07-08
 
 ### Added
@@ -162,7 +180,8 @@ Initial release.
   (testcontainers-based Keycloak), Trivy scan, GHCR publish, GoReleaser.
 - LICENSE.
 
-[Unreleased]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.2.1...v1.3.0
