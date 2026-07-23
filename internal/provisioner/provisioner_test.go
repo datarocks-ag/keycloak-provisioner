@@ -3209,3 +3209,184 @@ func TestBuildGroupBody(t *testing.T) {
 		t.Error("expected attributes omitted when empty")
 	}
 }
+
+// --- User group membership tests ---
+
+func TestEnsureUserGroupsAddsMembership(t *testing.T) {
+	var addedGroupID atomic.Value
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/users": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"id": "user-uuid-1", "username": "testuser"},
+			})
+		},
+		"PUT /admin/realms/{realm}/users/{id}": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		},
+		"GET /admin/realms/{realm}/users/{id}/groups": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{})
+		},
+		"GET /admin/realms/{realm}/groups": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"id": "group-uuid-1", "name": "engineering"},
+			})
+		},
+		"PUT /admin/realms/{realm}/users/{id}/groups/{groupId}": func(w http.ResponseWriter, r *http.Request) {
+			addedGroupID.Store(r.PathValue("groupId"))
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	c := newTestClient(t, server.URL)
+	user := config.User{
+		Username: "testuser",
+		Groups:   []string{"engineering"},
+	}
+
+	p := New(c, &config.Config{})
+	if err := p.ensureUser(context.Background(), "test-realm", user, "update"); err != nil {
+		t.Fatalf("ensureUser: %v", err)
+	}
+
+	if got, _ := addedGroupID.Load().(string); got != "group-uuid-1" {
+		t.Errorf("expected membership added to group-uuid-1, got %q", got)
+	}
+}
+
+func TestEnsureUserGroupsNestedPath(t *testing.T) {
+	var addedGroupID atomic.Value
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/users": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"id": "user-uuid-1", "username": "testuser"},
+			})
+		},
+		"PUT /admin/realms/{realm}/users/{id}": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		},
+		"GET /admin/realms/{realm}/users/{id}/groups": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{})
+		},
+		"GET /admin/realms/{realm}/groups": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"id": "eng-uuid", "name": "engineering"},
+			})
+		},
+		"GET /admin/realms/{realm}/groups/{id}/children": func(w http.ResponseWriter, r *http.Request) {
+			if r.PathValue("id") != "eng-uuid" {
+				t.Errorf("expected children lookup on eng-uuid, got %s", r.PathValue("id"))
+			}
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"id": "backend-uuid", "name": "backend"},
+			})
+		},
+		"PUT /admin/realms/{realm}/users/{id}/groups/{groupId}": func(w http.ResponseWriter, r *http.Request) {
+			addedGroupID.Store(r.PathValue("groupId"))
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	c := newTestClient(t, server.URL)
+	user := config.User{
+		Username: "testuser",
+		Groups:   []string{"/engineering/backend"},
+	}
+
+	p := New(c, &config.Config{})
+	if err := p.ensureUser(context.Background(), "test-realm", user, "update"); err != nil {
+		t.Fatalf("ensureUser: %v", err)
+	}
+
+	if got, _ := addedGroupID.Load().(string); got != "backend-uuid" {
+		t.Errorf("expected membership added to backend-uuid, got %q", got)
+	}
+}
+
+func TestEnsureUserGroupsSkipsExistingMembership(t *testing.T) {
+	var addCalled atomic.Bool
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/users": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"id": "user-uuid-1", "username": "testuser"},
+			})
+		},
+		"PUT /admin/realms/{realm}/users/{id}": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		},
+		"GET /admin/realms/{realm}/users/{id}/groups": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"id": "group-uuid-1", "name": "engineering", "path": "/engineering"},
+			})
+		},
+		"PUT /admin/realms/{realm}/users/{id}/groups/{groupId}": func(w http.ResponseWriter, r *http.Request) {
+			addCalled.Store(true)
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	c := newTestClient(t, server.URL)
+	user := config.User{
+		Username: "testuser",
+		Groups:   []string{"engineering"}, // leading slash optional
+	}
+
+	p := New(c, &config.Config{})
+	if err := p.ensureUser(context.Background(), "test-realm", user, "update"); err != nil {
+		t.Fatalf("ensureUser: %v", err)
+	}
+
+	if addCalled.Load() {
+		t.Error("expected no membership add for existing member")
+	}
+}
+
+func TestEnsureUserGroupsMissingGroupWarnsAndContinues(t *testing.T) {
+	var addedGroupID atomic.Value
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/users": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"id": "user-uuid-1", "username": "testuser"},
+			})
+		},
+		"PUT /admin/realms/{realm}/users/{id}": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		},
+		"GET /admin/realms/{realm}/users/{id}/groups": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{})
+		},
+		"GET /admin/realms/{realm}/groups": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"id": "group-uuid-1", "name": "engineering"},
+			})
+		},
+		"PUT /admin/realms/{realm}/users/{id}/groups/{groupId}": func(w http.ResponseWriter, r *http.Request) {
+			addedGroupID.Store(r.PathValue("groupId"))
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	c := newTestClient(t, server.URL)
+	user := config.User{
+		Username: "testuser",
+		// "does-not-exist" must be skipped with a warning; "engineering" must
+		// still be processed afterwards.
+		Groups: []string{"does-not-exist", "engineering"},
+	}
+
+	p := New(c, &config.Config{})
+	if err := p.ensureUser(context.Background(), "test-realm", user, "update"); err != nil {
+		t.Fatalf("ensureUser: %v", err)
+	}
+
+	if got, _ := addedGroupID.Load().(string); got != "group-uuid-1" {
+		t.Errorf("expected membership added to group-uuid-1 after skipping missing group, got %q", got)
+	}
+}

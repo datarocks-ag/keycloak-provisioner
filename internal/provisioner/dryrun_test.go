@@ -17,6 +17,7 @@ type fakeAPI struct {
 	saUsers         map[string]map[string]any   // key: realm/clientUUID
 	realmRoleMaps   map[string][]map[string]any // key: realm/userID
 	clientRoleMaps  map[string][]map[string]any // key: realm/userID/clientUUID
+	userGroups      map[string][]map[string]any // key: realm/userID
 
 	groupsByRealm       map[string][]map[string]any // key: realm
 	groupsByID          map[string]map[string]any   // key: realm/groupID
@@ -43,6 +44,7 @@ func newFakeAPI() *fakeAPI {
 		saUsers:         make(map[string]map[string]any),
 		realmRoleMaps:   make(map[string][]map[string]any),
 		clientRoleMaps:  make(map[string][]map[string]any),
+		userGroups:      make(map[string][]map[string]any),
 
 		groupsByRealm:       make(map[string][]map[string]any),
 		groupsByID:          make(map[string]map[string]any),
@@ -152,6 +154,15 @@ func (f *fakeAPI) GetUserClientRoleMappings(_ context.Context, realm, userID, uu
 }
 
 func (f *fakeAPI) AddUserClientRoleMappings(context.Context, string, string, string, []map[string]any) error {
+	f.updateCalls.inc()
+	return nil
+}
+
+func (f *fakeAPI) GetUserGroups(_ context.Context, realm, userID string) ([]map[string]any, error) {
+	return f.userGroups[realm+"/"+userID], nil
+}
+
+func (f *fakeAPI) AddUserToGroup(context.Context, string, string, string) error {
 	f.updateCalls.inc()
 	return nil
 }

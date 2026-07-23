@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"keycloak-provisioner/internal/config"
 )
@@ -180,6 +181,34 @@ func (p *Provisioner) ensureGroupClientRoles(ctx context.Context, realm, groupID
 	}
 
 	return nil
+}
+
+// normalizeGroupPath returns the path in Keycloak's canonical form: a single
+// leading slash, no trailing slash (e.g. "engineering/backend/" -> "/engineering/backend").
+func normalizeGroupPath(path string) string {
+	return "/" + strings.Trim(path, "/")
+}
+
+// resolveGroupPath resolves a normalized group path to the group's UUID by
+// walking the group tree one level per path segment. Returns "" (and no
+// error) when the path does not resolve to an existing group.
+func (p *Provisioner) resolveGroupPath(ctx context.Context, realm, path string) (string, error) {
+	parentID := ""
+	for _, name := range strings.Split(strings.Trim(path, "/"), "/") {
+		g, err := p.findGroup(ctx, realm, parentID, name)
+		if err != nil {
+			return "", err
+		}
+		if g == nil {
+			return "", nil
+		}
+		id, ok := g["id"].(string)
+		if !ok {
+			return "", fmt.Errorf("group %q: missing or invalid id in response", name)
+		}
+		parentID = id
+	}
+	return parentID, nil
 }
 
 // resolveClientUUID returns the internal UUID of the client with the given clientId.

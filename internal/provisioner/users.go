@@ -63,6 +63,58 @@ func (p *Provisioner) ensureUser(ctx context.Context, realm string, user config.
 		}
 	}
 
+	if len(user.Groups) > 0 {
+		if err := p.ensureUserGroups(ctx, realm, userID, user.Username, user.Groups); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// ensureUserGroups adds the user to any configured group they are not yet a
+// member of. Groups are referenced by path (e.g. "/engineering/backend").
+// Membership is additive — existing memberships are never removed. A group
+// that does not exist is logged as a warning and skipped; it does not abort
+// the run.
+func (p *Provisioner) ensureUserGroups(ctx context.Context, realm, userID, username string, groups []string) error {
+	existing, err := p.client.GetUserGroups(ctx, realm, userID)
+	if err != nil {
+		return fmt.Errorf("getting group memberships for user %q: %w", username, err)
+	}
+
+	memberOf := make(map[string]bool, len(existing))
+	for _, g := range existing {
+		if path, ok := g["path"].(string); ok {
+			memberOf[path] = true
+		}
+	}
+
+	for _, path := range groups {
+		normalized := normalizeGroupPath(path)
+		if memberOf[normalized] {
+			slog.Debug("User already member of group", "realm", realm, "username", username, "group", normalized)
+			continue
+		}
+
+		groupID, err := p.resolveGroupPath(ctx, realm, normalized)
+		if err != nil {
+			return fmt.Errorf("resolving group %q for user %q: %w", normalized, username, err)
+		}
+		if groupID == "" {
+			slog.Warn("Group not found, skipping membership", "realm", realm, "username", username, "group", normalized)
+			continue
+		}
+
+		slog.Info("Adding user to group", "realm", realm, "username", username, "group", normalized)
+		if err := p.client.AddUserToGroup(ctx, realm, userID, groupID); err != nil {
+			return fmt.Errorf("adding user %q to group %q: %w", username, normalized, err)
+		}
+		// Mark as member so duplicate paths in the config (after
+		// normalization) are not added again in the same run.
+		memberOf[normalized] = true
+	}
+
 	return nil
 }
 

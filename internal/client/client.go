@@ -637,6 +637,42 @@ func (c *Client) AddUserClientRoleMappings(ctx context.Context, realm, userID, c
 	return nil
 }
 
+// GetUserGroups returns the groups the user is a direct member of.
+func (c *Client) GetUserGroups(ctx context.Context, realm, userID string) ([]map[string]any, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/users/" + url.PathEscape(userID) + "/groups"
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding user groups: %w", err)
+	}
+	return result, nil
+}
+
+// AddUserToGroup adds the user to the given group. The operation is
+// idempotent on the Keycloak side — adding an existing member succeeds.
+func (c *Client) AddUserToGroup(ctx context.Context, realm, userID, groupID string) error {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/users/" + url.PathEscape(userID) + "/groups/" + url.PathEscape(groupID)
+	resp, err := c.doRequest(ctx, http.MethodPut, path, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return readError(resp)
+	}
+	return nil
+}
+
 // GetServiceAccountUser returns the service account user for a client.
 func (c *Client) GetServiceAccountUser(ctx context.Context, realm, clientUUID string) (map[string]any, error) {
 	path := "/admin/realms/" + url.PathEscape(realm) + "/clients/" + url.PathEscape(clientUUID) + "/service-account-user"

@@ -252,6 +252,20 @@ func (d *dryRunAPI) AddUserClientRoleMappings(_ context.Context, realm, userID, 
 	return nil
 }
 
+// Group memberships.
+
+func (d *dryRunAPI) GetUserGroups(ctx context.Context, realm, userID string) ([]map[string]any, error) {
+	if isSyntheticID(userID) || d.realmIsSynthetic(realm) {
+		return nil, nil
+	}
+	return d.inner.GetUserGroups(ctx, realm, userID)
+}
+
+func (d *dryRunAPI) AddUserToGroup(_ context.Context, realm, userID, groupID string) error {
+	slog.Info("DRY-RUN: would add user to group", "realm", realm, "userID", userID, "groupID", groupID)
+	return nil
+}
+
 // Service accounts.
 
 func (d *dryRunAPI) GetServiceAccountUser(ctx context.Context, realm, clientUUID string) (map[string]any, error) {
