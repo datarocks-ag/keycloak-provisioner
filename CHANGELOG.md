@@ -7,7 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No unreleased changes._
+### Added
+
+- Realm attributes: an `attributes` map on any realm, with `${VAR}`
+  expansion in both keys and values. Attributes are merged over the
+  realm's current attributes rather than replacing them, so keys managed
+  outside the config are preserved. Omitting the block leaves realm
+  attributes untouched.
+- `acrLoaMap` on realms and clients, mapping ACR values to Levels of
+  Authentication for step-up authentication. Marshalled into the
+  `acr.loa.map` attribute with sorted keys for stable output; the typed
+  field wins over the same key set manually in `attributes`.
+- `organizationsEnabled` on realms, toggling Keycloak Organizations
+  (Keycloak 26+).
+
+### Changed
+
+- Empty attribute names are now rejected at config load time for both
+  realm and client `attributes` maps. Previously an empty key was passed
+  through to Keycloak.
 
 ## [1.6.0] — 2026-07-23
 

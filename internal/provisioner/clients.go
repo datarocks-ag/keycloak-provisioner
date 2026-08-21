@@ -118,12 +118,16 @@ const standardTokenExchangeAttr = "standard.token.exchange.enabled"
 // derived from typed fields. It returns a fresh map so the config's own
 // Attributes map is never mutated. Typed fields win over raw attributes.
 func buildClientAttributes(c config.Client) map[string]string {
-	attrs := make(map[string]string, len(c.Attributes)+1)
+	attrs := make(map[string]string, len(c.Attributes)+2)
 	for k, v := range c.Attributes {
 		attrs[k] = v
 	}
 	if c.StandardTokenExchangeEnabled != nil {
 		attrs[standardTokenExchangeAttr] = strconv.FormatBool(*c.StandardTokenExchangeEnabled)
 	}
+	if acrLoaMap := buildAcrLoaMapAttribute(c.AcrLoaMap); acrLoaMap != "" {
+		attrs[acrLoaMapAttr] = acrLoaMap
+	}
+
 	return attrs
 }

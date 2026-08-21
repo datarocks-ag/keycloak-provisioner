@@ -1206,3 +1206,144 @@ realms:
 		t.Errorf("dry-run created the realm — got %v", got)
 	}
 }
+
+func TestIntegrationRealmAttributesMerge(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	configYAML := `
+realms:
+  - realm: "attr-realm"
+    enabled: true
+    attributes:
+      frontendUrl: "https://id.example.com"
+    acrLoaMap:
+      silver: 1
+      gold: 2
+`
+	cfgPath := writeTestConfig(t, configYAML)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+
+	// Simulate an external actor writing an attribute the config knows nothing
+	// about, the way an operator or another tool would.
+	realm, err := kc.GetRealm(ctx, "attr-realm")
+	if err != nil {
+		t.Fatalf("getting realm: %v", err)
+	}
+	attrs, ok := realm["attributes"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected attributes map, got %T", realm["attributes"])
+	}
+	attrs["setOutOfBand"] = "yes"
+	if err := kc.UpdateRealm(ctx, "attr-realm", map[string]any{
+		"realm":      "attr-realm",
+		"attributes": attrs,
+	}); err != nil {
+		t.Fatalf("setting out-of-band attribute: %v", err)
+	}
+
+	// Re-running must not drop it.
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+
+	realm, err = kc.GetRealm(ctx, "attr-realm")
+	if err != nil {
+		t.Fatalf("getting realm after second run: %v", err)
+	}
+	attrs, ok = realm["attributes"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected attributes map, got %T", realm["attributes"])
+	}
+
+	if got := attrs["setOutOfBand"]; got != "yes" {
+		t.Errorf("out-of-band attribute was clobbered, got %v", got)
+	}
+	if got := attrs["frontendUrl"]; got != "https://id.example.com" {
+		t.Errorf("configured attribute missing, got %v", got)
+	}
+	if got := attrs["acr.loa.map"]; got != `{"gold":2,"silver":1}` {
+		t.Errorf("unexpected acr.loa.map, got %v", got)
+	}
+}
+
+func TestIntegrationClientAcrLoaMap(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	configYAML := `
+realms:
+  - realm: "acr-realm"
+    enabled: true
+    clients:
+      - clientId: "acr-app"
+        enabled: true
+        acrLoaMap:
+          gold: 2
+`
+	cfgPath := writeTestConfig(t, configYAML)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	clients, err := kc.GetClients(ctx, "acr-realm", "acr-app")
+	if err != nil {
+		t.Fatalf("getting client: %v", err)
+	}
+	if len(clients) == 0 {
+		t.Fatal("client acr-app not found")
+	}
+
+	attrs, ok := clients[0]["attributes"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected attributes map, got %T", clients[0]["attributes"])
+	}
+	if got := attrs["acr.loa.map"]; got != `{"gold":2}` {
+		t.Errorf("unexpected acr.loa.map, got %v", got)
+	}
+}
+
+func TestIntegrationRealmOrganizationsEnabled(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	configYAML := `
+realms:
+  - realm: "org-realm"
+    enabled: true
+    organizationsEnabled: true
+`
+	cfgPath := writeTestConfig(t, configYAML)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	realm, err := kc.GetRealm(ctx, "org-realm")
+	if err != nil {
+		t.Fatalf("getting realm: %v", err)
+	}
+	if realm["organizationsEnabled"] != true {
+		t.Errorf("expected organizationsEnabled=true, got %v", realm["organizationsEnabled"])
+	}
+}
