@@ -26,6 +26,23 @@ realms:
     registrationAllowed: false
     resetPasswordAllowed: true
 
+    # Enable Keycloak Organizations for this realm (Keycloak 26+).
+    # Omit to leave the realm's current setting untouched.
+    # organizationsEnabled: true
+
+    # Realm attributes. Keys and values support ${VAR} expansion.
+    # These are MERGED over the realm's current attributes, so keys managed
+    # outside this config are preserved. Omit the block to leave them alone.
+    # attributes:
+    #   frontendUrl: "https://id.example.com"
+
+    # Step-up authentication: map ACR values to Levels of Authentication.
+    # Written to the realm's acr.loa.map attribute; wins over an acr.loa.map
+    # entry set manually under attributes. Levels must not be negative.
+    # acrLoaMap:
+    #   silver: 1
+    #   gold: 2
+
     clients:
       - clientId: "my-app"
         secret: "${MY_APP_CLIENT_SECRET}"
@@ -53,6 +70,10 @@ realms:
           - "offline_access"
         attributes:
           "post.logout.redirect.uris": "+"
+        # Client-level ACR-to-LoA map for step-up authentication. Written to
+        # the client's acr.loa.map attribute; wins over the raw attribute.
+        # acrLoaMap:
+        #   gold: 2
         protocolMappers:
           - name: "audience-mapper"
             protocol: "openid-connect"

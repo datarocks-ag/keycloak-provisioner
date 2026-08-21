@@ -1354,3 +1354,190 @@ func TestValidationNullByteInUserGroup(t *testing.T) {
 		t.Fatal("expected validation error for null byte in group path")
 	}
 }
+
+func TestRealmAttributes(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    attributes:
+      frontendUrl: "https://id.example.com"
+      userProfileEnabled: "true"
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	attrs := cfg.Realms[0].Attributes
+	if len(attrs) != 2 {
+		t.Fatalf("expected 2 attributes, got %d", len(attrs))
+	}
+	if got := attrs["frontendUrl"]; got != "https://id.example.com" {
+		t.Errorf("expected https://id.example.com, got %q", got)
+	}
+}
+
+func TestEnvVarExpansionInRealmAttributes(t *testing.T) {
+	t.Setenv("ATTR_NAME", "frontendUrl")
+	t.Setenv("PUBLIC_URL", "https://id.example.com")
+	yaml := `
+realms:
+  - realm: "test"
+    attributes:
+      ${ATTR_NAME}: "${PUBLIC_URL}"
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if got := cfg.Realms[0].Attributes["frontendUrl"]; got != "https://id.example.com" {
+		t.Errorf("expected expanded key and value, got %q", got)
+	}
+}
+
+func TestValidationNullByteInRealmAttributes(t *testing.T) {
+	yaml := "realms:\n  - realm: \"test\"\n    attributes:\n      key: \"val\\x00evil\"\n"
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected validation error for null byte in realm attribute")
+	}
+}
+
+func TestValidationEmptyRealmAttributeName(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    attributes:
+      "": "value"
+`
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected validation error for empty realm attribute name")
+	}
+}
+
+func TestValidationEmptyClientAttributeName(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    clients:
+      - clientId: "web"
+        attributes:
+          "": "value"
+`
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected validation error for empty client attribute name")
+	}
+}
+
+func TestRealmAcrLoaMap(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    acrLoaMap:
+      silver: 1
+      gold: 2
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	m := cfg.Realms[0].AcrLoaMap
+	if m["silver"] != 1 || m["gold"] != 2 {
+		t.Errorf("unexpected acrLoaMap: %v", m)
+	}
+}
+
+func TestClientAcrLoaMap(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    clients:
+      - clientId: "web"
+        acrLoaMap:
+          gold: 2
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if got := cfg.Realms[0].Clients[0].AcrLoaMap["gold"]; got != 2 {
+		t.Errorf("expected gold=2, got %d", got)
+	}
+}
+
+func TestValidationNegativeAcrLoaLevel(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    acrLoaMap:
+      gold: -1
+`
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected validation error for negative LoA level")
+	}
+}
+
+func TestValidationNullByteInAcrValue(t *testing.T) {
+	yaml := "realms:\n  - realm: \"test\"\n    acrLoaMap:\n      \"go\\x00ld\": 2\n"
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected validation error for null byte in acr value")
+	}
+}
+
+func TestValidationEmptyAcrValue(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    acrLoaMap:
+      "": 1
+`
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected validation error for empty acr value")
+	}
+}
+
+func TestRealmOrganizationsEnabled(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    organizationsEnabled: true
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	enabled := cfg.Realms[0].OrganizationsEnabled
+	if enabled == nil || !*enabled {
+		t.Errorf("expected organizationsEnabled=true, got %v", enabled)
+	}
+}
+
+func TestRealmOrganizationsEnabledUnsetStaysNil(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.Realms[0].OrganizationsEnabled != nil {
+		t.Error("expected organizationsEnabled to stay nil when unset")
+	}
+}

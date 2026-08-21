@@ -55,18 +55,29 @@ type MasterRealmConfig struct {
 
 // Realm defines a Keycloak realm to provision.
 type Realm struct {
-	Realm                string      `yaml:"realm"`
-	DisplayName          string      `yaml:"displayName"`
-	Enabled              *bool       `yaml:"enabled"`
-	SslRequired          string      `yaml:"sslRequired"`
-	LoginTheme           string      `yaml:"loginTheme"`
-	RegistrationAllowed  *bool       `yaml:"registrationAllowed"`
-	ResetPasswordAllowed *bool       `yaml:"resetPasswordAllowed"`
-	Clients              []Client    `yaml:"clients"`
-	Roles                []RealmRole `yaml:"roles"`
-	Users                []User      `yaml:"users"`
-	Groups               []Group     `yaml:"groups"`
-	Strategy             string      `yaml:"strategy"`
+	Realm                string `yaml:"realm"`
+	DisplayName          string `yaml:"displayName"`
+	Enabled              *bool  `yaml:"enabled"`
+	SslRequired          string `yaml:"sslRequired"`
+	LoginTheme           string `yaml:"loginTheme"`
+	RegistrationAllowed  *bool  `yaml:"registrationAllowed"`
+	ResetPasswordAllowed *bool  `yaml:"resetPasswordAllowed"`
+	// OrganizationsEnabled toggles Keycloak Organizations for this realm.
+	// Keycloak 26+. Leave unset to keep the realm's current value.
+	OrganizationsEnabled *bool `yaml:"organizationsEnabled"`
+	// Attributes are realm-level attributes. They are merged over the realm's
+	// current attributes rather than replacing them, so keys managed outside
+	// this config are preserved. Keys and values support ${VAR} expansion.
+	Attributes map[string]string `yaml:"attributes"`
+	// AcrLoaMap maps ACR values to Levels of Authentication for step-up
+	// authentication. It is marshalled into the realm's acr.loa.map attribute
+	// and wins over an acr.loa.map entry supplied through Attributes.
+	AcrLoaMap map[string]int `yaml:"acrLoaMap"`
+	Clients   []Client       `yaml:"clients"`
+	Roles     []RealmRole    `yaml:"roles"`
+	Users     []User         `yaml:"users"`
+	Groups    []Group        `yaml:"groups"`
+	Strategy  string         `yaml:"strategy"`
 }
 
 // Client defines a Keycloak client to provision within a realm.
@@ -94,9 +105,13 @@ type Client struct {
 	DefaultClientScopes          []string          `yaml:"defaultClientScopes"`
 	OptionalClientScopes         []string          `yaml:"optionalClientScopes"`
 	Attributes                   map[string]string `yaml:"attributes"`
-	ProtocolMappers              []ProtocolMapper  `yaml:"protocolMappers"`
-	ClientRoles                  []ClientRole      `yaml:"clientRoles"`
-	ServiceAccountRoles          *UserRoles        `yaml:"serviceAccountRoles"`
+	// AcrLoaMap maps ACR values to Levels of Authentication for this client.
+	// It is marshalled into the client's acr.loa.map attribute and wins over an
+	// acr.loa.map entry supplied through Attributes.
+	AcrLoaMap           map[string]int   `yaml:"acrLoaMap"`
+	ProtocolMappers     []ProtocolMapper `yaml:"protocolMappers"`
+	ClientRoles         []ClientRole     `yaml:"clientRoles"`
+	ServiceAccountRoles *UserRoles       `yaml:"serviceAccountRoles"`
 }
 
 // ProtocolMapper defines a protocol mapper for a Keycloak client.
@@ -217,6 +232,21 @@ func normalizeSslRequired(value string) string {
 	return strings.ToLower(value)
 }
 
+// expandStringMap returns a copy of m with env vars expanded in both keys and
+// values. It returns m unchanged when empty so callers keep a nil map nil.
+func expandStringMap(m map[string]string) map[string]string {
+	if len(m) == 0 {
+		return m
+	}
+
+	expanded := make(map[string]string, len(m))
+	for k, v := range m {
+		expanded[expandEnvVars(k)] = expandEnvVars(v)
+	}
+
+	return expanded
+}
+
 func expandConfig(cfg *Config) {
 	if cfg.MasterRealm != nil {
 		cfg.MasterRealm.SslRequired = normalizeSslRequired(expandEnvVars(cfg.MasterRealm.SslRequired))
@@ -229,6 +259,7 @@ func expandConfig(cfg *Config) {
 		r.DisplayName = expandEnvVars(r.DisplayName)
 		r.SslRequired = normalizeSslRequired(expandEnvVars(r.SslRequired))
 		r.LoginTheme = expandEnvVars(r.LoginTheme)
+		r.Attributes = expandStringMap(r.Attributes)
 
 		for j := range r.Clients {
 			c := &r.Clients[j]
@@ -251,13 +282,7 @@ func expandConfig(cfg *Config) {
 			for k := range c.OptionalClientScopes {
 				c.OptionalClientScopes[k] = expandEnvVars(c.OptionalClientScopes[k])
 			}
-			if len(c.Attributes) > 0 {
-				expanded := make(map[string]string, len(c.Attributes))
-				for k, v := range c.Attributes {
-					expanded[expandEnvVars(k)] = expandEnvVars(v)
-				}
-				c.Attributes = expanded
-			}
+			c.Attributes = expandStringMap(c.Attributes)
 			for k := range c.ProtocolMappers {
 				pm := &c.ProtocolMappers[k]
 				pm.Name = expandEnvVars(pm.Name)
@@ -374,6 +399,40 @@ func scanSliceNullBytes(prefix string, values []string) error {
 	return nil
 }
 
+// validateAttributes checks an attribute map for empty keys and null bytes in
+// keys or values. path is the config path of the map itself, e.g.
+// "realms[0].attributes".
+func validateAttributes(path string, attrs map[string]string) error {
+	for k, v := range attrs {
+		if k == "" {
+			return fmt.Errorf("%s: attribute name is required", path)
+		}
+		if containsNullByte(k) || containsNullByte(v) {
+			return fmt.Errorf("%s: contains null byte", path)
+		}
+	}
+
+	return nil
+}
+
+// validateAcrLoaMap checks an ACR-to-LoA map for empty ACR names, null bytes
+// and negative levels. Keycloak treats the level as a non-negative integer.
+func validateAcrLoaMap(path string, m map[string]int) error {
+	for acr, level := range m {
+		if acr == "" {
+			return fmt.Errorf("%s: acr value is required", path)
+		}
+		if containsNullByte(acr) {
+			return fmt.Errorf("%s: contains null byte", path)
+		}
+		if level < 0 {
+			return fmt.Errorf("%s: level for %q must not be negative", path, acr)
+		}
+	}
+
+	return nil
+}
+
 // validateStrategy returns an error if the strategy value is invalid.
 func validateStrategy(path, value string) error {
 	if !validStrategies[value] {
@@ -422,6 +481,14 @@ func validate(cfg *Config) error {
 			fmt.Sprintf("realms[%d].displayName", i): r.DisplayName,
 			fmt.Sprintf("realms[%d].loginTheme", i):  r.LoginTheme,
 		}); err != nil {
+			return err
+		}
+
+		if err := validateAttributes(fmt.Sprintf("realms[%d].attributes", i), r.Attributes); err != nil {
+			return err
+		}
+
+		if err := validateAcrLoaMap(fmt.Sprintf("realms[%d].acrLoaMap", i), r.AcrLoaMap); err != nil {
 			return err
 		}
 
@@ -565,10 +632,12 @@ func validateClients(realmIdx int, clients []Client) error {
 			return err
 		}
 
-		for k, v := range c.Attributes {
-			if containsNullByte(k) || containsNullByte(v) {
-				return fmt.Errorf("%s.attributes: contains null byte", prefix)
-			}
+		if err := validateAttributes(prefix+".attributes", c.Attributes); err != nil {
+			return err
+		}
+
+		if err := validateAcrLoaMap(prefix+".acrLoaMap", c.AcrLoaMap); err != nil {
+			return err
 		}
 
 		if err := validateProtocolMappers(prefix, c.ProtocolMappers); err != nil {

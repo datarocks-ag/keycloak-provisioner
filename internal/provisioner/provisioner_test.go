@@ -892,7 +892,7 @@ func TestBuildRealmBodyAllFields(t *testing.T) {
 		ResetPasswordAllowed: &resetPw,
 	}
 
-	body := buildRealmBody(realm)
+	body := buildRealmBody(realm, nil)
 
 	checks := map[string]any{
 		"realm":                "test",
@@ -1164,7 +1164,7 @@ func TestBuildRealmBodyWithSslRequired(t *testing.T) {
 		SslRequired: "external",
 	}
 
-	body := buildRealmBody(realm)
+	body := buildRealmBody(realm, nil)
 
 	if body["sslRequired"] != "external" {
 		t.Errorf("expected sslRequired=external, got %v", body["sslRequired"])
@@ -1176,7 +1176,7 @@ func TestBuildRealmBodyWithoutSslRequired(t *testing.T) {
 		Realm: "test",
 	}
 
-	body := buildRealmBody(realm)
+	body := buildRealmBody(realm, nil)
 
 	if _, ok := body["sslRequired"]; ok {
 		t.Error("sslRequired should not be set when empty")
@@ -3388,5 +3388,200 @@ func TestEnsureUserGroupsMissingGroupWarnsAndContinues(t *testing.T) {
 
 	if got, _ := addedGroupID.Load().(string); got != "group-uuid-1" {
 		t.Errorf("expected membership added to group-uuid-1 after skipping missing group, got %q", got)
+	}
+}
+
+func TestBuildRealmBodyWithoutAttributesOmitsKey(t *testing.T) {
+	realm := config.Realm{Realm: "test"}
+
+	body := buildRealmBody(realm, nil)
+
+	if _, ok := body["attributes"]; ok {
+		t.Error("attributes should not be set when the config declares none")
+	}
+}
+
+func TestBuildRealmBodyMergesExistingAttributes(t *testing.T) {
+	realm := config.Realm{
+		Realm:      "test",
+		Attributes: map[string]string{"frontendUrl": "https://id.example.com"},
+	}
+	existing := map[string]any{
+		"realm": "test",
+		"attributes": map[string]any{
+			"userProfileEnabled": "true",
+			"frontendUrl":        "https://old.example.com",
+		},
+	}
+
+	body := buildRealmBody(realm, existing)
+
+	attrs, ok := body["attributes"].(map[string]string)
+	if !ok {
+		t.Fatalf("expected attributes map, got %T", body["attributes"])
+	}
+	if got := attrs["userProfileEnabled"]; got != "true" {
+		t.Errorf("unmanaged attribute was dropped, got %q", got)
+	}
+	if got := attrs["frontendUrl"]; got != "https://id.example.com" {
+		t.Errorf("configured attribute should win, got %q", got)
+	}
+}
+
+func TestBuildRealmBodyAcrLoaMap(t *testing.T) {
+	realm := config.Realm{
+		Realm:     "test",
+		AcrLoaMap: map[string]int{"gold": 2, "silver": 1},
+	}
+
+	body := buildRealmBody(realm, nil)
+
+	attrs, ok := body["attributes"].(map[string]string)
+	if !ok {
+		t.Fatalf("expected attributes map, got %T", body["attributes"])
+	}
+	if got := attrs[acrLoaMapAttr]; got != `{"gold":2,"silver":1}` {
+		t.Errorf("unexpected acr.loa.map: %q", got)
+	}
+}
+
+func TestBuildRealmBodyAcrLoaMapWinsOverRawAttribute(t *testing.T) {
+	realm := config.Realm{
+		Realm:      "test",
+		Attributes: map[string]string{acrLoaMapAttr: `{"bronze":0}`},
+		AcrLoaMap:  map[string]int{"gold": 2},
+	}
+
+	body := buildRealmBody(realm, nil)
+
+	attrs := body["attributes"].(map[string]string)
+	if got := attrs[acrLoaMapAttr]; got != `{"gold":2}` {
+		t.Errorf("typed acrLoaMap should win, got %q", got)
+	}
+}
+
+func TestBuildRealmBodyOrganizationsEnabled(t *testing.T) {
+	enabled := true
+	realm := config.Realm{Realm: "test", OrganizationsEnabled: &enabled}
+
+	body := buildRealmBody(realm, nil)
+
+	if body["organizationsEnabled"] != true {
+		t.Errorf("expected organizationsEnabled=true, got %v", body["organizationsEnabled"])
+	}
+}
+
+func TestBuildRealmBodyOrganizationsEnabledUnsetOmitsKey(t *testing.T) {
+	body := buildRealmBody(config.Realm{Realm: "test"}, nil)
+
+	if _, ok := body["organizationsEnabled"]; ok {
+		t.Error("organizationsEnabled should not be set when unset")
+	}
+}
+
+func TestBuildClientAttributesAcrLoaMap(t *testing.T) {
+	c := config.Client{
+		ClientID:  "web",
+		AcrLoaMap: map[string]int{"gold": 2},
+	}
+
+	attrs := buildClientAttributes(c)
+
+	if got := attrs[acrLoaMapAttr]; got != `{"gold":2}` {
+		t.Errorf("unexpected acr.loa.map: %q", got)
+	}
+}
+
+func TestBuildClientAttributesAcrLoaMapWinsOverRawAttribute(t *testing.T) {
+	c := config.Client{
+		ClientID:   "web",
+		Attributes: map[string]string{acrLoaMapAttr: `{"bronze":0}`},
+		AcrLoaMap:  map[string]int{"gold": 2},
+	}
+
+	attrs := buildClientAttributes(c)
+
+	if got := attrs[acrLoaMapAttr]; got != `{"gold":2}` {
+		t.Errorf("typed acrLoaMap should win, got %q", got)
+	}
+}
+
+func TestBuildAcrLoaMapAttributeEmpty(t *testing.T) {
+	if got := buildAcrLoaMapAttribute(nil); got != "" {
+		t.Errorf("expected empty string for nil map, got %q", got)
+	}
+	if got := buildAcrLoaMapAttribute(map[string]int{}); got != "" {
+		t.Errorf("expected empty string for empty map, got %q", got)
+	}
+}
+
+func TestMergeAttributesNilExisting(t *testing.T) {
+	merged := mergeAttributes(nil, map[string]string{"a": "1"})
+
+	if len(merged) != 1 || merged["a"] != "1" {
+		t.Errorf("unexpected merge result: %v", merged)
+	}
+}
+
+func TestMergeAttributesNonStringValues(t *testing.T) {
+	existing := map[string]any{
+		"attributes": map[string]any{
+			"num":  float64(3),
+			"null": nil,
+		},
+	}
+
+	merged := mergeAttributes(existing, nil)
+
+	if got := merged["num"]; got != "3" {
+		t.Errorf("expected stringified number, got %q", got)
+	}
+	if _, ok := merged["null"]; ok {
+		t.Error("nil attribute values should be skipped")
+	}
+}
+
+func TestEnsureRealmUpdateSendsMergedAttributes(t *testing.T) {
+	var mu sync.Mutex
+	var updatedBody map[string]any
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]any{
+				"realm":      "test",
+				"attributes": map[string]any{"keptByKeycloak": "yes"},
+			})
+		},
+		"PUT /admin/realms/{realm}": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			defer mu.Unlock()
+			json.NewDecoder(r.Body).Decode(&updatedBody)
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	p := New(newTestClient(t, server.URL), &config.Config{})
+	realm := config.Realm{
+		Realm:      "test",
+		Attributes: map[string]string{"frontendUrl": "https://id.example.com"},
+	}
+
+	if err := p.ensureRealm(context.Background(), realm, "update"); err != nil {
+		t.Fatalf("ensureRealm: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	attrs, ok := updatedBody["attributes"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected attributes in update body, got %T", updatedBody["attributes"])
+	}
+	if attrs["keptByKeycloak"] != "yes" {
+		t.Error("existing realm attribute was clobbered by the update")
+	}
+	if attrs["frontendUrl"] != "https://id.example.com" {
+		t.Errorf("configured attribute missing, got %v", attrs["frontendUrl"])
 	}
 }

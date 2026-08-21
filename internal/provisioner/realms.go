@@ -14,11 +14,9 @@ func (p *Provisioner) ensureRealm(ctx context.Context, realm config.Realm, strat
 		return err
 	}
 
-	body := buildRealmBody(realm)
-
 	if existing == nil {
 		slog.Info("Creating realm", "realm", realm.Realm)
-		return p.client.CreateRealm(ctx, body)
+		return p.client.CreateRealm(ctx, buildRealmBody(realm, nil))
 	}
 
 	if strategy == "create" {
@@ -27,10 +25,14 @@ func (p *Provisioner) ensureRealm(ctx context.Context, realm config.Realm, strat
 	}
 
 	slog.Info("Updating realm", "realm", realm.Realm)
-	return p.client.UpdateRealm(ctx, realm.Realm, body)
+
+	return p.client.UpdateRealm(ctx, realm.Realm, buildRealmBody(realm, existing))
 }
 
-func buildRealmBody(realm config.Realm) map[string]any {
+// buildRealmBody builds the realm representation to send to Keycloak. existing
+// is the realm's current representation, or nil when the realm is being
+// created; it is only read to merge attributes (see mergeAttributes).
+func buildRealmBody(realm config.Realm, existing map[string]any) map[string]any {
 	body := map[string]any{
 		"realm": realm.Realm,
 	}
@@ -53,8 +55,35 @@ func buildRealmBody(realm config.Realm) map[string]any {
 	if realm.ResetPasswordAllowed != nil {
 		body["resetPasswordAllowed"] = *realm.ResetPasswordAllowed
 	}
+	if realm.OrganizationsEnabled != nil {
+		body["organizationsEnabled"] = *realm.OrganizationsEnabled
+	}
+	if attrs := buildRealmAttributes(realm, existing); len(attrs) > 0 {
+		body["attributes"] = attrs
+	}
 
 	return body
+}
+
+// buildRealmAttributes merges the configured realm attributes over the realm's
+// current attributes. Keycloak replaces the whole attribute map on update and
+// stores several realm settings there, so sending only the configured keys
+// would silently drop everything else.
+//
+// It returns nil when the config declares no attributes, so realms without an
+// attributes block keep Keycloak's existing behaviour untouched.
+func buildRealmAttributes(realm config.Realm, existing map[string]any) map[string]string {
+	acrLoaMap := buildAcrLoaMapAttribute(realm.AcrLoaMap)
+	if len(realm.Attributes) == 0 && acrLoaMap == "" {
+		return nil
+	}
+
+	attrs := mergeAttributes(existing, realm.Attributes)
+	if acrLoaMap != "" {
+		attrs[acrLoaMapAttr] = acrLoaMap
+	}
+
+	return attrs
 }
 
 func (p *Provisioner) ensureMasterRealm(ctx context.Context, mr *config.MasterRealmConfig) error {

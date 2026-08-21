@@ -12,6 +12,8 @@ Release notes are maintained in [CHANGELOG.md](CHANGELOG.md).
 - Idempotent provisioning of realms, clients, protocol mappers, realm roles, client roles, users, service account roles, and groups (with nested subgroups and role assignments)
 - Master realm configuration (SSL, users) without full provisioning
 - `sslRequired` setting on any realm (`external`, `all`, `none`)
+- Realm attributes, merged over Keycloak's current values so unmanaged keys are never dropped
+- Step-up authentication support via `acrLoaMap` on realms and clients (`acr.loa.map`)
 - User management with password setting, realm/client role assignment, and group membership
 - Service account role mapping for machine-to-machine clients
 - YAML config with `${VAR}` environment variable expansion (and `$${VAR}` escape for literals)
@@ -289,6 +291,56 @@ Requirements:
 Under the hood this sets the `standard.token.exchange.enabled` client attribute. Setting the typed field takes precedence over the same key set manually in `attributes`.
 
 Setting `standardTokenExchangeEnabled: false` explicitly disables the feature — the attribute is written as `false`, correcting drift if it was enabled out-of-band. Omitting the field leaves the attribute unmanaged (existing values in Keycloak are left untouched).
+
+## Realm Attributes
+
+Keycloak stores a number of realm settings as free-form attributes. Declare them under `attributes` on any realm:
+
+```yaml
+realms:
+  - realm: "my-realm"
+    attributes:
+      frontendUrl: "https://id.example.com"
+      userProfileEnabled: "true"
+```
+
+Both keys and values support `${VAR}` expansion.
+
+Attributes are **merged**, not replaced. Keycloak's realm update replaces the whole attribute map, and several realm settings live there, so the provisioner reads the realm's current attributes and merges the configured keys over them. Keys you do not declare are preserved; nothing is ever removed. Omitting the `attributes` block entirely leaves realm attributes untouched.
+
+## Step-Up Authentication (`acr.loa.map`)
+
+`acrLoaMap` maps ACR values to Levels of Authentication, which is what Keycloak uses to decide whether a session already satisfies a requested authentication level. It is available on both realms and clients:
+
+```yaml
+realms:
+  - realm: "my-realm"
+    acrLoaMap:
+      silver: 1
+      gold: 2
+    clients:
+      - clientId: "web"
+        acrLoaMap:
+          gold: 2
+        attributes:
+          "default.acr.values": '["silver"]'
+```
+
+Under the hood this sets the `acr.loa.map` attribute as a JSON object. Setting the typed field takes precedence over the same key set manually in `attributes`, matching how `standardTokenExchangeEnabled` behaves. Levels must not be negative, and map keys are written in sorted order so repeated runs produce identical values.
+
+The LoA map on its own does not create a step-up flow — it only names the levels. A browser flow containing a `conditional-level-of-authentication` subflow is what actually enforces them.
+
+## Organizations
+
+`organizationsEnabled` toggles Keycloak Organizations for a realm:
+
+```yaml
+realms:
+  - realm: "my-realm"
+    organizationsEnabled: true
+```
+
+Requires Keycloak 26+, where the `organization` feature is enabled by default. Omitting the field leaves the realm's current setting untouched.
 
 ## Connection Retry
 
