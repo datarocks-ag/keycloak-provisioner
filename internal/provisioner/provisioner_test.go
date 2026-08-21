@@ -754,7 +754,7 @@ func TestBuildClientBodyAllFields(t *testing.T) {
 		Attributes:                map[string]string{"key": "val"},
 	}
 
-	body := buildClientBody(c)
+	body := buildClientBody(c, nil)
 
 	checks := map[string]any{
 		"clientId":                  "app",
@@ -810,7 +810,7 @@ func TestBuildClientBodyStandardTokenExchange(t *testing.T) {
 		body := buildClientBody(config.Client{
 			ClientID:                     "app",
 			StandardTokenExchangeEnabled: &enabled,
-		})
+		}, nil)
 		attrs, ok := body["attributes"].(map[string]string)
 		if !ok {
 			t.Fatalf("expected attributes map, got %T", body["attributes"])
@@ -824,7 +824,7 @@ func TestBuildClientBodyStandardTokenExchange(t *testing.T) {
 		body := buildClientBody(config.Client{
 			ClientID:                     "app",
 			StandardTokenExchangeEnabled: &disabled,
-		})
+		}, nil)
 		attrs, _ := body["attributes"].(map[string]string)
 		if attrs["standard.token.exchange.enabled"] != "false" {
 			t.Errorf("got %q, want \"false\"", attrs["standard.token.exchange.enabled"])
@@ -832,7 +832,7 @@ func TestBuildClientBodyStandardTokenExchange(t *testing.T) {
 	})
 
 	t.Run("nil omits attribute", func(t *testing.T) {
-		body := buildClientBody(config.Client{ClientID: "app"})
+		body := buildClientBody(config.Client{ClientID: "app"}, nil)
 		if _, ok := body["attributes"]; ok {
 			t.Errorf("expected no attributes key, got %v", body["attributes"])
 		}
@@ -845,7 +845,7 @@ func TestBuildClientBodyStandardTokenExchange(t *testing.T) {
 			Attributes:                   userAttrs,
 			StandardTokenExchangeEnabled: &enabled,
 		}
-		body := buildClientBody(c)
+		body := buildClientBody(c, nil)
 		attrs, ok := body["attributes"].(map[string]string)
 		if !ok {
 			t.Fatalf("expected attributes map, got %T", body["attributes"])
@@ -867,7 +867,7 @@ func TestBuildClientBodyStandardTokenExchange(t *testing.T) {
 			Attributes:                   map[string]string{"standard.token.exchange.enabled": "false"},
 			StandardTokenExchangeEnabled: &enabled,
 		}
-		body := buildClientBody(c)
+		body := buildClientBody(c, nil)
 		attrs, ok := body["attributes"].(map[string]string)
 		if !ok {
 			t.Fatalf("expected attributes map, got %T", body["attributes"])
@@ -3485,7 +3485,7 @@ func TestBuildClientAttributesAcrLoaMap(t *testing.T) {
 		AcrLoaMap: map[string]int{"gold": 2},
 	}
 
-	attrs := buildClientAttributes(c)
+	attrs := buildClientAttributes(c, nil)
 
 	if got := attrs[acrLoaMapAttr]; got != `{"gold":2}` {
 		t.Errorf("unexpected acr.loa.map: %q", got)
@@ -3499,7 +3499,7 @@ func TestBuildClientAttributesAcrLoaMapWinsOverRawAttribute(t *testing.T) {
 		AcrLoaMap:  map[string]int{"gold": 2},
 	}
 
-	attrs := buildClientAttributes(c)
+	attrs := buildClientAttributes(c, nil)
 
 	if got := attrs[acrLoaMapAttr]; got != `{"gold":2}` {
 		t.Errorf("typed acrLoaMap should win, got %q", got)
@@ -3583,5 +3583,91 @@ func TestEnsureRealmUpdateSendsMergedAttributes(t *testing.T) {
 	}
 	if attrs["frontendUrl"] != "https://id.example.com" {
 		t.Errorf("configured attribute missing, got %v", attrs["frontendUrl"])
+	}
+}
+
+func TestBuildClientBodyMergesExistingAttributes(t *testing.T) {
+	c := config.Client{
+		ClientID:   "app",
+		Attributes: map[string]string{"post.logout.redirect.uris": "+"},
+	}
+	existing := map[string]any{
+		"clientId": "app",
+		"attributes": map[string]any{
+			"oauth2.device.authorization.grant.enabled": "true",
+			"post.logout.redirect.uris":                 "-",
+		},
+	}
+
+	body := buildClientBody(c, existing)
+
+	attrs, ok := body["attributes"].(map[string]string)
+	if !ok {
+		t.Fatalf("expected attributes map, got %T", body["attributes"])
+	}
+	if got := attrs["oauth2.device.authorization.grant.enabled"]; got != "true" {
+		t.Errorf("unmanaged client attribute was dropped, got %q", got)
+	}
+	if got := attrs["post.logout.redirect.uris"]; got != "+" {
+		t.Errorf("configured attribute should win, got %q", got)
+	}
+}
+
+func TestBuildClientBodyUnmanagedAttributesOmitsKey(t *testing.T) {
+	existing := map[string]any{
+		"clientId":   "app",
+		"attributes": map[string]any{"set.by.keycloak": "true"},
+	}
+
+	body := buildClientBody(config.Client{ClientID: "app"}, existing)
+
+	if _, ok := body["attributes"]; ok {
+		t.Errorf("attributes must stay out of the body when unmanaged, got %v", body["attributes"])
+	}
+}
+
+func TestEnsureClientUpdatePreservesOutOfBandAttributes(t *testing.T) {
+	var mu sync.Mutex
+	var updatedBody map[string]any
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/clients": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{{
+				"id":         "uuid-1",
+				"clientId":   "app",
+				"attributes": map[string]any{"setOutOfBand": "yes"},
+			}})
+		},
+		"PUT /admin/realms/{realm}/clients/{uuid}": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			defer mu.Unlock()
+			json.NewDecoder(r.Body).Decode(&updatedBody)
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	p := New(newTestClient(t, server.URL), &config.Config{})
+	c := config.Client{
+		ClientID:   "app",
+		Attributes: map[string]string{"post.logout.redirect.uris": "+"},
+	}
+
+	if _, err := p.ensureClient(context.Background(), "test-realm", c, "update"); err != nil {
+		t.Fatalf("ensureClient: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	attrs, ok := updatedBody["attributes"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected attributes in update body, got %T", updatedBody["attributes"])
+	}
+	if attrs["setOutOfBand"] != "yes" {
+		t.Error("out-of-band client attribute was clobbered by the update")
+	}
+	if attrs["post.logout.redirect.uris"] != "+" {
+		t.Errorf("configured attribute missing, got %v", attrs["post.logout.redirect.uris"])
 	}
 }

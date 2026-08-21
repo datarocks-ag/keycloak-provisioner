@@ -21,6 +21,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `organizationsEnabled` on realms, toggling Keycloak Organizations
   (Keycloak 26+).
 
+### Fixed
+
+- Client attributes are no longer replaced on update. Keycloak replaces
+  the whole attribute map when a client is updated, so a run would drop
+  any attribute not declared in the config — including attributes set
+  out-of-band and those Keycloak defaults itself. The provisioner now
+  merges the configured attributes over the client's current ones.
+  Clients that declare no `attributes`, `acrLoaMap`, or
+  `standardTokenExchangeEnabled` still send no attributes at all.
+
 ### Changed
 
 - Empty attribute names are now rejected at config load time for both
