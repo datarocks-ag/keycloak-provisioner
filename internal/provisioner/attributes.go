@@ -43,8 +43,12 @@ func mergeAttributes(existing map[string]any, configured map[string]string) map[
 }
 
 // buildAcrLoaMapAttribute marshals an ACR-to-LoA map into the JSON string
-// Keycloak stores in the acr.loa.map attribute. It returns "" when the map is
-// empty, so callers can tell "not configured" from "configured as empty".
+// Keycloak stores in the acr.loa.map attribute.
+//
+// It returns "" for both a nil and an empty map: an `acrLoaMap:` block with no
+// entries is treated the same as omitting it, and the attribute is left
+// unmanaged rather than written as an empty object. Callers use the empty
+// string as "nothing to write" and cannot distinguish the two cases.
 //
 // encoding/json sorts map keys, so the output is stable across runs.
 func buildAcrLoaMapAttribute(m map[string]int) string {
