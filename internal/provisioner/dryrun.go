@@ -27,6 +27,10 @@ const dryRunIDPrefix = "dryrun-"
 //     against newly-created roles do not error.
 //   - Errors from the wrapped API propagate only for operations that still call it
 //     (pass-through reads); skipped mutating operations always return nil.
+//   - Authentication flows report their creates and the executions that would be
+//     added. Requirements and execution config are set by reading the created
+//     execution back, which is not possible for a flow that does not exist yet,
+//     so those steps are not reported for a would-be-created flow.
 func NewDryRunAdapter(inner KeycloakAPI) KeycloakAPI {
 	return &dryRunAPI{
 		inner:              inner,
@@ -37,6 +41,7 @@ func NewDryRunAdapter(inner KeycloakAPI) KeycloakAPI {
 		createdClientRoles: make(map[clientRoleKey]string),
 		createdGroups:      make(map[groupKey]string),
 		createdScopes:      make(map[clientScopeKey]string),
+		createdFlows:       make(map[flowKey]string),
 	}
 }
 
@@ -47,6 +52,7 @@ type (
 	clientRoleKey  struct{ realm, clientUUID, name string }
 	groupKey       struct{ realm, parentID, name string } // parentID "" for top-level
 	clientScopeKey struct{ realm, name string }
+	flowKey        struct{ realm, alias string }
 )
 
 type dryRunAPI struct {
@@ -61,6 +67,7 @@ type dryRunAPI struct {
 	createdClientRoles map[clientRoleKey]string  // -> synthetic role id
 	createdGroups      map[groupKey]string       // -> synthetic group id
 	createdScopes      map[clientScopeKey]string // -> synthetic client scope id
+	createdFlows       map[flowKey]string        // -> synthetic authentication flow id
 }
 
 func (d *dryRunAPI) realmIsSynthetic(realm string) bool {
@@ -593,5 +600,128 @@ func (d *dryRunAPI) GetOrganizationGroupMembers(ctx context.Context, realm, orgI
 
 func (d *dryRunAPI) AddOrganizationGroupMember(_ context.Context, realm, orgID, groupID, userID string) error {
 	slog.Info("DRY-RUN: would add user to organization group", "realm", realm, "orgUUID", orgID, "groupUUID", groupID, "userID", userID)
+	return nil
+}
+
+// Authentication flows.
+
+// GetAuthenticationFlows reports the realm's real flows plus the ones that
+// would have been created earlier in this dry-run, so a client binding override
+// can resolve a flow declared in the same config.
+func (d *dryRunAPI) GetAuthenticationFlows(ctx context.Context, realm string) ([]map[string]any, error) {
+	var flows []map[string]any
+
+	if !d.realmIsSynthetic(realm) {
+		var err error
+
+		flows, err = d.inner.GetAuthenticationFlows(ctx, realm)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return append(flows, d.syntheticFlows(realm)...), nil
+}
+
+// syntheticFlows returns the flows created so far in this dry-run for the given
+// realm, sorted by alias so output is stable across runs.
+func (d *dryRunAPI) syntheticFlows(realm string) []map[string]any {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	aliases := make([]string, 0, len(d.createdFlows))
+	for key := range d.createdFlows {
+		if key.realm == realm {
+			aliases = append(aliases, key.alias)
+		}
+	}
+	sort.Strings(aliases)
+
+	flows := make([]map[string]any, 0, len(aliases))
+	for _, alias := range aliases {
+		flows = append(flows, map[string]any{
+			"id":      d.createdFlows[flowKey{realm, alias}],
+			"alias":   alias,
+			"builtIn": false,
+		})
+	}
+
+	return flows
+}
+
+// flowIsSynthetic reports whether the flow would only have been created in this
+// dry-run, and therefore does not exist on the server to be read back.
+func (d *dryRunAPI) flowIsSynthetic(realm, alias string) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	_, ok := d.createdFlows[flowKey{realm, alias}]
+
+	return ok
+}
+
+func (d *dryRunAPI) recordFlow(realm, alias string) {
+	id := d.newID("authflow")
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.createdFlows[flowKey{realm, alias}] = id
+}
+
+func (d *dryRunAPI) CreateAuthenticationFlow(_ context.Context, realm string, body map[string]any) error {
+	alias, _ := body["alias"].(string)
+	slog.Info("DRY-RUN: would create authentication flow", "realm", realm, "flow", alias)
+	d.recordFlow(realm, alias)
+
+	return nil
+}
+
+func (d *dryRunAPI) CopyAuthenticationFlow(_ context.Context, realm, sourceAlias, newName string) error {
+	slog.Info("DRY-RUN: would copy authentication flow", "realm", realm, "from", sourceAlias, "flow", newName)
+	d.recordFlow(realm, newName)
+
+	return nil
+}
+
+// GetAuthenticationFlowExecutions returns nothing for a flow that would only
+// have been created in this run, so the requirement and config steps that read
+// an execution back are skipped and only the creates are reported. Without the
+// flowIsSynthetic check this would ask the server for a flow it never created
+// and abort the whole dry-run on the resulting 404.
+func (d *dryRunAPI) GetAuthenticationFlowExecutions(ctx context.Context, realm, flowAlias string) ([]map[string]any, error) {
+	if d.realmIsSynthetic(realm) || d.flowIsSynthetic(realm, flowAlias) {
+		return nil, nil
+	}
+
+	return d.inner.GetAuthenticationFlowExecutions(ctx, realm, flowAlias)
+}
+
+func (d *dryRunAPI) UpdateAuthenticationFlowExecution(_ context.Context, realm, flowAlias string, body map[string]any) error {
+	requirement, _ := body["requirement"].(string)
+	slog.Info("DRY-RUN: would update authentication execution", "realm", realm, "flow", flowAlias, "requirement", requirement)
+	return nil
+}
+
+func (d *dryRunAPI) CreateAuthenticationExecution(_ context.Context, realm, flowAlias string, body map[string]any) error {
+	provider, _ := body["provider"].(string)
+	slog.Info("DRY-RUN: would add authentication execution", "realm", realm, "flow", flowAlias, "provider", provider)
+	return nil
+}
+
+func (d *dryRunAPI) CreateAuthenticationSubflow(_ context.Context, realm, flowAlias string, body map[string]any) error {
+	alias, _ := body["alias"].(string)
+	slog.Info("DRY-RUN: would add authentication subflow", "realm", realm, "flow", flowAlias, "subflow", alias)
+
+	// A subflow is itself a flow that the executions below it are added to, so
+	// it has to be tracked too — otherwise the recursion reads it back from a
+	// server that never created it.
+	d.recordFlow(realm, alias)
+
+	return nil
+}
+
+func (d *dryRunAPI) CreateAuthenticationExecutionConfig(_ context.Context, realm, executionID string, body map[string]any) error {
+	alias, _ := body["alias"].(string)
+	slog.Info("DRY-RUN: would set authentication execution config", "realm", realm, "executionID", executionID, "configAlias", alias)
 	return nil
 }

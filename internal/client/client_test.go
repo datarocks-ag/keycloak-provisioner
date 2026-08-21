@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -1855,5 +1856,198 @@ func TestAddOrganizationGroupMember_NonOrgMemberError(t *testing.T) {
 	c := connectClient(t, server.URL)
 	if err := c.AddOrganizationGroupMember(context.Background(), "test", "org-1", "g-1", "u-1"); err == nil {
 		t.Fatal("expected error for a user that is not an organization member")
+	}
+}
+
+func TestAuthenticationFlowEndpoints(t *testing.T) {
+	var mu sync.Mutex
+	calls := map[string]string{}
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/authentication/flows": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{{"id": "f-1", "alias": "browser", "builtIn": true}})
+		},
+		"POST /admin/realms/{realm}/authentication/flows": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusCreated)
+		},
+		"POST /admin/realms/{realm}/authentication/flows/{alias}/copy": func(w http.ResponseWriter, r *http.Request) {
+			var body map[string]any
+			json.NewDecoder(r.Body).Decode(&body)
+			mu.Lock()
+			defer mu.Unlock()
+			calls["copy"] = r.PathValue("alias") + "->" + body["newName"].(string)
+			w.WriteHeader(http.StatusCreated)
+		},
+		"GET /admin/realms/{realm}/authentication/flows/{alias}/executions": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{{"id": "ex-1", "providerId": "auth-cookie", "level": 0, "index": 0}})
+		},
+		"PUT /admin/realms/{realm}/authentication/flows/{alias}/executions": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		},
+		"POST /admin/realms/{realm}/authentication/flows/{alias}/executions/execution": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusCreated)
+		},
+		"POST /admin/realms/{realm}/authentication/flows/{alias}/executions/flow": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusCreated)
+		},
+		"POST /admin/realms/{realm}/authentication/executions/{id}/config": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			defer mu.Unlock()
+			calls["config"] = r.PathValue("id")
+			w.WriteHeader(http.StatusCreated)
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	ctx := context.Background()
+
+	flows, err := c.GetAuthenticationFlows(ctx, "test")
+	if err != nil || len(flows) != 1 {
+		t.Fatalf("get flows: %v %v", flows, err)
+	}
+	if err := c.CreateAuthenticationFlow(ctx, "test", map[string]any{"alias": "f"}); err != nil {
+		t.Fatalf("create flow: %v", err)
+	}
+	if err := c.CopyAuthenticationFlow(ctx, "test", "browser", "browser-step-up"); err != nil {
+		t.Fatalf("copy flow: %v", err)
+	}
+	execs, err := c.GetAuthenticationFlowExecutions(ctx, "test", "f")
+	if err != nil || len(execs) != 1 {
+		t.Fatalf("get executions: %v %v", execs, err)
+	}
+	if err := c.UpdateAuthenticationFlowExecution(ctx, "test", "f", map[string]any{"id": "ex-1"}); err != nil {
+		t.Fatalf("update execution: %v", err)
+	}
+	if err := c.CreateAuthenticationExecution(ctx, "test", "f", map[string]any{"provider": "auth-cookie"}); err != nil {
+		t.Fatalf("create execution: %v", err)
+	}
+	if err := c.CreateAuthenticationSubflow(ctx, "test", "f", map[string]any{"alias": "sub"}); err != nil {
+		t.Fatalf("create subflow: %v", err)
+	}
+	if err := c.CreateAuthenticationExecutionConfig(ctx, "test", "ex-1", map[string]any{"alias": "cfg"}); err != nil {
+		t.Fatalf("create execution config: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if calls["copy"] != "browser->browser-step-up" {
+		t.Errorf("unexpected copy call: %q", calls["copy"])
+	}
+	if calls["config"] != "ex-1" {
+		t.Errorf("unexpected config call: %q", calls["config"])
+	}
+}
+
+func TestGetAuthenticationFlows_Error(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/authentication/flows": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("error"))
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	if _, err := c.GetAuthenticationFlows(context.Background(), "test"); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestOrganizationEndpoints(t *testing.T) {
+	var mu sync.Mutex
+	var memberBody string
+	var searchQuery string
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/organizations": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			searchQuery = r.URL.Query().Get("search")
+			mu.Unlock()
+			json.NewEncoder(w).Encode([]map[string]any{{"id": "org-1", "name": "acme"}})
+		},
+		"POST /admin/realms/{realm}/organizations": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Location", "http://kc/admin/realms/test/organizations/org-9")
+			w.WriteHeader(http.StatusCreated)
+		},
+		"PUT /admin/realms/{realm}/organizations/{id}": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		},
+		"GET /admin/realms/{realm}/organizations/{id}/members": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{{"id": "u-1", "username": "alice"}})
+		},
+		"POST /admin/realms/{realm}/organizations/{id}/members": func(w http.ResponseWriter, r *http.Request) {
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Errorf("reading member request body: %v", err)
+			}
+			mu.Lock()
+			memberBody = string(body)
+			mu.Unlock()
+			w.WriteHeader(http.StatusCreated)
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	ctx := context.Background()
+
+	orgs, err := c.GetOrganizations(ctx, "test", "acme")
+	if err != nil || len(orgs) != 1 {
+		t.Fatalf("get organizations: %v %v", orgs, err)
+	}
+	id, err := c.CreateOrganization(ctx, "test", map[string]any{"name": "acme"})
+	if err != nil || id != "org-9" {
+		t.Fatalf("create organization: %q %v", id, err)
+	}
+	if err := c.UpdateOrganization(ctx, "test", "org-1", map[string]any{"name": "acme"}); err != nil {
+		t.Fatalf("update organization: %v", err)
+	}
+	members, err := c.GetOrganizationMembers(ctx, "test", "org-1")
+	if err != nil || len(members) != 1 {
+		t.Fatalf("get members: %v %v", members, err)
+	}
+	if err := c.AddOrganizationMember(ctx, "test", "org-1", "u-2"); err != nil {
+		t.Fatalf("add member: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if searchQuery != "acme" {
+		t.Errorf("expected search=acme, got %q", searchQuery)
+	}
+	// This endpoint takes the user id as a bare JSON string, not an object.
+	if memberBody != `"u-2"` {
+		t.Errorf("expected quoted user id, got %s", memberBody)
+	}
+}
+
+func TestGetOrganizations_Error(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/organizations": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("error"))
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	if _, err := c.GetOrganizations(context.Background(), "test", "acme"); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestAddOrganizationMember_Error(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"POST /admin/realms/{realm}/organizations/{id}/members": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte("already a member"))
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	if err := c.AddOrganizationMember(context.Background(), "test", "org-1", "u-1"); err == nil {
+		t.Fatal("expected error")
 	}
 }

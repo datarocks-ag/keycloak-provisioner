@@ -44,6 +44,33 @@ realms:
     #   silver: 1
     #   gold: 2
 
+    # Authentication flows are created before clients, so a client below can
+    # bind to a flow defined here. Flows are CREATE-ONLY: an existing alias is
+    # left untouched whatever the strategy. To change a flow, delete it in
+    # Keycloak or use a new alias. Declaring a built-in flow (browser, direct
+    # grant, ...) is rejected — use copyFrom to derive your own instead.
+    # authenticationFlows:
+    #   - alias: "browser-step-up"
+    #     description: "Browser flow with LoA step-up"
+    #     providerId: "basic-flow"   # or "form-flow"; default basic-flow
+    #     copyFrom: "browser"        # seed from an existing flow
+    #     executions:                # created in the order declared
+    #       - subflow: "loa-gold"
+    #         requirement: "CONDITIONAL"
+    #         executions:
+    #           - provider: "conditional-level-of-authentication"
+    #             requirement: "REQUIRED"
+    #             config:
+    #               alias: "gold-condition"   # names the config itself
+    #               loa-condition-level: "2"
+    #           - provider: "auth-otp-form"
+    #             requirement: "REQUIRED"
+
+    # Realm-level flow bindings, by alias. Applied after the flows exist.
+    # Unset bindings are left alone.
+    # authenticationBindings:
+    #   browserFlow: "browser-step-up"
+
     # Client scopes are provisioned before clients, so a client below can
     # reference a scope defined here. Matched by name.
     # clientScopes:
@@ -91,6 +118,10 @@ realms:
         # the client's acr.loa.map attribute; wins over the raw attribute.
         # acrLoaMap:
         #   gold: 2
+        # Override the realm flow bindings for this client. Values are flow
+        # aliases, resolved to the flow IDs Keycloak stores on the client.
+        # authenticationFlowBindingOverrides:
+        #   browser: "browser-step-up"
         protocolMappers:
           - name: "audience-mapper"
             protocol: "openid-connect"

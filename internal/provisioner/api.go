@@ -80,6 +80,16 @@ type KeycloakAPI interface {
 	GetGroupClientRoleMappings(ctx context.Context, realm, groupID, clientUUID string) ([]map[string]any, error)
 	AddGroupClientRoleMappings(ctx context.Context, realm, groupID, clientUUID string, roles []map[string]any) error
 
+	// Authentication flows
+	GetAuthenticationFlows(ctx context.Context, realm string) ([]map[string]any, error)
+	CreateAuthenticationFlow(ctx context.Context, realm string, body map[string]any) error
+	CopyAuthenticationFlow(ctx context.Context, realm, sourceAlias, newName string) error
+	GetAuthenticationFlowExecutions(ctx context.Context, realm, flowAlias string) ([]map[string]any, error)
+	UpdateAuthenticationFlowExecution(ctx context.Context, realm, flowAlias string, body map[string]any) error
+	CreateAuthenticationExecution(ctx context.Context, realm, flowAlias string, body map[string]any) error
+	CreateAuthenticationSubflow(ctx context.Context, realm, flowAlias string, body map[string]any) error
+	CreateAuthenticationExecutionConfig(ctx context.Context, realm, executionID string, body map[string]any) error
+
 	// Organizations
 	GetOrganizations(ctx context.Context, realm, search string) ([]map[string]any, error)
 	CreateOrganization(ctx context.Context, realm string, body map[string]any) (string, error)

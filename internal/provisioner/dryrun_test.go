@@ -38,6 +38,9 @@ type fakeAPI struct {
 	orgSubGroups  map[string][]map[string]any // key: realm/orgID/parentID
 	orgGroupMbrs  map[string][]map[string]any // key: realm/orgID/groupID
 
+	authFlows      map[string][]map[string]any // key: realm
+	flowExecutions map[string][]map[string]any // key: realm/flowAlias
+
 	createCalls atomicCounter
 	updateCalls atomicCounter
 }
@@ -77,6 +80,9 @@ func newFakeAPI() *fakeAPI {
 		orgGroups:     make(map[string][]map[string]any),
 		orgSubGroups:  make(map[string][]map[string]any),
 		orgGroupMbrs:  make(map[string][]map[string]any),
+
+		authFlows:      make(map[string][]map[string]any),
+		flowExecutions: make(map[string][]map[string]any),
 	}
 }
 
@@ -706,4 +712,179 @@ func (f *fakeAPI) GetOrganizationGroupMembers(_ context.Context, realm, orgID, g
 func (f *fakeAPI) AddOrganizationGroupMember(context.Context, string, string, string, string) error {
 	f.updateCalls.inc()
 	return nil
+}
+
+func (f *fakeAPI) GetAuthenticationFlows(_ context.Context, realm string) ([]map[string]any, error) {
+	return f.authFlows[realm], nil
+}
+
+func (f *fakeAPI) CreateAuthenticationFlow(context.Context, string, map[string]any) error {
+	f.createCalls.inc()
+	return nil
+}
+
+func (f *fakeAPI) CopyAuthenticationFlow(context.Context, string, string, string) error {
+	f.createCalls.inc()
+	return nil
+}
+
+func (f *fakeAPI) GetAuthenticationFlowExecutions(_ context.Context, realm, flowAlias string) ([]map[string]any, error) {
+	return f.flowExecutions[realm+"/"+flowAlias], nil
+}
+
+func (f *fakeAPI) UpdateAuthenticationFlowExecution(context.Context, string, string, map[string]any) error {
+	f.updateCalls.inc()
+	return nil
+}
+
+func (f *fakeAPI) CreateAuthenticationExecution(context.Context, string, string, map[string]any) error {
+	f.createCalls.inc()
+	return nil
+}
+
+func (f *fakeAPI) CreateAuthenticationSubflow(context.Context, string, string, map[string]any) error {
+	f.createCalls.inc()
+	return nil
+}
+
+func (f *fakeAPI) CreateAuthenticationExecutionConfig(context.Context, string, string, map[string]any) error {
+	f.createCalls.inc()
+	return nil
+}
+
+func TestDryRunSkipsAuthenticationFlowMutations(t *testing.T) {
+	inner := newFakeAPI()
+	d := NewDryRunAdapter(inner)
+	ctx := context.Background()
+
+	if err := d.CreateAuthenticationFlow(ctx, "r", map[string]any{"alias": "f"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.CopyAuthenticationFlow(ctx, "r", "browser", "f"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.CreateAuthenticationExecution(ctx, "r", "f", map[string]any{"provider": "auth-cookie"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.CreateAuthenticationSubflow(ctx, "r", "f", map[string]any{"alias": "sub"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.UpdateAuthenticationFlowExecution(ctx, "r", "f", map[string]any{"requirement": "REQUIRED"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.CreateAuthenticationExecutionConfig(ctx, "r", "ex-1", map[string]any{"alias": "cfg"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if inner.createCalls.n != 0 || inner.updateCalls.n != 0 {
+		t.Errorf("inner API was called: creates=%d updates=%d", inner.createCalls.n, inner.updateCalls.n)
+	}
+}
+
+func TestDryRunFlowReadsShortCircuitForSyntheticRealm(t *testing.T) {
+	inner := newFakeAPI()
+	inner.authFlows["r"] = []map[string]any{{"alias": "browser"}}
+	d := NewDryRunAdapter(inner)
+	ctx := context.Background()
+
+	if _, err := d.GetAuthenticationFlows(ctx, "r"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.CreateRealm(ctx, map[string]any{"realm": "r"}); err != nil {
+		t.Fatal(err)
+	}
+
+	flows, err := d.GetAuthenticationFlows(ctx, "r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flows != nil {
+		t.Errorf("expected nil for a would-be-created realm, got %v", flows)
+	}
+}
+
+// TestDryRunCreatedFlowIsDiscoverable pins the fix for dry-run aborting on
+// authentication flows: a flow created in this run must be visible to the
+// client binding-override lookup that runs later.
+func TestDryRunCreatedFlowIsDiscoverable(t *testing.T) {
+	inner := newFakeAPI()
+	inner.authFlows["r"] = []map[string]any{{"id": "real-1", "alias": "browser", "builtIn": true}}
+	d := NewDryRunAdapter(inner)
+	ctx := context.Background()
+
+	if err := d.CopyAuthenticationFlow(ctx, "r", "browser", "browser-step-up"); err != nil {
+		t.Fatal(err)
+	}
+
+	flows, err := d.GetAuthenticationFlows(ctx, "r")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	byAlias := map[string]string{}
+	for _, f := range flows {
+		alias, _ := f["alias"].(string)
+		id, _ := f["id"].(string)
+		byAlias[alias] = id
+	}
+
+	if byAlias["browser"] != "real-1" {
+		t.Errorf("real flow missing from dry-run listing: %v", flows)
+	}
+	if !isSyntheticID(byAlias["browser-step-up"]) {
+		t.Errorf("flow copied in this dry-run is not discoverable: %v", flows)
+	}
+}
+
+// TestDryRunExecutionsNotReadForCreatedFlow pins the other half: reading the
+// executions of a flow that was only "created" in this dry-run must not reach
+// the server, which would 404 and abort the whole run.
+func TestDryRunExecutionsNotReadForCreatedFlow(t *testing.T) {
+	inner := newFakeAPI()
+	inner.flowExecutions["r/existing-flow"] = []map[string]any{{"id": "ex-1", "providerId": "auth-cookie"}}
+	d := NewDryRunAdapter(inner)
+	ctx := context.Background()
+
+	if err := d.CreateAuthenticationFlow(ctx, "r", map[string]any{"alias": "new-flow"}); err != nil {
+		t.Fatal(err)
+	}
+
+	executions, err := d.GetAuthenticationFlowExecutions(ctx, "r", "new-flow")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if executions != nil {
+		t.Errorf("expected no executions for a would-be-created flow, got %v", executions)
+	}
+
+	// A flow that really exists still passes through.
+	executions, err = d.GetAuthenticationFlowExecutions(ctx, "r", "existing-flow")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(executions) != 1 {
+		t.Errorf("expected pass-through for a real flow, got %v", executions)
+	}
+}
+
+// TestDryRunSubflowIsTrackedAsFlow covers the case that actually broke the
+// smoke test: a subflow is itself a flow that later executions are added to, so
+// it has to be tracked like a top-level one.
+func TestDryRunSubflowIsTrackedAsFlow(t *testing.T) {
+	inner := newFakeAPI()
+	d := NewDryRunAdapter(inner)
+	ctx := context.Background()
+
+	if err := d.CreateAuthenticationSubflow(ctx, "r", "parent-flow", map[string]any{"alias": "loa-gold"}); err != nil {
+		t.Fatal(err)
+	}
+
+	executions, err := d.GetAuthenticationFlowExecutions(ctx, "r", "loa-gold")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if executions != nil {
+		t.Errorf("expected no executions for a would-be-created subflow, got %v", executions)
+	}
 }

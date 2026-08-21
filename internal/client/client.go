@@ -1292,3 +1292,137 @@ func (c *Client) AddOrganizationGroupMember(ctx context.Context, realm, orgID, g
 	}
 	return nil
 }
+
+// GetAuthenticationFlows returns all authentication flows in the realm.
+func (c *Client) GetAuthenticationFlows(ctx context.Context, realm string) ([]map[string]any, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/authentication/flows"
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding authentication flows: %w", err)
+	}
+	return result, nil
+}
+
+// CreateAuthenticationFlow creates a new top-level authentication flow.
+func (c *Client) CreateAuthenticationFlow(ctx context.Context, realm string, body map[string]any) error {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/authentication/flows"
+	resp, err := c.doRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		return readError(resp)
+	}
+	return nil
+}
+
+// CopyAuthenticationFlow copies an existing flow, including its executions,
+// under a new alias. This is how a built-in flow is customised without
+// modifying it in place.
+func (c *Client) CopyAuthenticationFlow(ctx context.Context, realm, sourceAlias, newName string) error {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/authentication/flows/" + url.PathEscape(sourceAlias) + "/copy"
+	resp, err := c.doRequest(ctx, http.MethodPost, path, map[string]any{"newName": newName})
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusNoContent {
+		return readError(resp)
+	}
+	return nil
+}
+
+// GetAuthenticationFlowExecutions returns the flattened execution tree of a
+// flow. Each entry carries "level" and "index" describing its position.
+func (c *Client) GetAuthenticationFlowExecutions(ctx context.Context, realm, flowAlias string) ([]map[string]any, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/authentication/flows/" + url.PathEscape(flowAlias) + "/executions"
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding authentication executions: %w", err)
+	}
+	return result, nil
+}
+
+// UpdateAuthenticationFlowExecution updates an execution in place, which is how
+// its requirement is set after it has been added.
+func (c *Client) UpdateAuthenticationFlowExecution(ctx context.Context, realm, flowAlias string, body map[string]any) error {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/authentication/flows/" + url.PathEscape(flowAlias) + "/executions"
+	resp, err := c.doRequest(ctx, http.MethodPut, path, body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return readError(resp)
+	}
+	return nil
+}
+
+// CreateAuthenticationExecution appends an authenticator to a flow.
+func (c *Client) CreateAuthenticationExecution(ctx context.Context, realm, flowAlias string, body map[string]any) error {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/authentication/flows/" + url.PathEscape(flowAlias) + "/executions/execution"
+	resp, err := c.doRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusNoContent {
+		return readError(resp)
+	}
+	return nil
+}
+
+// CreateAuthenticationSubflow appends a nested flow to a flow.
+func (c *Client) CreateAuthenticationSubflow(ctx context.Context, realm, flowAlias string, body map[string]any) error {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/authentication/flows/" + url.PathEscape(flowAlias) + "/executions/flow"
+	resp, err := c.doRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusNoContent {
+		return readError(resp)
+	}
+	return nil
+}
+
+// CreateAuthenticationExecutionConfig attaches a configuration to an execution.
+func (c *Client) CreateAuthenticationExecutionConfig(ctx context.Context, realm, executionID string, body map[string]any) error {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/authentication/executions/" + url.PathEscape(executionID) + "/config"
+	resp, err := c.doRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusNoContent {
+		return readError(resp)
+	}
+	return nil
+}
