@@ -1347,3 +1347,80 @@ realms:
 		t.Errorf("expected organizationsEnabled=true, got %v", realm["organizationsEnabled"])
 	}
 }
+
+func TestIntegrationClientAttributesMerge(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	configYAML := `
+realms:
+  - realm: "client-attr-realm"
+    enabled: true
+    clients:
+      - clientId: "attr-app"
+        enabled: true
+        attributes:
+          "post.logout.redirect.uris": "+"
+`
+	cfgPath := writeTestConfig(t, configYAML)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+
+	clients, err := kc.GetClients(ctx, "client-attr-realm", "attr-app")
+	if err != nil {
+		t.Fatalf("getting client: %v", err)
+	}
+	if len(clients) == 0 {
+		t.Fatal("client attr-app not found")
+	}
+	uuid, ok := clients[0]["id"].(string)
+	if !ok || uuid == "" {
+		t.Fatalf("client attr-app has no usable id: %v", clients[0]["id"])
+	}
+
+	// Simulate an external actor writing an attribute the config does not know.
+	attrs, ok := clients[0]["attributes"].(map[string]any)
+	if !ok {
+		attrs = map[string]any{}
+	}
+	attrs["setOutOfBand"] = "yes"
+	if err := kc.UpdateClient(ctx, "client-attr-realm", uuid, map[string]any{
+		"id":         uuid,
+		"clientId":   "attr-app",
+		"attributes": attrs,
+	}); err != nil {
+		t.Fatalf("setting out-of-band attribute: %v", err)
+	}
+
+	// Re-running must not drop it.
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+
+	clients, err = kc.GetClients(ctx, "client-attr-realm", "attr-app")
+	if err != nil {
+		t.Fatalf("getting client after second run: %v", err)
+	}
+	if len(clients) == 0 {
+		t.Fatal("client attr-app disappeared after the second run")
+	}
+	attrs, ok = clients[0]["attributes"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected attributes map, got %T", clients[0]["attributes"])
+	}
+
+	if got := attrs["setOutOfBand"]; got != "yes" {
+		t.Errorf("out-of-band client attribute was clobbered, got %v", got)
+	}
+	if got := attrs["post.logout.redirect.uris"]; got != "+" {
+		t.Errorf("configured attribute missing, got %v", got)
+	}
+}

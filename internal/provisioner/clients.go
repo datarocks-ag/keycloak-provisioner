@@ -15,11 +15,9 @@ func (p *Provisioner) ensureClient(ctx context.Context, realm string, c config.C
 		return "", err
 	}
 
-	body := buildClientBody(c)
-
 	if len(existing) == 0 {
 		slog.Info("Creating client", "realm", realm, "clientId", c.ClientID)
-		uuid, err := p.client.CreateClient(ctx, realm, body)
+		uuid, err := p.client.CreateClient(ctx, realm, buildClientBody(c, nil))
 		if err != nil {
 			return "", err
 		}
@@ -37,14 +35,20 @@ func (p *Provisioner) ensureClient(ctx context.Context, realm string, c config.C
 	}
 
 	slog.Info("Updating client", "realm", realm, "clientId", c.ClientID, "uuid", uuid)
+
+	body := buildClientBody(c, existing[0])
 	body["id"] = uuid
+
 	if err := p.client.UpdateClient(ctx, realm, uuid, body); err != nil {
 		return "", err
 	}
 	return uuid, nil
 }
 
-func buildClientBody(c config.Client) map[string]any {
+// buildClientBody builds the client representation to send to Keycloak.
+// existing is the client's current representation, or nil when the client is
+// being created; it is only read to merge attributes (see mergeAttributes).
+func buildClientBody(c config.Client, existing map[string]any) map[string]any {
 	body := map[string]any{
 		"clientId": c.ClientID,
 	}
@@ -103,7 +107,7 @@ func buildClientBody(c config.Client) map[string]any {
 	if len(c.OptionalClientScopes) > 0 {
 		body["optionalClientScopes"] = c.OptionalClientScopes
 	}
-	if attrs := buildClientAttributes(c); len(attrs) > 0 {
+	if attrs := buildClientAttributes(c, existing); len(attrs) > 0 {
 		body["attributes"] = attrs
 	}
 
@@ -114,18 +118,28 @@ func buildClientBody(c config.Client) map[string]any {
 // OAuth 2.0 Token Exchange (RFC 8693). Keycloak 26.2+.
 const standardTokenExchangeAttr = "standard.token.exchange.enabled"
 
-// buildClientAttributes merges the client's raw attributes with attributes
-// derived from typed fields. It returns a fresh map so the config's own
-// Attributes map is never mutated. Typed fields win over raw attributes.
-func buildClientAttributes(c config.Client) map[string]string {
-	attrs := make(map[string]string, len(c.Attributes)+2)
-	for k, v := range c.Attributes {
-		attrs[k] = v
+// buildClientAttributes merges the client's configured attributes, and the
+// attributes derived from typed fields, over the client's current attributes.
+// It returns a fresh map so the config's own Attributes map is never mutated.
+// Typed fields win over raw attributes, which win over current values.
+//
+// Keycloak replaces the whole attribute map on update, so the union has to be
+// sent; otherwise attributes set out-of-band, or defaulted by Keycloak itself,
+// would be dropped on every run.
+//
+// It returns nil when the config manages no attributes at all, leaving the
+// client's attributes out of the request entirely.
+func buildClientAttributes(c config.Client, existing map[string]any) map[string]string {
+	acrLoaMap := buildAcrLoaMapAttribute(c.AcrLoaMap)
+	if len(c.Attributes) == 0 && c.StandardTokenExchangeEnabled == nil && acrLoaMap == "" {
+		return nil
 	}
+
+	attrs := mergeAttributes(existing, c.Attributes)
 	if c.StandardTokenExchangeEnabled != nil {
 		attrs[standardTokenExchangeAttr] = strconv.FormatBool(*c.StandardTokenExchangeEnabled)
 	}
-	if acrLoaMap := buildAcrLoaMapAttribute(c.AcrLoaMap); acrLoaMap != "" {
+	if acrLoaMap != "" {
 		attrs[acrLoaMapAttr] = acrLoaMap
 	}
 
