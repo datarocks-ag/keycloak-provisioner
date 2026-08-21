@@ -1541,3 +1541,337 @@ realms:
 		t.Error("expected organizationsEnabled to stay nil when unset")
 	}
 }
+
+func TestOrganizations(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    organizationsEnabled: true
+    organizations:
+      - name: "acme"
+        alias: "acme-corp"
+        enabled: true
+        description: "ACME Corp"
+        redirectUrl: "https://acme.example.com"
+        domains:
+          - name: "acme.com"
+            verified: true
+          - name: "acme.org"
+        attributes:
+          tier:
+            - "gold"
+        members:
+          - "alice"
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	orgs := cfg.Realms[0].Organizations
+	if len(orgs) != 1 {
+		t.Fatalf("expected 1 organization, got %d", len(orgs))
+	}
+	o := orgs[0]
+	if o.Name != "acme" || o.Alias != "acme-corp" {
+		t.Errorf("unexpected name/alias: %q/%q", o.Name, o.Alias)
+	}
+	if len(o.Domains) != 2 || o.Domains[0].Name != "acme.com" {
+		t.Errorf("unexpected domains: %v", o.Domains)
+	}
+	if o.Domains[0].Verified == nil || !*o.Domains[0].Verified {
+		t.Error("expected acme.com to be verified")
+	}
+	if o.Domains[1].Verified != nil {
+		t.Error("expected acme.org verified to stay nil")
+	}
+	if len(o.Members) != 1 || o.Members[0] != "alice" {
+		t.Errorf("unexpected members: %v", o.Members)
+	}
+}
+
+func TestValidationOrganizationsRequireOrganizationsEnabled(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    organizations:
+      - name: "acme"
+`
+	path := writeTempConfig(t, yaml)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error when organizationsEnabled is unset")
+	}
+	if !strings.Contains(err.Error(), "organizationsEnabled") {
+		t.Errorf("error should mention organizationsEnabled, got: %v", err)
+	}
+}
+
+func TestValidationOrganizationsRejectedWhenExplicitlyDisabled(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    organizationsEnabled: false
+    organizations:
+      - name: "acme"
+`
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected validation error when organizationsEnabled is false")
+	}
+}
+
+func TestValidationMissingOrganizationName(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    organizationsEnabled: true
+    organizations:
+      - description: "no name"
+`
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected validation error for missing organization name")
+	}
+}
+
+func TestValidationDuplicateOrganizationName(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    organizationsEnabled: true
+    organizations:
+      - name: "dup"
+      - name: "dup"
+`
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected validation error for duplicate organization name")
+	}
+}
+
+func TestValidationDuplicateOrganizationDomain(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    organizationsEnabled: true
+    organizations:
+      - name: "acme"
+        domains:
+          - name: "acme.com"
+          - name: "acme.com"
+`
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected validation error for duplicate domain")
+	}
+}
+
+func TestValidationEmptyOrganizationMember(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    organizationsEnabled: true
+    organizations:
+      - name: "acme"
+        members:
+          - ""
+`
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected validation error for empty member username")
+	}
+}
+
+func TestEnvVarExpansionInOrganizations(t *testing.T) {
+	t.Setenv("ORG_NAME", "acme")
+	t.Setenv("ORG_DOMAIN", "acme.com")
+	t.Setenv("ORG_MEMBER", "alice")
+	yaml := `
+realms:
+  - realm: "test"
+    organizationsEnabled: true
+    organizations:
+      - name: "${ORG_NAME}"
+        domains:
+          - name: "${ORG_DOMAIN}"
+        members:
+          - "${ORG_MEMBER}"
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	o := cfg.Realms[0].Organizations[0]
+	if o.Name != "acme" || o.Domains[0].Name != "acme.com" || o.Members[0] != "alice" {
+		t.Errorf("expansion failed: %+v", o)
+	}
+}
+
+func TestOrganizationGroups(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    organizationsEnabled: true
+    organizations:
+      - name: "acme"
+        members:
+          - "alice"
+        groups:
+          - name: "engineering"
+            attributes:
+              tier:
+                - "gold"
+            members:
+              - "alice"
+            subGroups:
+              - name: "backend"
+                members:
+                  - "alice"
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	groups := cfg.Realms[0].Organizations[0].Groups
+	if len(groups) != 1 || groups[0].Name != "engineering" {
+		t.Fatalf("unexpected groups: %+v", groups)
+	}
+	if got := groups[0].Attributes["tier"]; len(got) != 1 || got[0] != "gold" {
+		t.Errorf("unexpected attributes: %v", groups[0].Attributes)
+	}
+	if len(groups[0].Members) != 1 || groups[0].Members[0] != "alice" {
+		t.Errorf("unexpected members: %v", groups[0].Members)
+	}
+	if len(groups[0].SubGroups) != 1 || groups[0].SubGroups[0].Name != "backend" {
+		t.Errorf("unexpected subgroups: %+v", groups[0].SubGroups)
+	}
+}
+
+func TestValidationMissingOrganizationGroupName(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    organizationsEnabled: true
+    organizations:
+      - name: "acme"
+        groups:
+          - members: ["alice"]
+`
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected validation error for missing organization group name")
+	}
+}
+
+func TestValidationDuplicateOrganizationGroupName(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    organizationsEnabled: true
+    organizations:
+      - name: "acme"
+        groups:
+          - name: "dup"
+          - name: "dup"
+`
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected validation error for duplicate organization group name")
+	}
+}
+
+func TestOrganizationSubGroupNameMayRepeatAcrossLevels(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    organizationsEnabled: true
+    organizations:
+      - name: "acme"
+        groups:
+          - name: "team"
+            subGroups:
+              - name: "team"
+`
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err != nil {
+		t.Fatalf("names may repeat at different levels: %v", err)
+	}
+}
+
+func TestValidationDuplicateOrganizationSubGroupName(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    organizationsEnabled: true
+    organizations:
+      - name: "acme"
+        groups:
+          - name: "team"
+            subGroups:
+              - name: "dup"
+              - name: "dup"
+`
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected validation error for duplicate sibling subgroup name")
+	}
+}
+
+func TestValidationEmptyOrganizationGroupMember(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    organizationsEnabled: true
+    organizations:
+      - name: "acme"
+        groups:
+          - name: "engineering"
+            members:
+              - ""
+`
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected validation error for empty group member username")
+	}
+}
+
+func TestEnvVarExpansionInOrganizationGroups(t *testing.T) {
+	t.Setenv("OG_NAME", "engineering")
+	t.Setenv("OG_TIER", "gold")
+	t.Setenv("OG_MEMBER", "alice")
+	yaml := `
+realms:
+  - realm: "test"
+    organizationsEnabled: true
+    organizations:
+      - name: "acme"
+        groups:
+          - name: "${OG_NAME}"
+            attributes:
+              tier:
+                - "${OG_TIER}"
+            members:
+              - "${OG_MEMBER}"
+            subGroups:
+              - name: "${OG_NAME}-sub"
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	g := cfg.Realms[0].Organizations[0].Groups[0]
+	if g.Name != "engineering" || g.Attributes["tier"][0] != "gold" || g.Members[0] != "alice" {
+		t.Errorf("expansion failed: %+v", g)
+	}
+	if g.SubGroups[0].Name != "engineering-sub" {
+		t.Errorf("subgroup expansion failed: %q", g.SubGroups[0].Name)
+	}
+}

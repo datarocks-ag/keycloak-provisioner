@@ -14,6 +14,7 @@ Release notes are maintained in [CHANGELOG.md](CHANGELOG.md).
 - `sslRequired` setting on any realm (`external`, `all`, `none`)
 - Realm attributes, merged over Keycloak's current values so unmanaged keys are never dropped
 - Client scopes as a first-class resource, with their own protocol mappers and realm-level assignment
+- Organizations with domains and additive membership (Keycloak 26+), including organization-scoped groups (Keycloak 26.6+)
 - Step-up authentication support via `acrLoaMap` on realms and clients (`acr.loa.map`)
 - User management with password setting, realm/client role assignment, and group membership
 - Service account role mapping for machine-to-machine clients
@@ -107,12 +108,14 @@ In dry-run mode, every mutating call logs a `DRY-RUN:` message and is skipped. R
       - **Realm/client role assignments** — granted if not already mapped (additive)
       - **Subgroups** — created or updated recursively
    7. **Users** — created or updated, passwords set, roles assigned, group memberships added (additive)
+   8. **Organizations** — created or updated (matched by `name`), domains set, members added (additive)
 
 Client scopes run before clients so a client can reference a scope defined in
 the same config. Groups run after roles so their realm/client role assignments resolve to
 roles created earlier in the same run, and before users so group memberships
-resolve to groups defined in the same config. Role assignments and group
-memberships are additive: the provisioner grants any configured role or
+resolve to groups defined in the same config. Organizations run last so their
+members resolve to users created in the same run. Role assignments, group
+memberships and organization memberships are additive: the provisioner grants any configured role or
 membership that is not yet present, and never removes existing ones.
 
 ## Config Example
@@ -374,15 +377,65 @@ The LoA map on its own does not create a step-up flow — it only names the leve
 
 ## Organizations
 
-`organizationsEnabled` toggles Keycloak Organizations for a realm:
+`organizationsEnabled` toggles Keycloak Organizations for a realm, and `organizations` provisions them:
 
 ```yaml
 realms:
   - realm: "my-realm"
     organizationsEnabled: true
+    organizations:
+      - name: "acme"
+        alias: "acme"              # optional; Keycloak derives one when omitted
+        enabled: true
+        description: "ACME Corp"
+        redirectUrl: "https://acme.example.com"
+        domains:
+          - name: "acme.com"
+            verified: true
+          - name: "acme.org"
+        attributes:
+          tier:
+            - "gold"
+        members:
+          - "alice"
 ```
 
-Requires Keycloak 26+, where the `organization` feature is enabled by default. Omitting the field leaves the realm's current setting untouched.
+Requires Keycloak 26+, where the `organization` feature is enabled by default. Organization groups need **Keycloak 26.6+**, which is the version the integration tests and compose stack target. Omitting `organizationsEnabled` leaves the realm's current setting untouched; declaring `organizations` without setting it to `true` is rejected at config load time, the same way `serviceAccountRoles` requires `serviceAccountsEnabled`.
+
+Organizations are matched by `name` and provisioned last, after users, so `members` can reference users defined in the same config. Membership is additive — members are never removed, and a username that cannot be resolved is logged as a warning and skipped.
+
+### Organization groups
+
+Organizations can own groups, declared under `groups` on the organization:
+
+```yaml
+organizations:
+  - name: "acme"
+    members:
+      - "alice"
+    groups:
+      - name: "engineering"
+        attributes:
+          tier:
+            - "gold"
+        members:
+          - "alice"
+        subGroups:
+          - name: "backend"
+```
+
+These are **not** realm groups. They live in a namespace of their own: they never appear under the realm's `groups`, and Keycloak refuses to manage them through the normal group API (`Cannot manage organization related group via non Organization API`). The realm-level `groups` section and a user's `groups` list therefore cannot reach them, and vice versa.
+
+Two further differences from realm groups:
+
+- **No role mappings.** Keycloak exposes no role-mapping endpoint for organization groups, so `realmRoles` and `clientRoles` are not available on them.
+- **Members must already belong to the organization.** Keycloak rejects adding a non-member with `User is not member of the organization`, so list the user under the organization's `members` as well. A group member the organization does not have is logged as a warning and skipped rather than failing the run.
+
+Group names must be unique among siblings but may repeat at different levels, matching realm groups. Subgroups nest to any depth, and both group creation and membership are additive.
+
+`alias` is only sent when the organization is created, since Keycloak treats it as immutable afterwards. Omitting it does not mean the provisioner copies `name` — the field is left out of the request entirely and Keycloak derives its own value.
+
+Linking identity providers to organizations is not supported: the provisioner has no identity provider support to link.
 
 ## Connection Retry
 
@@ -404,7 +457,7 @@ make docker           # Build Docker image
 ```yaml
 services:
   keycloak:
-    image: keycloak/keycloak:26.0
+    image: keycloak/keycloak:26.6
     command: ["start-dev"]
     environment:
       KC_HEALTH_ENABLED: "true"

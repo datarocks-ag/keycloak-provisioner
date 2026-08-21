@@ -1,0 +1,402 @@
+package provisioner
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+
+	"keycloak-provisioner/internal/config"
+)
+
+// ensureOrganization creates or updates a single organization and reconciles
+// its membership. Organizations are looked up by name; the alias Keycloak
+// derives from the name is immutable once the organization exists, so it is
+// only sent on create.
+func (p *Provisioner) ensureOrganization(ctx context.Context, realm string, o config.Organization, strategy string) error {
+	existing, err := p.client.GetOrganizations(ctx, realm, o.Name)
+	if err != nil {
+		return err
+	}
+
+	var orgID string
+
+	if len(existing) == 0 {
+		slog.Info("Creating organization", "realm", realm, "organization", o.Name)
+
+		orgID, err = p.client.CreateOrganization(ctx, realm, buildOrganizationBody(o, true))
+		if err != nil {
+			return err
+		}
+	} else {
+		orgID, err = organizationID(existing[0], o.Name)
+		if err != nil {
+			return err
+		}
+
+		if strategy == "create" {
+			slog.Info("Skipping existing organization (strategy=create)", "realm", realm, "organization", o.Name)
+		} else {
+			slog.Info("Updating organization", "realm", realm, "organization", o.Name, "uuid", orgID)
+
+			body := buildOrganizationBody(o, false)
+			body["id"] = orgID
+
+			if err := p.client.UpdateOrganization(ctx, realm, orgID, body); err != nil {
+				return err
+			}
+		}
+	}
+
+	if err := p.ensureOrganizationMembers(ctx, realm, orgID, o); err != nil {
+		return err
+	}
+
+	if len(o.Groups) == 0 {
+		return nil
+	}
+
+	org := organizationContext{id: orgID, name: o.Name}
+
+	// Read the organization's members once, after they have been reconciled,
+	// and carry them through the group recursion. The listing already carries
+	// each member's user id, so the group path needs no user lookups of its
+	// own and no repeated member reads per subgroup. Groups that assign no
+	// members need none of this, so the read is skipped entirely.
+	if groupsAssignMembers(o.Groups) {
+		members, err := p.client.GetOrganizationMembers(ctx, realm, orgID)
+		if err != nil {
+			return err
+		}
+
+		org.members = userIDsByUsername(members)
+	}
+
+	for _, g := range o.Groups {
+		if err := p.ensureOrganizationGroup(ctx, realm, org, "", g, strategy); err != nil {
+			return fmt.Errorf("group %q of organization %q: %w", g.Name, o.Name, err)
+		}
+	}
+
+	return nil
+}
+
+// organizationContext carries the per-organization state that the group
+// recursion needs, so it is resolved once rather than per group.
+type organizationContext struct {
+	id      string
+	name    string
+	members map[string]string // username -> user id; nil when no group assigns members
+}
+
+// groupsAssignMembers reports whether any group in the tree declares members.
+func groupsAssignMembers(groups []config.OrganizationGroup) bool {
+	for _, g := range groups {
+		if len(g.Members) > 0 || groupsAssignMembers(g.SubGroups) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// ensureOrganizationGroup reconciles one organization group and, recursively,
+// its subgroups. parentID is empty for a top-level group.
+//
+// It mirrors ensureGroup for realm groups, with one difference: organization
+// groups have no role mappings. Keycloak exposes no role-mapping endpoint for
+// them, and the realm group API refuses them outright, so there is nothing to
+// reconcile beyond attributes, members and subgroups.
+func (p *Provisioner) ensureOrganizationGroup(
+	ctx context.Context,
+	realm string,
+	org organizationContext,
+	parentID string,
+	g config.OrganizationGroup,
+	strategy string,
+) error {
+	groupID, err := p.reconcileOrganizationGroup(ctx, realm, org.id, parentID, g, strategy)
+	if err != nil {
+		return err
+	}
+
+	if err := p.ensureOrganizationGroupMembers(ctx, realm, org, groupID, g); err != nil {
+		return fmt.Errorf("members: %w", err)
+	}
+
+	for _, sub := range g.SubGroups {
+		if err := p.ensureOrganizationGroup(ctx, realm, org, groupID, sub, strategy); err != nil {
+			return fmt.Errorf("subgroup %q: %w", sub.Name, err)
+		}
+	}
+
+	return nil
+}
+
+// reconcileOrganizationGroup creates or updates the group itself and returns its
+// UUID. Creating a group whose name is already taken is a 409, so the group is
+// looked up by name at its own level first.
+func (p *Provisioner) reconcileOrganizationGroup(
+	ctx context.Context,
+	realm, orgID, parentID string,
+	g config.OrganizationGroup,
+	strategy string,
+) (string, error) {
+	existing, err := p.findOrganizationGroup(ctx, realm, orgID, parentID, g.Name)
+	if err != nil {
+		return "", err
+	}
+
+	body := buildOrganizationGroupBody(g)
+
+	if existing == nil {
+		if parentID == "" {
+			slog.Info("Creating organization group", "realm", realm, "group", g.Name)
+			return p.client.CreateOrganizationGroup(ctx, realm, orgID, body)
+		}
+
+		slog.Info("Creating organization subgroup", "realm", realm, "group", g.Name, "parent", parentID)
+
+		return p.client.CreateOrganizationSubGroup(ctx, realm, orgID, parentID, body)
+	}
+
+	groupID, ok := existing["id"].(string)
+	if !ok {
+		return "", fmt.Errorf("organization group %q: missing or invalid id in response", g.Name)
+	}
+
+	if strategy == "create" {
+		// Only the group's own attributes are left untouched; the caller still
+		// reconciles members and subgroups, which are additive children.
+		slog.Info("Skipping existing organization group update (strategy=create)", "realm", realm, "group", g.Name)
+		return groupID, nil
+	}
+
+	slog.Info("Updating organization group", "realm", realm, "group", g.Name, "uuid", groupID)
+	body["id"] = groupID
+
+	if err := p.client.UpdateOrganizationGroup(ctx, realm, orgID, groupID, body); err != nil {
+		return "", err
+	}
+
+	return groupID, nil
+}
+
+// findOrganizationGroup looks up a group by exact name at the given level.
+// Keycloak's ?search on the groups endpoint matches across the whole tree, so
+// the children endpoint is used for nested levels rather than a search.
+func (p *Provisioner) findOrganizationGroup(ctx context.Context, realm, orgID, parentID, name string) (map[string]any, error) {
+	var (
+		candidates []map[string]any
+		err        error
+	)
+
+	if parentID == "" {
+		candidates, err = p.client.GetOrganizationGroups(ctx, realm, orgID)
+	} else {
+		candidates, err = p.client.GetOrganizationSubGroups(ctx, realm, orgID, parentID)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	for _, c := range candidates {
+		if n, ok := c["name"].(string); ok && n == name {
+			return c, nil
+		}
+	}
+
+	return nil, nil
+}
+
+func buildOrganizationGroupBody(g config.OrganizationGroup) map[string]any {
+	body := map[string]any{
+		"name": g.Name,
+	}
+	if len(g.Attributes) > 0 {
+		body["attributes"] = g.Attributes
+	}
+
+	return body
+}
+
+// ensureOrganizationGroupMembers adds the configured users to an organization
+// group. Membership is additive and never removed.
+//
+// A user has to be a member of the organization before it can join one of its
+// groups — Keycloak answers 400 otherwise — so a member the organization does
+// not have is warned about and skipped rather than failing the run. User ids
+// come from the organization's member listing, which the caller resolved once.
+func (p *Provisioner) ensureOrganizationGroupMembers(
+	ctx context.Context,
+	realm string,
+	org organizationContext,
+	groupID string,
+	g config.OrganizationGroup,
+) error {
+	if len(g.Members) == 0 {
+		return nil
+	}
+
+	groupMembers, err := p.client.GetOrganizationGroupMembers(ctx, realm, org.id, groupID)
+	if err != nil {
+		return err
+	}
+	inGroup := usernameSet(groupMembers)
+
+	seen := make(map[string]bool, len(g.Members))
+
+	for _, username := range g.Members {
+		if seen[username] {
+			continue
+		}
+		seen[username] = true
+
+		if inGroup[username] {
+			slog.Debug("User already a member of organization group", "realm", realm, "group", g.Name, "username", username)
+			continue
+		}
+
+		userID, ok := org.members[username]
+		if !ok {
+			slog.Warn("User is not a member of the organization, skipping group membership",
+				"realm", realm, "organization", org.name, "group", g.Name, "username", username)
+
+			continue
+		}
+
+		slog.Info("Adding user to organization group", "realm", realm, "organization", org.name, "group", g.Name, "username", username)
+
+		if err := p.client.AddOrganizationGroupMember(ctx, realm, org.id, groupID, userID); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// userIDsByUsername indexes a user listing by username. Entries without both a
+// username and an id are skipped rather than producing an unusable mapping.
+func userIDsByUsername(users []map[string]any) map[string]string {
+	ids := make(map[string]string, len(users))
+
+	for _, u := range users {
+		username, nameOK := u["username"].(string)
+		id, idOK := u["id"].(string)
+
+		if nameOK && idOK {
+			ids[username] = id
+		}
+	}
+
+	return ids
+}
+
+func usernameSet(users []map[string]any) map[string]bool {
+	set := make(map[string]bool, len(users))
+	for _, u := range users {
+		if username, ok := u["username"].(string); ok {
+			set[username] = true
+		}
+	}
+
+	return set
+}
+
+func organizationID(org map[string]any, name string) (string, error) {
+	id, ok := org["id"].(string)
+	if !ok {
+		return "", fmt.Errorf("organization %q: missing or invalid id in response", name)
+	}
+	return id, nil
+}
+
+// buildOrganizationBody builds the organization representation. onCreate
+// controls whether the alias is included: Keycloak rejects changing it on an
+// existing organization.
+func buildOrganizationBody(o config.Organization, onCreate bool) map[string]any {
+	body := map[string]any{
+		"name": o.Name,
+	}
+
+	if onCreate && o.Alias != "" {
+		body["alias"] = o.Alias
+	}
+	if o.Enabled != nil {
+		body["enabled"] = *o.Enabled
+	}
+	if o.Description != "" {
+		body["description"] = o.Description
+	}
+	if o.RedirectUrl != "" {
+		body["redirectUrl"] = o.RedirectUrl
+	}
+	if len(o.Attributes) > 0 {
+		body["attributes"] = o.Attributes
+	}
+	if len(o.Domains) > 0 {
+		domains := make([]map[string]any, 0, len(o.Domains))
+		for _, d := range o.Domains {
+			domain := map[string]any{"name": d.Name}
+			if d.Verified != nil {
+				domain["verified"] = *d.Verified
+			}
+			domains = append(domains, domain)
+		}
+		body["domains"] = domains
+	}
+
+	return body
+}
+
+// ensureOrganizationMembers adds the configured users to the organization.
+// Membership is additive — existing members are never removed — and a username
+// that cannot be resolved is warned about and skipped, matching how
+// ensureUserGroups treats a missing group.
+func (p *Provisioner) ensureOrganizationMembers(ctx context.Context, realm, orgID string, o config.Organization) error {
+	if len(o.Members) == 0 {
+		return nil
+	}
+
+	members, err := p.client.GetOrganizationMembers(ctx, realm, orgID)
+	if err != nil {
+		return err
+	}
+
+	current := usernameSet(members)
+
+	seen := make(map[string]bool, len(o.Members))
+
+	for _, username := range o.Members {
+		if seen[username] {
+			continue
+		}
+		seen[username] = true
+
+		if current[username] {
+			slog.Debug("User already a member of organization", "realm", realm, "organization", o.Name, "username", username)
+			continue
+		}
+
+		users, err := p.client.GetUsers(ctx, realm, username)
+		if err != nil {
+			return err
+		}
+		if len(users) == 0 {
+			slog.Warn("User not found, skipping organization membership", "realm", realm, "organization", o.Name, "username", username)
+			continue
+		}
+
+		userID, ok := users[0]["id"].(string)
+		if !ok {
+			return fmt.Errorf("user %q: missing or invalid id in response", username)
+		}
+
+		slog.Info("Adding user to organization", "realm", realm, "organization", o.Name, "username", username)
+
+		if err := p.client.AddOrganizationMember(ctx, realm, orgID, userID); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}

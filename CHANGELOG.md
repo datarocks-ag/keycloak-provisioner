@@ -26,6 +26,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   clients, so a client can reference a scope defined in the same config.
   The `type` field (`default`, `optional`, or `none`) assigns the scope
   at realm level; assignment is additive and never removed.
+- Organizations: an `organizations` list on any realm, with `alias`,
+  `description`, `redirectUrl`, multivalued `attributes`, `domains`
+  (each with an optional `verified` flag), and `members` given as
+  usernames. Organizations are provisioned last so members resolve to
+  users created in the same run. Membership is additive; an unresolvable
+  username is logged as a warning and skipped. Declaring organizations
+  without `organizationsEnabled: true` is rejected at config load time.
+  Requires Keycloak 26+ for organizations themselves, and Keycloak 26.6+
+  for the organization groups below, which is the version the
+  integration tests and compose stack now target. Linking identity
+  providers to organizations is not supported.
+- Organization groups: a `groups` tree on any organization, with
+  multivalued `attributes`, additive `members`, and nested `subGroups`.
+  These are organization-scoped and separate from realm groups — they do
+  not appear under the realm's groups, and Keycloak refuses to manage
+  them through the normal group API. They support no role mappings,
+  since Keycloak exposes no role-mapping endpoint for them, and a member
+  must already belong to the organization or it is logged as a warning
+  and skipped.
 
 ### Fixed
 

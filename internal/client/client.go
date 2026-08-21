@@ -1078,3 +1078,217 @@ func (c *Client) AddClientOptionalScope(ctx context.Context, realm, clientUUID, 
 	path := "/admin/realms/" + url.PathEscape(realm) + "/clients/" + url.PathEscape(clientUUID) + "/optional-client-scopes/" + url.PathEscape(scopeID)
 	return c.putClientScopeAssignment(ctx, path)
 }
+
+// GetOrganizations returns organizations in the realm matching the given name
+// (exact match). Requires Keycloak 26+ with organizations enabled on the realm.
+func (c *Client) GetOrganizations(ctx context.Context, realm, search string) ([]map[string]any, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/organizations?search=" + url.QueryEscape(search) + "&exact=true"
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding organizations: %w", err)
+	}
+	return result, nil
+}
+
+// CreateOrganization creates a new organization in the realm.
+// Returns the UUID of the newly created organization, extracted from the
+// Location header.
+func (c *Client) CreateOrganization(ctx context.Context, realm string, body map[string]any) (string, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/organizations"
+	resp, err := c.doRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		return "", readError(resp)
+	}
+	return parseLocationID(resp, "creating organization")
+}
+
+// UpdateOrganization updates an organization by ID.
+func (c *Client) UpdateOrganization(ctx context.Context, realm, orgID string, body map[string]any) error {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/organizations/" + url.PathEscape(orgID)
+	resp, err := c.doRequest(ctx, http.MethodPut, path, body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return readError(resp)
+	}
+	return nil
+}
+
+// GetOrganizationMembers returns the members of an organization.
+func (c *Client) GetOrganizationMembers(ctx context.Context, realm, orgID string) ([]map[string]any, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/organizations/" + url.PathEscape(orgID) + "/members"
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding organization members: %w", err)
+	}
+	return result, nil
+}
+
+// AddOrganizationMember adds an existing realm user to an organization.
+//
+// Unlike every other endpoint here, this one takes the user ID as a bare JSON
+// string rather than an object, which is what Keycloak's addMember expects.
+func (c *Client) AddOrganizationMember(ctx context.Context, realm, orgID, userID string) error {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/organizations/" + url.PathEscape(orgID) + "/members"
+	resp, err := c.doRequest(ctx, http.MethodPost, path, userID)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusNoContent {
+		return readError(resp)
+	}
+	return nil
+}
+
+// GetOrganizationGroups returns the top-level groups of an organization.
+//
+// Organization groups live in a namespace of their own: they do not appear
+// under the realm's groups, and Keycloak refuses to manage them through the
+// normal group API. The returned entries never populate "subGroups" — use
+// GetOrganizationSubGroups to descend.
+func (c *Client) GetOrganizationGroups(ctx context.Context, realm, orgID string) ([]map[string]any, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/organizations/" + url.PathEscape(orgID) + "/groups"
+	return c.listOrganizationGroups(ctx, path)
+}
+
+// GetOrganizationSubGroups returns the direct children of an organization group.
+func (c *Client) GetOrganizationSubGroups(ctx context.Context, realm, orgID, groupID string) ([]map[string]any, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/organizations/" + url.PathEscape(orgID) +
+		"/groups/" + url.PathEscape(groupID) + "/children"
+	return c.listOrganizationGroups(ctx, path)
+}
+
+func (c *Client) listOrganizationGroups(ctx context.Context, path string) ([]map[string]any, error) {
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding organization groups: %w", err)
+	}
+	return result, nil
+}
+
+// CreateOrganizationGroup creates a top-level group in an organization.
+// Returns the UUID from the Location header. Keycloak rejects a duplicate name
+// with 409, so callers must check for an existing group first.
+func (c *Client) CreateOrganizationGroup(ctx context.Context, realm, orgID string, body map[string]any) (string, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/organizations/" + url.PathEscape(orgID) + "/groups"
+	resp, err := c.doRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		return "", readError(resp)
+	}
+	return parseLocationID(resp, "creating organization group")
+}
+
+// CreateOrganizationSubGroup creates a group nested under an organization group.
+func (c *Client) CreateOrganizationSubGroup(ctx context.Context, realm, orgID, parentID string, body map[string]any) (string, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/organizations/" + url.PathEscape(orgID) +
+		"/groups/" + url.PathEscape(parentID) + "/children"
+	resp, err := c.doRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		return "", readError(resp)
+	}
+	return parseLocationID(resp, "creating organization subgroup")
+}
+
+// UpdateOrganizationGroup updates an organization group by ID.
+func (c *Client) UpdateOrganizationGroup(ctx context.Context, realm, orgID, groupID string, body map[string]any) error {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/organizations/" + url.PathEscape(orgID) +
+		"/groups/" + url.PathEscape(groupID)
+	resp, err := c.doRequest(ctx, http.MethodPut, path, body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return readError(resp)
+	}
+	return nil
+}
+
+// GetOrganizationGroupMembers returns the members of an organization group.
+func (c *Client) GetOrganizationGroupMembers(ctx context.Context, realm, orgID, groupID string) ([]map[string]any, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/organizations/" + url.PathEscape(orgID) +
+		"/groups/" + url.PathEscape(groupID) + "/members"
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding organization group members: %w", err)
+	}
+	return result, nil
+}
+
+// AddOrganizationGroupMember adds a user to an organization group. The user must
+// already be a member of the organization; Keycloak answers 400 otherwise.
+func (c *Client) AddOrganizationGroupMember(ctx context.Context, realm, orgID, groupID, userID string) error {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/organizations/" + url.PathEscape(orgID) +
+		"/groups/" + url.PathEscape(groupID) + "/members/" + url.PathEscape(userID)
+	resp, err := c.doRequest(ctx, http.MethodPut, path, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusCreated {
+		return readError(resp)
+	}
+	return nil
+}
