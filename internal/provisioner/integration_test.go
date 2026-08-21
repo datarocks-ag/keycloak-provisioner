@@ -1424,3 +1424,161 @@ realms:
 		t.Errorf("configured attribute missing, got %v", got)
 	}
 }
+
+func TestIntegrationClientScopes(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	configYAML := `
+realms:
+  - realm: "scope-realm"
+    enabled: true
+    clientScopes:
+      - name: "orders:read"
+        description: "Read orders"
+        type: "optional"
+        attributes:
+          "include.in.token.scope": "true"
+          "display.on.consent.screen": "false"
+        protocolMappers:
+          - name: "orders-audience"
+            protocol: "openid-connect"
+            protocolMapper: "oidc-audience-mapper"
+            config:
+              "included.client.audience": "orders-api"
+              "access.token.claim": "true"
+    clients:
+      - clientId: "orders-app"
+        enabled: true
+        optionalClientScopes:
+          - "orders:read"
+`
+	cfgPath := writeTestConfig(t, configYAML)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	scopes, err := kc.GetClientScopes(ctx, "scope-realm")
+	if err != nil {
+		t.Fatalf("getting client scopes: %v", err)
+	}
+
+	var scopeID string
+	for _, s := range scopes {
+		if s["name"] == "orders:read" {
+			scopeID, _ = s["id"].(string)
+		}
+	}
+	if scopeID == "" {
+		t.Fatal("client scope orders:read was not created")
+	}
+
+	mappers, err := kc.GetClientScopeProtocolMappers(ctx, "scope-realm", scopeID)
+	if err != nil {
+		t.Fatalf("getting scope protocol mappers: %v", err)
+	}
+	if len(mappers) != 1 || mappers[0]["name"] != "orders-audience" {
+		t.Errorf("unexpected scope protocol mappers: %v", mappers)
+	}
+
+	realmOptional, err := kc.GetRealmOptionalClientScopes(ctx, "scope-realm")
+	if err != nil {
+		t.Fatalf("getting realm optional scopes: %v", err)
+	}
+	if !containsScopeNamed(realmOptional, "orders:read") {
+		t.Errorf("scope was not assigned to realm optionals: %v", realmOptional)
+	}
+
+	clients, err := kc.GetClients(ctx, "scope-realm", "orders-app")
+	if err != nil || len(clients) == 0 {
+		t.Fatalf("getting client: %v", err)
+	}
+	uuid, _ := clients[0]["id"].(string)
+
+	clientOptional, err := kc.GetClientOptionalScopes(ctx, "scope-realm", uuid)
+	if err != nil {
+		t.Fatalf("getting client optional scopes: %v", err)
+	}
+	if !containsScopeNamed(clientOptional, "orders:read") {
+		t.Errorf("scope was not assigned to the client: %v", clientOptional)
+	}
+}
+
+// TestIntegrationClientScopeAssignmentOnUpdate pins the behaviour that motivated
+// explicit scope assignment: Keycloak honours the inline defaultClientScopes
+// field of the client representation only when the client is created, so adding
+// a scope to an existing client's config must go through the dedicated
+// assignment endpoint to take effect.
+func TestIntegrationClientScopeAssignmentOnUpdate(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	before := `
+realms:
+  - realm: "scope-update-realm"
+    enabled: true
+    clientScopes:
+      - name: "late:scope"
+    clients:
+      - clientId: "late-app"
+        enabled: true
+`
+	after := `
+realms:
+  - realm: "scope-update-realm"
+    enabled: true
+    clientScopes:
+      - name: "late:scope"
+    clients:
+      - clientId: "late-app"
+        enabled: true
+        defaultClientScopes:
+          - "late:scope"
+`
+	ctx := context.Background()
+
+	cfg, err := config.Load(writeTestConfig(t, before))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+
+	cfg, err = config.Load(writeTestConfig(t, after))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+
+	clients, err := kc.GetClients(ctx, "scope-update-realm", "late-app")
+	if err != nil || len(clients) == 0 {
+		t.Fatalf("getting client: %v", err)
+	}
+	uuid, _ := clients[0]["id"].(string)
+
+	assigned, err := kc.GetClientDefaultScopes(ctx, "scope-update-realm", uuid)
+	if err != nil {
+		t.Fatalf("getting client default scopes: %v", err)
+	}
+	if !containsScopeNamed(assigned, "late:scope") {
+		t.Errorf("scope added to an existing client was not assigned: %v", assigned)
+	}
+}
+
+func containsScopeNamed(scopes []map[string]any, name string) bool {
+	for _, s := range scopes {
+		if s["name"] == name {
+			return true
+		}
+	}
+	return false
+}

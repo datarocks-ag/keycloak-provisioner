@@ -13,6 +13,7 @@ Release notes are maintained in [CHANGELOG.md](CHANGELOG.md).
 - Master realm configuration (SSL, users) without full provisioning
 - `sslRequired` setting on any realm (`external`, `all`, `none`)
 - Realm attributes, merged over Keycloak's current values so unmanaged keys are never dropped
+- Client scopes as a first-class resource, with their own protocol mappers and realm-level assignment
 - Step-up authentication support via `acrLoaMap` on realms and clients (`acr.loa.map`)
 - User management with password setting, realm/client role assignment, and group membership
 - Service account role mapping for machine-to-machine clients
@@ -92,18 +93,23 @@ In dry-run mode, every mutating call logs a `DRY-RUN:` message and is skipped. R
 1. **Master realm** (if configured) — update `sslRequired`, provision users
 2. For each realm:
    1. **Realm** — created or updated
-   2. **Clients** — created or updated (matched by `clientId`)
+   2. **Client scopes** — created or updated (matched by `name`)
+      - **Protocol mappers** — created or updated (matched by `name`)
+      - **Realm-level assignment** — added if `type` is `default` or `optional` (additive)
+   3. **Clients** — created or updated (matched by `clientId`)
       - **Protocol mappers** — created or updated (matched by `name`)
       - **Client roles** — created or updated
-   3. **Realm roles** — created or updated
-   4. **Service account roles** — assigned (additive, after roles exist)
-   5. **Groups** — created or updated (matched by `name`)
+      - **Client scope assignment** — configured default/optional scopes attached (additive)
+   4. **Realm roles** — created or updated
+   5. **Service account roles** — assigned (additive, after roles exist)
+   6. **Groups** — created or updated (matched by `name`)
       - **Attributes** — set from config
       - **Realm/client role assignments** — granted if not already mapped (additive)
       - **Subgroups** — created or updated recursively
-   6. **Users** — created or updated, passwords set, roles assigned, group memberships added (additive)
+   7. **Users** — created or updated, passwords set, roles assigned, group memberships added (additive)
 
-Groups run after roles so their realm/client role assignments resolve to
+Client scopes run before clients so a client can reference a scope defined in
+the same config. Groups run after roles so their realm/client role assignments resolve to
 roles created earlier in the same run, and before users so group memberships
 resolve to groups defined in the same config. Role assignments and group
 memberships are additive: the provisioner grants any configured role or
@@ -291,6 +297,40 @@ Requirements:
 Under the hood this sets the `standard.token.exchange.enabled` client attribute. Setting the typed field takes precedence over the same key set manually in `attributes`.
 
 Setting `standardTokenExchangeEnabled: false` explicitly disables the feature — the attribute is written as `false`, correcting drift if it was enabled out-of-band. Omitting the field leaves the attribute unmanaged (existing values in Keycloak are left untouched).
+
+## Client Scopes
+
+Client scopes are defined per realm under `clientScopes` and provisioned before clients, so a client can reference a scope declared in the same config.
+
+```yaml
+realms:
+  - realm: "my-realm"
+    clientScopes:
+      - name: "orders:read"
+        description: "Read access to orders"
+        protocol: "openid-connect"   # default when omitted
+        type: "optional"             # "default", "optional", or "none" (default)
+        attributes:
+          "include.in.token.scope": "true"
+          "display.on.consent.screen": "false"
+        protocolMappers:
+          - name: "orders-audience"
+            protocol: "openid-connect"
+            protocolMapper: "oidc-audience-mapper"
+            config:
+              "included.client.audience": "orders-api"
+
+    clients:
+      - clientId: "orders-app"
+        optionalClientScopes:
+          - "orders:read"
+```
+
+`type` controls realm-level assignment: `default` adds the scope to every newly created client, `optional` makes it requestable through the `scope` parameter, and `none` (the default) assigns it nowhere. Realm-level assignment is additive — changing a scope's `type` adds the new assignment but does not remove the old one.
+
+Scopes are matched by `name`. Protocol mappers on a scope follow the same rules as protocol mappers on a client.
+
+`defaultClientScopes` and `optionalClientScopes` on a client attach existing scopes to that client. Assignment is additive: configured scopes that are not yet attached are added, and nothing is ever detached. A referenced scope that does not exist is logged as a warning and skipped.
 
 ## Realm Attributes
 

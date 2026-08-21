@@ -31,6 +31,24 @@ type KeycloakAPI interface {
 	CreateProtocolMapper(ctx context.Context, realm, clientUUID string, body map[string]any) error
 	UpdateProtocolMapper(ctx context.Context, realm, clientUUID, mapperID string, body map[string]any) error
 
+	// Client scopes
+	GetClientScopes(ctx context.Context, realm string) ([]map[string]any, error)
+	CreateClientScope(ctx context.Context, realm string, body map[string]any) (string, error)
+	UpdateClientScope(ctx context.Context, realm, scopeID string, body map[string]any) error
+	GetClientScopeProtocolMappers(ctx context.Context, realm, scopeID string) ([]map[string]any, error)
+	CreateClientScopeProtocolMapper(ctx context.Context, realm, scopeID string, body map[string]any) error
+	UpdateClientScopeProtocolMapper(ctx context.Context, realm, scopeID, mapperID string, body map[string]any) error
+
+	// Client scope assignment
+	GetRealmDefaultClientScopes(ctx context.Context, realm string) ([]map[string]any, error)
+	AddRealmDefaultClientScope(ctx context.Context, realm, scopeID string) error
+	GetRealmOptionalClientScopes(ctx context.Context, realm string) ([]map[string]any, error)
+	AddRealmOptionalClientScope(ctx context.Context, realm, scopeID string) error
+	GetClientDefaultScopes(ctx context.Context, realm, clientUUID string) ([]map[string]any, error)
+	AddClientDefaultScope(ctx context.Context, realm, clientUUID, scopeID string) error
+	GetClientOptionalScopes(ctx context.Context, realm, clientUUID string) ([]map[string]any, error)
+	AddClientOptionalScope(ctx context.Context, realm, clientUUID, scopeID string) error
+
 	// Users
 	GetUsers(ctx context.Context, realm, username string) ([]map[string]any, error)
 	CreateUser(ctx context.Context, realm string, body map[string]any) (string, error)

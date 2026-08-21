@@ -20,9 +20,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   field wins over the same key set manually in `attributes`.
 - `organizationsEnabled` on realms, toggling Keycloak Organizations
   (Keycloak 26+).
+- Client scopes as a first-class resource: a `clientScopes` list on any
+  realm, with `description`, `protocol`, `attributes`, and their own
+  `protocolMappers`. Scopes are matched by name and provisioned before
+  clients, so a client can reference a scope defined in the same config.
+  The `type` field (`default`, `optional`, or `none`) assigns the scope
+  at realm level; assignment is additive and never removed.
 
 ### Fixed
 
+- A client scope added to an existing client's `defaultClientScopes` or
+  `optionalClientScopes` is now actually attached. Keycloak honours those
+  inline fields only when a client is created, so the assignment was
+  silently dropped on every subsequent run. The provisioner now attaches
+  scopes through the dedicated assignment endpoints, additively — a
+  referenced scope that does not exist is logged as a warning and
+  skipped.
 - Client attributes are no longer replaced on update. Keycloak replaces
   the whole attribute map when a client is updated, so a run would drop
   any attribute not declared in the config — including attributes set

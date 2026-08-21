@@ -73,11 +73,37 @@ type Realm struct {
 	// authentication. It is marshalled into the realm's acr.loa.map attribute
 	// and wins over an acr.loa.map entry supplied through Attributes.
 	AcrLoaMap map[string]int `yaml:"acrLoaMap"`
-	Clients   []Client       `yaml:"clients"`
-	Roles     []RealmRole    `yaml:"roles"`
-	Users     []User         `yaml:"users"`
-	Groups    []Group        `yaml:"groups"`
-	Strategy  string         `yaml:"strategy"`
+	// ClientScopes are provisioned before clients, so a client may reference a
+	// scope defined in the same config.
+	ClientScopes []ClientScope `yaml:"clientScopes"`
+	Clients      []Client      `yaml:"clients"`
+	Roles        []RealmRole   `yaml:"roles"`
+	Users        []User        `yaml:"users"`
+	Groups       []Group       `yaml:"groups"`
+	Strategy     string        `yaml:"strategy"`
+}
+
+// validClientScopeTypes is the allowlist of realm-level client scope types.
+var validClientScopeTypes = map[string]bool{
+	"":         true, // not assigned at realm level
+	"none":     true, // explicit form of the above
+	"default":  true, // assigned to every new client
+	"optional": true, // requestable via the scope parameter
+}
+
+// ClientScope defines a Keycloak client scope within a realm.
+type ClientScope struct {
+	Name        string `yaml:"name"`
+	Description string `yaml:"description"`
+	// Protocol defaults to "openid-connect" when empty.
+	Protocol string `yaml:"protocol"`
+	// Type controls realm-level assignment: "default" adds the scope to every
+	// newly created client, "optional" makes it requestable through the scope
+	// parameter, and "none" (the default) assigns it nowhere. Realm-level
+	// assignment is additive and never removed.
+	Type            string            `yaml:"type"`
+	Attributes      map[string]string `yaml:"attributes"`
+	ProtocolMappers []ProtocolMapper  `yaml:"protocolMappers"`
 }
 
 // Client defines a Keycloak client to provision within a realm.
@@ -226,6 +252,20 @@ func expandUsers(users []User) {
 	}
 }
 
+// expandProtocolMappers expands env vars in a protocol mapper list, which is
+// shared between clients and client scopes.
+func expandProtocolMappers(mappers []ProtocolMapper) {
+	for i := range mappers {
+		pm := &mappers[i]
+		pm.Name = expandEnvVars(pm.Name)
+		pm.Protocol = expandEnvVars(pm.Protocol)
+		pm.ProtocolMapper = expandEnvVars(pm.ProtocolMapper)
+		for ck, cv := range pm.Config {
+			pm.Config[ck] = expandEnvVars(cv)
+		}
+	}
+}
+
 // expandConfig walks the config and expands env vars in string fields.
 // normalizeSslRequired lowercases the sslRequired value to match Keycloak's API.
 func normalizeSslRequired(value string) string {
@@ -261,6 +301,15 @@ func expandConfig(cfg *Config) {
 		r.LoginTheme = expandEnvVars(r.LoginTheme)
 		r.Attributes = expandStringMap(r.Attributes)
 
+		for j := range r.ClientScopes {
+			cs := &r.ClientScopes[j]
+			cs.Name = expandEnvVars(cs.Name)
+			cs.Description = expandEnvVars(cs.Description)
+			cs.Protocol = expandEnvVars(cs.Protocol)
+			cs.Attributes = expandStringMap(cs.Attributes)
+			expandProtocolMappers(cs.ProtocolMappers)
+		}
+
 		for j := range r.Clients {
 			c := &r.Clients[j]
 			c.ClientID = expandEnvVars(c.ClientID)
@@ -283,15 +332,7 @@ func expandConfig(cfg *Config) {
 				c.OptionalClientScopes[k] = expandEnvVars(c.OptionalClientScopes[k])
 			}
 			c.Attributes = expandStringMap(c.Attributes)
-			for k := range c.ProtocolMappers {
-				pm := &c.ProtocolMappers[k]
-				pm.Name = expandEnvVars(pm.Name)
-				pm.Protocol = expandEnvVars(pm.Protocol)
-				pm.ProtocolMapper = expandEnvVars(pm.ProtocolMapper)
-				for ck, cv := range pm.Config {
-					pm.Config[ck] = expandEnvVars(cv)
-				}
-			}
+			expandProtocolMappers(c.ProtocolMappers)
 			for k := range c.ClientRoles {
 				c.ClientRoles[k].Name = expandEnvVars(c.ClientRoles[k].Name)
 				c.ClientRoles[k].Description = expandEnvVars(c.ClientRoles[k].Description)
@@ -492,6 +533,10 @@ func validate(cfg *Config) error {
 			return err
 		}
 
+		if err := validateClientScopes(i, r.ClientScopes); err != nil {
+			return err
+		}
+
 		if err := validateClients(i, r.Clients); err != nil {
 			return err
 		}
@@ -505,6 +550,46 @@ func validate(cfg *Config) error {
 		}
 
 		if err := validateGroups(fmt.Sprintf("realms[%d].groups", i), r.Groups); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func validateClientScopes(realmIdx int, scopes []ClientScope) error {
+	names := make(map[string]bool)
+
+	for i, cs := range scopes {
+		prefix := fmt.Sprintf("realms[%d].clientScopes[%d]", realmIdx, i)
+
+		if cs.Name == "" {
+			return fmt.Errorf("%s.name: is required", prefix)
+		}
+		if containsNullByte(cs.Name) {
+			return fmt.Errorf("%s.name: contains null byte", prefix)
+		}
+		if names[cs.Name] {
+			return fmt.Errorf("%s.name: duplicate client scope name %q", prefix, cs.Name)
+		}
+		names[cs.Name] = true
+
+		if !validClientScopeTypes[cs.Type] {
+			return fmt.Errorf("%s.type: invalid value %q (must be \"default\", \"optional\", or \"none\")", prefix, cs.Type)
+		}
+
+		if err := scanNullBytes(map[string]string{
+			prefix + ".description": cs.Description,
+			prefix + ".protocol":    cs.Protocol,
+		}); err != nil {
+			return err
+		}
+
+		if err := validateAttributes(prefix+".attributes", cs.Attributes); err != nil {
+			return err
+		}
+
+		if err := validateProtocolMappers(prefix, cs.ProtocolMappers); err != nil {
 			return err
 		}
 	}

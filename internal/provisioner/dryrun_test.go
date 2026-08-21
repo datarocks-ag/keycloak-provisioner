@@ -25,6 +25,13 @@ type fakeAPI struct {
 	groupRealmRoleMaps  map[string][]map[string]any // key: realm/groupID
 	groupClientRoleMaps map[string][]map[string]any // key: realm/groupID/clientUUID
 
+	clientScopes        map[string][]map[string]any // key: realm
+	scopeMappers        map[string][]map[string]any // key: realm/scopeID
+	realmDefaultScopes  map[string][]map[string]any // key: realm
+	realmOptionalScopes map[string][]map[string]any // key: realm
+	clientDefaultScopes map[string][]map[string]any // key: realm/clientUUID
+	clientOptionalScope map[string][]map[string]any // key: realm/clientUUID
+
 	createCalls atomicCounter
 	updateCalls atomicCounter
 }
@@ -51,6 +58,13 @@ func newFakeAPI() *fakeAPI {
 		subGroupsByParent:   make(map[string][]map[string]any),
 		groupRealmRoleMaps:  make(map[string][]map[string]any),
 		groupClientRoleMaps: make(map[string][]map[string]any),
+
+		clientScopes:        make(map[string][]map[string]any),
+		scopeMappers:        make(map[string][]map[string]any),
+		realmDefaultScopes:  make(map[string][]map[string]any),
+		realmOptionalScopes: make(map[string][]map[string]any),
+		clientDefaultScopes: make(map[string][]map[string]any),
+		clientOptionalScope: make(map[string][]map[string]any),
 	}
 }
 
@@ -437,5 +451,192 @@ func TestDryRunServiceAccountUserForSyntheticClient(t *testing.T) {
 	sa2, _ := d.GetServiceAccountUser(ctx, "r", uuid)
 	if sa2["id"] != id {
 		t.Errorf("synthetic SA user UUID not stable: %q vs %q", id, sa2["id"])
+	}
+}
+
+func (f *fakeAPI) GetClientScopes(_ context.Context, realm string) ([]map[string]any, error) {
+	return f.clientScopes[realm], nil
+}
+
+func (f *fakeAPI) CreateClientScope(context.Context, string, map[string]any) (string, error) {
+	f.createCalls.inc()
+	return "real-scope-uuid", nil
+}
+
+func (f *fakeAPI) UpdateClientScope(context.Context, string, string, map[string]any) error {
+	f.updateCalls.inc()
+	return nil
+}
+
+func (f *fakeAPI) GetClientScopeProtocolMappers(_ context.Context, realm, scopeID string) ([]map[string]any, error) {
+	return f.scopeMappers[realm+"/"+scopeID], nil
+}
+
+func (f *fakeAPI) CreateClientScopeProtocolMapper(context.Context, string, string, map[string]any) error {
+	f.createCalls.inc()
+	return nil
+}
+
+func (f *fakeAPI) UpdateClientScopeProtocolMapper(context.Context, string, string, string, map[string]any) error {
+	f.updateCalls.inc()
+	return nil
+}
+
+func (f *fakeAPI) GetRealmDefaultClientScopes(_ context.Context, realm string) ([]map[string]any, error) {
+	return f.realmDefaultScopes[realm], nil
+}
+
+func (f *fakeAPI) AddRealmDefaultClientScope(context.Context, string, string) error {
+	f.updateCalls.inc()
+	return nil
+}
+
+func (f *fakeAPI) GetRealmOptionalClientScopes(_ context.Context, realm string) ([]map[string]any, error) {
+	return f.realmOptionalScopes[realm], nil
+}
+
+func (f *fakeAPI) AddRealmOptionalClientScope(context.Context, string, string) error {
+	f.updateCalls.inc()
+	return nil
+}
+
+func (f *fakeAPI) GetClientDefaultScopes(_ context.Context, realm, clientUUID string) ([]map[string]any, error) {
+	return f.clientDefaultScopes[realm+"/"+clientUUID], nil
+}
+
+func (f *fakeAPI) AddClientDefaultScope(context.Context, string, string, string) error {
+	f.updateCalls.inc()
+	return nil
+}
+
+func (f *fakeAPI) GetClientOptionalScopes(_ context.Context, realm, clientUUID string) ([]map[string]any, error) {
+	return f.clientOptionalScope[realm+"/"+clientUUID], nil
+}
+
+func (f *fakeAPI) AddClientOptionalScope(context.Context, string, string, string) error {
+	f.updateCalls.inc()
+	return nil
+}
+
+func TestDryRunSkipsClientScopeMutations(t *testing.T) {
+	inner := newFakeAPI()
+	d := NewDryRunAdapter(inner)
+	ctx := context.Background()
+
+	scopeID, err := d.CreateClientScope(ctx, "r", map[string]any{"name": "orders:read"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !isSyntheticID(scopeID) {
+		t.Errorf("expected synthetic scope id, got %q", scopeID)
+	}
+	if err := d.UpdateClientScope(ctx, "r", scopeID, map[string]any{"name": "orders:read"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.CreateClientScopeProtocolMapper(ctx, "r", scopeID, map[string]any{"name": "m"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.UpdateClientScopeProtocolMapper(ctx, "r", scopeID, "mid", map[string]any{"name": "m"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.AddRealmDefaultClientScope(ctx, "r", scopeID); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.AddRealmOptionalClientScope(ctx, "r", scopeID); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.AddClientDefaultScope(ctx, "r", "uuid", scopeID); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.AddClientOptionalScope(ctx, "r", "uuid", scopeID); err != nil {
+		t.Fatal(err)
+	}
+
+	if inner.createCalls.n != 0 || inner.updateCalls.n != 0 {
+		t.Errorf("inner API was called: creates=%d updates=%d", inner.createCalls.n, inner.updateCalls.n)
+	}
+}
+
+func TestDryRunSyntheticClientScopeShortCircuitsMappers(t *testing.T) {
+	inner := newFakeAPI()
+	inner.scopeMappers["r/real-scope"] = []map[string]any{{"name": "existing"}}
+	d := NewDryRunAdapter(inner)
+	ctx := context.Background()
+
+	scopeID, err := d.CreateClientScope(ctx, "r", map[string]any{"name": "s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mappers, err := d.GetClientScopeProtocolMappers(ctx, "r", scopeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mappers != nil {
+		t.Errorf("expected nil for synthetic scope, got %v", mappers)
+	}
+
+	mappers, err = d.GetClientScopeProtocolMappers(ctx, "r", "real-scope")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mappers) != 1 {
+		t.Errorf("expected pass-through for real scope, got %v", mappers)
+	}
+}
+
+// TestDryRunCreatedClientScopeIsDiscoverable pins the fix for the dry-run
+// reporting gap: a scope created earlier in the same dry-run must be visible to
+// the later assignment step, which looks scopes up by name.
+func TestDryRunCreatedClientScopeIsDiscoverable(t *testing.T) {
+	inner := newFakeAPI()
+	inner.clientScopes["r"] = []map[string]any{{"id": "real-1", "name": "profile"}}
+	d := NewDryRunAdapter(inner)
+	ctx := context.Background()
+
+	scopeID, err := d.CreateClientScope(ctx, "r", map[string]any{"name": "orders:read"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	scopes, err := d.GetClientScopes(ctx, "r")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	byName := map[string]string{}
+	for _, s := range scopes {
+		name, _ := s["name"].(string)
+		id, _ := s["id"].(string)
+		byName[name] = id
+	}
+
+	if byName["profile"] != "real-1" {
+		t.Errorf("real scope missing from dry-run listing: %v", scopes)
+	}
+	if byName["orders:read"] != scopeID {
+		t.Errorf("scope created in this dry-run is not discoverable: %v", scopes)
+	}
+}
+
+func TestDryRunCreatedClientScopeVisibleInSyntheticRealm(t *testing.T) {
+	inner := newFakeAPI()
+	d := NewDryRunAdapter(inner)
+	ctx := context.Background()
+
+	if err := d.CreateRealm(ctx, map[string]any{"realm": "r"}); err != nil {
+		t.Fatal(err)
+	}
+	scopeID, err := d.CreateClientScope(ctx, "r", map[string]any{"name": "orders:read"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	scopes, err := d.GetClientScopes(ctx, "r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scopes) != 1 || scopes[0]["id"] != scopeID {
+		t.Errorf("expected the synthetic scope inside a would-be-created realm, got %v", scopes)
 	}
 }
