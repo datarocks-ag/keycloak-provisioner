@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_No unreleased changes._
+
+## [1.9.0] — 2026-08-22
+
+Closes the gaps that stopped a realm rebuilding from config alone: enrolling a
+TOTP credential and setting a user's required actions both needed an admin call
+by hand, so wiping a realm left any MFA setup unusable until someone re-ran one.
+
+Nothing written for 1.8.1 needs changing — every addition is a new optional
+field. Two things are worth knowing before using them:
+
+- **A seeded TOTP secret is not base32.** Keycloak uses the characters of
+  `secret` directly as the HMAC key rather than base32-decoding them, so an
+  authenticator app must be given `base32(secret)` — which is what Keycloak's
+  own QR code shows once the credential exists. Computing codes from the decoded
+  bytes produces codes Keycloak rejects, and the failure looks like bad seeding
+  rather than a bad client.
+- **`defaultAcrValues` supersedes writing `default.acr.values` by hand**, and
+  the README example for doing it by hand was wrong: Keycloak stores the values
+  as one `##`-separated string and rejects a JSON array. If you copied that
+  example, switch to the typed field.
+
+Neither changes the behaviour of an existing config, since both fields are new.
+
 ### Added
 
 - `requiredActions` on a user, listing what Keycloak makes them complete at
@@ -30,12 +54,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provider checks. Keycloak accepts an unknown action with `204` and then drops
   it silently, so a typo would look applied while the user is never asked to do
   anything.
-
-### Changed
-
-- Dry-run reports a credential-only user update as
-  `would seed user credentials`, naming each credential, rather than the generic
-  `would update user` it would otherwise share with every other user change.
 - `defaultAcrValues` on a client, the ACR values Keycloak applies when a request
   asks for none. It was already reachable through the generic `attributes` map,
   but the encoding is not what the field's shape suggests: Keycloak stores the
@@ -50,6 +68,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   The README example previously wrote that attribute as a JSON array, which
   Keycloak rejects. It now uses the typed field.
+
+### Changed
+
+- Dry-run reports a credential-only user update as
+  `would seed user credentials`, naming each credential, rather than the generic
+  `would update user` it would otherwise share with every other user change.
 
 ## [1.8.1] — 2026-08-22
 
@@ -572,7 +596,8 @@ Initial release.
   (testcontainers-based Keycloak), Trivy scan, GHCR publish, GoReleaser.
 - LICENSE.
 
-[Unreleased]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.8.1...HEAD
+[Unreleased]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.9.0...HEAD
+[1.9.0]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.8.1...v1.9.0
 [1.8.1]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.6.0...v1.7.0
