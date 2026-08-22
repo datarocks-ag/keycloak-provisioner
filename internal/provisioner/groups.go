@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"keycloak-provisioner/internal/client"
 	"keycloak-provisioner/internal/config"
 )
 
@@ -105,7 +106,7 @@ func (p *Provisioner) ensureGroupRealmRoles(ctx context.Context, realm, groupID 
 		return nil
 	}
 
-	existing, err := p.client.GetGroupRealmRoleMappings(ctx, realm, groupID)
+	existing, err := p.client.GetRealmRoleMappings(ctx, realm, client.RoleSubjectGroups, groupID)
 	if err != nil {
 		return err
 	}
@@ -130,7 +131,7 @@ func (p *Provisioner) ensureGroupRealmRoles(ctx context.Context, realm, groupID 
 		return nil
 	}
 	slog.Info("Granting realm roles to group", "realm", realm, "group", g.Name, "count", len(toAdd))
-	return p.client.AddGroupRealmRoleMappings(ctx, realm, groupID, toAdd)
+	return p.client.AddRealmRoleMappings(ctx, realm, client.RoleSubjectGroups, groupID, toAdd)
 }
 
 // ensureGroupClientRoles grants any configured client roles not already mapped to the group.
@@ -145,7 +146,7 @@ func (p *Provisioner) ensureGroupClientRoles(ctx context.Context, realm, groupID
 			return err
 		}
 
-		existing, err := p.client.GetGroupClientRoleMappings(ctx, realm, groupID, clientUUID)
+		existing, err := p.client.GetClientRoleMappings(ctx, realm, client.RoleSubjectGroups, groupID, clientUUID)
 		if err != nil {
 			return err
 		}
@@ -170,7 +171,7 @@ func (p *Provisioner) ensureGroupClientRoles(ctx context.Context, realm, groupID
 			continue
 		}
 		slog.Info("Granting client roles to group", "realm", realm, "group", g.Name, "client", clientID, "count", len(toAdd))
-		if err := p.client.AddGroupClientRoleMappings(ctx, realm, groupID, clientUUID, toAdd); err != nil {
+		if err := p.client.AddClientRoleMappings(ctx, realm, client.RoleSubjectGroups, groupID, clientUUID, toAdd); err != nil {
 			return err
 		}
 	}

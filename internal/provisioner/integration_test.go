@@ -315,7 +315,7 @@ realms:
 	}
 
 	// Verify realm role mapping
-	realmMappings, err := kc.GetGroupRealmRoleMappings(ctx, "test-realm", groupUUID)
+	realmMappings, err := kc.GetRealmRoleMappings(ctx, "test-realm", client.RoleSubjectGroups, groupUUID)
 	if err != nil {
 		t.Fatalf("getting group realm role mappings: %v", err)
 	}
@@ -331,7 +331,7 @@ realms:
 	}
 
 	// Verify client role mapping
-	clientMappings, err := kc.GetGroupClientRoleMappings(ctx, "test-realm", groupUUID, clientUUID)
+	clientMappings, err := kc.GetClientRoleMappings(ctx, "test-realm", client.RoleSubjectGroups, groupUUID, clientUUID)
 	if err != nil {
 		t.Fatalf("getting group client role mappings: %v", err)
 	}
@@ -447,7 +447,7 @@ realms:
 		t.Errorf("expected exactly 1 'idempotent-subgroup' after two runs, got %d", subCount)
 	}
 
-	mappings, err := kc.GetGroupRealmRoleMappings(ctx, "idempotent-realm", groupUUID)
+	mappings, err := kc.GetRealmRoleMappings(ctx, "idempotent-realm", client.RoleSubjectGroups, groupUUID)
 	if err != nil {
 		t.Fatalf("getting group realm role mappings: %v", err)
 	}

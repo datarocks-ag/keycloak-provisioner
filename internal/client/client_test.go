@@ -1020,7 +1020,7 @@ func TestGetUserRealmRoleMappings(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	result, err := c.GetUserRealmRoleMappings(context.Background(), "test", "user-uuid-1")
+	result, err := c.GetRealmRoleMappings(context.Background(), "test", RoleSubjectUsers, "user-uuid-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1038,7 +1038,7 @@ func TestAddUserRealmRoleMappings(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	err := c.AddUserRealmRoleMappings(context.Background(), "test", "user-uuid-1", []map[string]any{
+	err := c.AddRealmRoleMappings(context.Background(), "test", RoleSubjectUsers, "user-uuid-1", []map[string]any{
 		{"id": "role-1", "name": "admin"},
 	})
 	if err != nil {
@@ -1056,7 +1056,7 @@ func TestGetUserRealmRoleMappings_Error(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	_, err := c.GetUserRealmRoleMappings(context.Background(), "test", "user-uuid-1")
+	_, err := c.GetRealmRoleMappings(context.Background(), "test", RoleSubjectUsers, "user-uuid-1")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -1072,7 +1072,7 @@ func TestAddUserRealmRoleMappings_Error(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	err := c.AddUserRealmRoleMappings(context.Background(), "test", "user-uuid-1", []map[string]any{
+	err := c.AddRealmRoleMappings(context.Background(), "test", RoleSubjectUsers, "user-uuid-1", []map[string]any{
 		{"id": "role-1", "name": "admin"},
 	})
 	if err == nil {
@@ -1091,7 +1091,7 @@ func TestGetUserClientRoleMappings(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	result, err := c.GetUserClientRoleMappings(context.Background(), "test", "user-uuid-1", "client-uuid-1")
+	result, err := c.GetClientRoleMappings(context.Background(), "test", RoleSubjectUsers, "user-uuid-1", "client-uuid-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1109,7 +1109,7 @@ func TestAddUserClientRoleMappings(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	err := c.AddUserClientRoleMappings(context.Background(), "test", "user-uuid-1", "client-uuid-1", []map[string]any{
+	err := c.AddClientRoleMappings(context.Background(), "test", RoleSubjectUsers, "user-uuid-1", "client-uuid-1", []map[string]any{
 		{"id": "role-1", "name": "editor"},
 	})
 	if err != nil {
@@ -1127,7 +1127,7 @@ func TestGetUserClientRoleMappings_Error(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	_, err := c.GetUserClientRoleMappings(context.Background(), "test", "user-uuid-1", "client-uuid-1")
+	_, err := c.GetClientRoleMappings(context.Background(), "test", RoleSubjectUsers, "user-uuid-1", "client-uuid-1")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -1143,7 +1143,7 @@ func TestAddUserClientRoleMappings_Error(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	err := c.AddUserClientRoleMappings(context.Background(), "test", "user-uuid-1", "client-uuid-1", []map[string]any{
+	err := c.AddClientRoleMappings(context.Background(), "test", RoleSubjectUsers, "user-uuid-1", "client-uuid-1", []map[string]any{
 		{"id": "role-1", "name": "editor"},
 	})
 	if err == nil {
@@ -1577,7 +1577,7 @@ func TestGetGroupRealmRoleMappings(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	result, err := c.GetGroupRealmRoleMappings(context.Background(), "test", "g-1")
+	result, err := c.GetRealmRoleMappings(context.Background(), "test", RoleSubjectGroups, "g-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1598,7 +1598,7 @@ func TestAddGroupRealmRoleMappings_Success(t *testing.T) {
 
 	c := connectClient(t, server.URL)
 	roles := []map[string]any{{"id": "r-1", "name": "developer"}}
-	if err := c.AddGroupRealmRoleMappings(context.Background(), "test", "g-1", roles); err != nil {
+	if err := c.AddRealmRoleMappings(context.Background(), "test", RoleSubjectGroups, "g-1", roles); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(received) != 1 || received[0]["name"] != "developer" {
@@ -1616,7 +1616,7 @@ func TestAddGroupRealmRoleMappings_Error(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	err := c.AddGroupRealmRoleMappings(context.Background(), "test", "g-1", []map[string]any{{"id": "r-1"}})
+	err := c.AddRealmRoleMappings(context.Background(), "test", RoleSubjectGroups, "g-1", []map[string]any{{"id": "r-1"}})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -1634,7 +1634,7 @@ func TestGetGroupClientRoleMappings(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	result, err := c.GetGroupClientRoleMappings(context.Background(), "test", "g-1", "c-uuid")
+	result, err := c.GetClientRoleMappings(context.Background(), "test", RoleSubjectGroups, "g-1", "c-uuid")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1655,7 +1655,7 @@ func TestAddGroupClientRoleMappings_Success(t *testing.T) {
 
 	c := connectClient(t, server.URL)
 	roles := []map[string]any{{"id": "cr-1", "name": "admin"}}
-	if err := c.AddGroupClientRoleMappings(context.Background(), "test", "g-1", "c-uuid", roles); err != nil {
+	if err := c.AddClientRoleMappings(context.Background(), "test", RoleSubjectGroups, "g-1", "c-uuid", roles); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(received) != 1 || received[0]["name"] != "admin" {
@@ -1673,7 +1673,7 @@ func TestAddGroupClientRoleMappings_Error(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	err := c.AddGroupClientRoleMappings(context.Background(), "test", "g-1", "c-uuid", []map[string]any{{"id": "cr-1"}})
+	err := c.AddClientRoleMappings(context.Background(), "test", RoleSubjectGroups, "g-1", "c-uuid", []map[string]any{{"id": "cr-1"}})
 	if err == nil {
 		t.Fatal("expected error")
 	}

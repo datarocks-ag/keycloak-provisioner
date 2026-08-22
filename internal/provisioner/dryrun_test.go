@@ -39,7 +39,7 @@ func TestDryRunSkipsAllMutations(t *testing.T) {
 	if err := d.ResetUserPassword(ctx, "r", "uid", "pw", false); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.AddUserRealmRoleMappings(ctx, "r", "uid", nil); err != nil {
+	if err := d.AddRealmRoleMappings(ctx, "r", client.RoleSubjectUsers, "uid", nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -165,10 +165,10 @@ func TestDryRunSyntheticUserShortCircuitsRoleLookups(t *testing.T) {
 
 	uid, _ := d.CreateUser(ctx, "r", map[string]any{"username": "u"})
 
-	if mappings, _ := d.GetUserRealmRoleMappings(ctx, "r", uid); mappings != nil {
+	if mappings, _ := d.GetRealmRoleMappings(ctx, "r", client.RoleSubjectUsers, uid); mappings != nil {
 		t.Errorf("expected nil for synthetic user, got %v", mappings)
 	}
-	if mappings, _ := d.GetUserClientRoleMappings(ctx, "r", uid, "any"); mappings != nil {
+	if mappings, _ := d.GetClientRoleMappings(ctx, "r", client.RoleSubjectUsers, uid, "any"); mappings != nil {
 		t.Errorf("expected nil for synthetic user, got %v", mappings)
 	}
 }
@@ -182,7 +182,7 @@ func TestDryRunSyntheticClientShortCircuitsUserRoleMappings(t *testing.T) {
 
 	clientUUID, _ := d.CreateClient(ctx, "r", map[string]any{"clientId": "new-client"})
 
-	if mappings, _ := d.GetUserClientRoleMappings(ctx, "r", "real-user-uuid", clientUUID); mappings != nil {
+	if mappings, _ := d.GetClientRoleMappings(ctx, "r", client.RoleSubjectUsers, "real-user-uuid", clientUUID); mappings != nil {
 		t.Errorf("expected nil for synthetic client UUID, got %v", mappings)
 	}
 }

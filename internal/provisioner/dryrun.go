@@ -285,30 +285,6 @@ func (d *dryRunAPI) ResetUserPassword(_ context.Context, realm, userID string, _
 
 // Role mappings.
 
-func (d *dryRunAPI) GetUserRealmRoleMappings(ctx context.Context, realm, userID string) ([]map[string]any, error) {
-	if isSyntheticID(userID) || d.realmIsSynthetic(realm) {
-		return nil, nil
-	}
-	return d.inner.GetUserRealmRoleMappings(ctx, realm, userID)
-}
-
-func (d *dryRunAPI) AddUserRealmRoleMappings(_ context.Context, realm, userID string, roles []map[string]any) error {
-	slog.Info("DRY-RUN: would assign realm roles", "realm", realm, "userID", userID, "roles", roleNames(roles))
-	return nil
-}
-
-func (d *dryRunAPI) GetUserClientRoleMappings(ctx context.Context, realm, userID, clientUUID string) ([]map[string]any, error) {
-	if isSyntheticID(userID) || isSyntheticID(clientUUID) || d.realmIsSynthetic(realm) {
-		return nil, nil
-	}
-	return d.inner.GetUserClientRoleMappings(ctx, realm, userID, clientUUID)
-}
-
-func (d *dryRunAPI) AddUserClientRoleMappings(_ context.Context, realm, userID, clientUUID string, roles []map[string]any) error {
-	slog.Info("DRY-RUN: would assign client roles", "realm", realm, "userID", userID, "clientUUID", clientUUID, "roles", roleNames(roles))
-	return nil
-}
-
 // Group memberships.
 
 func (d *dryRunAPI) GetUserGroups(ctx context.Context, realm, userID string) ([]map[string]any, error) {
@@ -320,6 +296,36 @@ func (d *dryRunAPI) GetUserGroups(ctx context.Context, realm, userID string) ([]
 
 func (d *dryRunAPI) AddUserToGroup(_ context.Context, realm, userID, groupID string) error {
 	slog.Info("DRY-RUN: would add user to group", "realm", realm, "userID", userID, "groupID", groupID)
+	return nil
+}
+
+func (d *dryRunAPI) GetRealmRoleMappings(ctx context.Context, realm, subject, subjectID string) ([]map[string]any, error) {
+	if d.realmIsSynthetic(realm) || isSyntheticID(subjectID) {
+		return nil, nil
+	}
+
+	return d.inner.GetRealmRoleMappings(ctx, realm, subject, subjectID)
+}
+
+func (d *dryRunAPI) AddRealmRoleMappings(_ context.Context, realm, subject, subjectID string, roles []map[string]any) error {
+	slog.Info("DRY-RUN: would assign realm roles",
+		"realm", realm, "subject", subject, "subjectID", subjectID, "roles", roleNames(roles))
+
+	return nil
+}
+
+func (d *dryRunAPI) GetClientRoleMappings(ctx context.Context, realm, subject, subjectID, clientUUID string) ([]map[string]any, error) {
+	if d.realmIsSynthetic(realm) || isSyntheticID(subjectID) || isSyntheticID(clientUUID) {
+		return nil, nil
+	}
+
+	return d.inner.GetClientRoleMappings(ctx, realm, subject, subjectID, clientUUID)
+}
+
+func (d *dryRunAPI) AddClientRoleMappings(_ context.Context, realm, subject, subjectID, clientUUID string, roles []map[string]any) error {
+	slog.Info("DRY-RUN: would assign client roles",
+		"realm", realm, "subject", subject, "subjectID", subjectID, "clientUUID", clientUUID, "roles", roleNames(roles))
+
 	return nil
 }
 
@@ -383,30 +389,6 @@ func (d *dryRunAPI) CreateGroup(_ context.Context, realm, parentID string, body 
 
 func (d *dryRunAPI) UpdateGroup(_ context.Context, realm, id string, body map[string]any) error {
 	slog.Info("DRY-RUN: would update group", "realm", realm, "groupID", id, "group", body["name"])
-	return nil
-}
-
-func (d *dryRunAPI) GetGroupRealmRoleMappings(ctx context.Context, realm, groupID string) ([]map[string]any, error) {
-	if isSyntheticID(groupID) || d.realmIsSynthetic(realm) {
-		return nil, nil
-	}
-	return d.inner.GetGroupRealmRoleMappings(ctx, realm, groupID)
-}
-
-func (d *dryRunAPI) AddGroupRealmRoleMappings(_ context.Context, realm, groupID string, roles []map[string]any) error {
-	slog.Info("DRY-RUN: would assign realm roles to group", "realm", realm, "groupID", groupID, "roles", roleNames(roles))
-	return nil
-}
-
-func (d *dryRunAPI) GetGroupClientRoleMappings(ctx context.Context, realm, groupID, clientUUID string) ([]map[string]any, error) {
-	if isSyntheticID(groupID) || isSyntheticID(clientUUID) || d.realmIsSynthetic(realm) {
-		return nil, nil
-	}
-	return d.inner.GetGroupClientRoleMappings(ctx, realm, groupID, clientUUID)
-}
-
-func (d *dryRunAPI) AddGroupClientRoleMappings(_ context.Context, realm, groupID, clientUUID string, roles []map[string]any) error {
-	slog.Info("DRY-RUN: would assign client roles to group", "realm", realm, "groupID", groupID, "clientUUID", clientUUID, "roles", roleNames(roles))
 	return nil
 }
 

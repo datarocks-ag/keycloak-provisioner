@@ -91,12 +91,14 @@ type UserAPI interface {
 	ResetUserPassword(ctx context.Context, realm, userID, password string, temporary bool) error
 }
 
-// RoleMappingAPI covers granting roles to users and groups.
+// RoleMappingAPI covers granting roles to users and groups. Keycloak's endpoint
+// is the same shape for both, so subject selects which: client.RoleSubjectUsers
+// or client.RoleSubjectGroups.
 type RoleMappingAPI interface {
-	GetUserRealmRoleMappings(ctx context.Context, realm, userID string) ([]map[string]any, error)
-	AddUserRealmRoleMappings(ctx context.Context, realm, userID string, roles []map[string]any) error
-	GetUserClientRoleMappings(ctx context.Context, realm, userID, clientUUID string) ([]map[string]any, error)
-	AddUserClientRoleMappings(ctx context.Context, realm, userID, clientUUID string, roles []map[string]any) error
+	GetRealmRoleMappings(ctx context.Context, realm, subject, subjectID string) ([]map[string]any, error)
+	AddRealmRoleMappings(ctx context.Context, realm, subject, subjectID string, roles []map[string]any) error
+	GetClientRoleMappings(ctx context.Context, realm, subject, subjectID, clientUUID string) ([]map[string]any, error)
+	AddClientRoleMappings(ctx context.Context, realm, subject, subjectID, clientUUID string, roles []map[string]any) error
 }
 
 // GroupMembershipAPI covers a user's group memberships.
@@ -110,17 +112,14 @@ type ServiceAccountAPI interface {
 	GetServiceAccountUser(ctx context.Context, realm, clientUUID string) (map[string]any, error)
 }
 
-// GroupAPI covers groups, their subgroups and their role mappings.
+// GroupAPI covers groups and their subgroups. Their role mappings live in
+// RoleMappingAPI, which serves users and groups alike.
 type GroupAPI interface {
 	// GetGroups searches one level: parentID is "" for top-level groups.
 	GetGroups(ctx context.Context, realm, parentID, search string) ([]map[string]any, error)
 	// CreateGroup creates at one level: parentID is "" for a top-level group.
 	CreateGroup(ctx context.Context, realm, parentID string, body map[string]any) (string, error)
 	UpdateGroup(ctx context.Context, realm, id string, body map[string]any) error
-	GetGroupRealmRoleMappings(ctx context.Context, realm, groupID string) ([]map[string]any, error)
-	AddGroupRealmRoleMappings(ctx context.Context, realm, groupID string, roles []map[string]any) error
-	GetGroupClientRoleMappings(ctx context.Context, realm, groupID, clientUUID string) ([]map[string]any, error)
-	AddGroupClientRoleMappings(ctx context.Context, realm, groupID, clientUUID string, roles []map[string]any) error
 }
 
 // AuthenticationFlowAPI covers authentication flows, their executions and

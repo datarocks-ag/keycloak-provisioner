@@ -605,76 +605,6 @@ func (c *Client) ResetUserPassword(ctx context.Context, realm, userID, password 
 	return nil
 }
 
-// GetUserRealmRoleMappings returns the realm role mappings for a user.
-func (c *Client) GetUserRealmRoleMappings(ctx context.Context, realm, userID string) ([]map[string]any, error) {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/users/" + url.PathEscape(userID) + "/role-mappings/realm"
-	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, readError(resp)
-	}
-
-	var result []map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decoding realm role mappings: %w", err)
-	}
-	return result, nil
-}
-
-// AddUserRealmRoleMappings adds realm role mappings to a user.
-func (c *Client) AddUserRealmRoleMappings(ctx context.Context, realm, userID string, roles []map[string]any) error {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/users/" + url.PathEscape(userID) + "/role-mappings/realm"
-	resp, err := c.doRequest(ctx, http.MethodPost, path, roles)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNoContent {
-		return readError(resp)
-	}
-	return nil
-}
-
-// GetUserClientRoleMappings returns the client role mappings for a user.
-func (c *Client) GetUserClientRoleMappings(ctx context.Context, realm, userID, clientUUID string) ([]map[string]any, error) {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/users/" + url.PathEscape(userID) + "/role-mappings/clients/" + url.PathEscape(clientUUID)
-	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, readError(resp)
-	}
-
-	var result []map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decoding client role mappings: %w", err)
-	}
-	return result, nil
-}
-
-// AddUserClientRoleMappings adds client role mappings to a user.
-func (c *Client) AddUserClientRoleMappings(ctx context.Context, realm, userID, clientUUID string, roles []map[string]any) error {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/users/" + url.PathEscape(userID) + "/role-mappings/clients/" + url.PathEscape(clientUUID)
-	resp, err := c.doRequest(ctx, http.MethodPost, path, roles)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNoContent {
-		return readError(resp)
-	}
-	return nil
-}
-
 // GetUserGroups returns the groups the user is a direct member of.
 func (c *Client) GetUserGroups(ctx context.Context, realm, userID string) ([]map[string]any, error) {
 	path := "/admin/realms/" + url.PathEscape(realm) + "/users/" + url.PathEscape(userID) + "/groups"
@@ -709,6 +639,74 @@ func (c *Client) AddUserToGroup(ctx context.Context, realm, userID, groupID stri
 		return readError(resp)
 	}
 	return nil
+}
+
+// Role mapping subjects. Keycloak's role-mapping endpoint is the same shape for
+// both: /{users|groups}/{id}/role-mappings/...
+const (
+	RoleSubjectUsers  = "users"
+	RoleSubjectGroups = "groups"
+)
+
+func roleMappingPath(realm, subject, subjectID string) string {
+	return "/admin/realms/" + url.PathEscape(realm) + "/" + url.PathEscape(subject) +
+		"/" + url.PathEscape(subjectID) + "/role-mappings"
+}
+
+func (c *Client) getRoleMappings(ctx context.Context, path, what string) ([]map[string]any, error) {
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding %s: %w", what, err)
+	}
+	return result, nil
+}
+
+func (c *Client) addRoleMappings(ctx context.Context, path string, roles []map[string]any) error {
+	resp, err := c.doRequest(ctx, http.MethodPost, path, roles)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return readError(resp)
+	}
+	return nil
+}
+
+// GetRealmRoleMappings returns the realm roles mapped to a user or group.
+// subject is RoleSubjectUsers or RoleSubjectGroups.
+func (c *Client) GetRealmRoleMappings(ctx context.Context, realm, subject, subjectID string) ([]map[string]any, error) {
+	return c.getRoleMappings(ctx, roleMappingPath(realm, subject, subjectID)+"/realm", "realm role mappings")
+}
+
+// AddRealmRoleMappings grants realm roles to a user or group.
+func (c *Client) AddRealmRoleMappings(ctx context.Context, realm, subject, subjectID string, roles []map[string]any) error {
+	return c.addRoleMappings(ctx, roleMappingPath(realm, subject, subjectID)+"/realm", roles)
+}
+
+// GetClientRoleMappings returns the roles of one client mapped to a user or group.
+func (c *Client) GetClientRoleMappings(ctx context.Context, realm, subject, subjectID, clientUUID string) ([]map[string]any, error) {
+	path := roleMappingPath(realm, subject, subjectID) + "/clients/" + url.PathEscape(clientUUID)
+
+	return c.getRoleMappings(ctx, path, "client role mappings")
+}
+
+// AddClientRoleMappings grants roles of one client to a user or group.
+func (c *Client) AddClientRoleMappings(ctx context.Context, realm, subject, subjectID, clientUUID string, roles []map[string]any) error {
+	path := roleMappingPath(realm, subject, subjectID) + "/clients/" + url.PathEscape(clientUUID)
+
+	return c.addRoleMappings(ctx, path, roles)
 }
 
 // GetServiceAccountUser returns the service account user for a client.
@@ -824,78 +822,6 @@ func (c *Client) CreateGroup(ctx context.Context, realm, parentID string, body m
 func (c *Client) UpdateGroup(ctx context.Context, realm, id string, body map[string]any) error {
 	path := "/admin/realms/" + url.PathEscape(realm) + "/groups/" + url.PathEscape(id)
 	resp, err := c.doRequest(ctx, http.MethodPut, path, body)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNoContent {
-		return readError(resp)
-	}
-	return nil
-}
-
-// GetGroupRealmRoleMappings returns the realm roles currently mapped to a group.
-func (c *Client) GetGroupRealmRoleMappings(ctx context.Context, realm, groupID string) ([]map[string]any, error) {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/groups/" + url.PathEscape(groupID) + "/role-mappings/realm"
-	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, readError(resp)
-	}
-
-	var result []map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decoding group realm role mappings: %w", err)
-	}
-	return result, nil
-}
-
-// AddGroupRealmRoleMappings grants the given realm roles to a group.
-// Each entry must contain at least the role "id" and "name".
-func (c *Client) AddGroupRealmRoleMappings(ctx context.Context, realm, groupID string, roles []map[string]any) error {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/groups/" + url.PathEscape(groupID) + "/role-mappings/realm"
-	resp, err := c.doRequest(ctx, http.MethodPost, path, roles)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNoContent {
-		return readError(resp)
-	}
-	return nil
-}
-
-// GetGroupClientRoleMappings returns the client roles of the given client currently mapped to a group.
-func (c *Client) GetGroupClientRoleMappings(ctx context.Context, realm, groupID, clientUUID string) ([]map[string]any, error) {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/groups/" + url.PathEscape(groupID) + "/role-mappings/clients/" + url.PathEscape(clientUUID)
-	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, readError(resp)
-	}
-
-	var result []map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decoding group client role mappings: %w", err)
-	}
-	return result, nil
-}
-
-// AddGroupClientRoleMappings grants the given client roles to a group.
-// Each entry must contain at least the role "id" and "name".
-func (c *Client) AddGroupClientRoleMappings(ctx context.Context, realm, groupID, clientUUID string, roles []map[string]any) error {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/groups/" + url.PathEscape(groupID) + "/role-mappings/clients/" + url.PathEscape(clientUUID)
-	resp, err := c.doRequest(ctx, http.MethodPost, path, roles)
 	if err != nil {
 		return err
 	}

@@ -150,7 +150,7 @@ realms:
 // Some messages lost a word as method families were collapsed: the
 // discriminator moved out of the message text and into an attribute — "type"
 // for default vs optional client scopes, "container" for a mapper on a client
-// vs on a client scope. The message is now stable and the variance is
+// vs on a client scope, "subject" for a role granted to a user vs a group. The message is now stable and the variance is
 // structured. No information was lost, and the golden is the record of it.
 //
 // Note the two identical "would create protocol mapper" entries: one is the
@@ -180,7 +180,7 @@ func TestDryRunGoldenLog(t *testing.T) {
 		"would create realm role",
 		"would assign realm roles",
 		"would create group",
-		"would assign realm roles to group",
+		"would assign realm roles",
 		"would create subgroup",
 		"would create user",
 		"would reset user password",
