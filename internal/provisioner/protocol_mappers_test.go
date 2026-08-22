@@ -37,7 +37,7 @@ func TestEnsureProtocolMapperCreate(t *testing.T) {
 	}
 
 	p := New(c, &config.Config{})
-	if err := p.ensureProtocolMapper(context.Background(), "test-realm", "uuid-123", pm, "update"); err != nil {
+	if err := p.ensureProtocolMapper(context.Background(), "test-realm", clientMapperTarget("uuid-123", "my-app"), pm, "update"); err != nil {
 		t.Fatalf("ensureProtocolMapper: %v", err)
 	}
 
@@ -79,7 +79,7 @@ func TestEnsureProtocolMapperUpdate(t *testing.T) {
 	}
 
 	p := New(c, &config.Config{})
-	if err := p.ensureProtocolMapper(context.Background(), "test-realm", "uuid-123", pm, "update"); err != nil {
+	if err := p.ensureProtocolMapper(context.Background(), "test-realm", clientMapperTarget("uuid-123", "my-app"), pm, "update"); err != nil {
 		t.Fatalf("ensureProtocolMapper: %v", err)
 	}
 
@@ -114,7 +114,7 @@ func TestEnsureProtocolMapperCreateStrategySkipsExisting(t *testing.T) {
 	}
 
 	p := New(c, &config.Config{})
-	if err := p.ensureProtocolMapper(context.Background(), "test-realm", "uuid-123", pm, "create"); err != nil {
+	if err := p.ensureProtocolMapper(context.Background(), "test-realm", clientMapperTarget("uuid-123", "my-app"), pm, "create"); err != nil {
 		t.Fatalf("ensureProtocolMapper: %v", err)
 	}
 
@@ -160,7 +160,7 @@ func TestEnsureProtocolMapperInvalidID(t *testing.T) {
 	}
 
 	p := New(c, &config.Config{})
-	err := p.ensureProtocolMapper(context.Background(), "test-realm", "uuid-1", pm, "update")
+	err := p.ensureProtocolMapper(context.Background(), "test-realm", clientMapperTarget("uuid-1", "my-app"), pm, "update")
 	if err == nil {
 		t.Fatal("expected error for non-string id")
 	}

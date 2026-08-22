@@ -107,7 +107,7 @@ func (p *Provisioner) provisionRealm(ctx context.Context, realm config.Realm, st
 		}
 
 		for _, pm := range cs.ProtocolMappers {
-			if err := p.ensureClientScopeProtocolMapper(ctx, realm.Realm, scopeID, cs.Name, pm, strategy); err != nil {
+			if err := p.ensureProtocolMapper(ctx, realm.Realm, clientScopeMapperTarget(scopeID, cs.Name), pm, strategy); err != nil {
 				return fmt.Errorf("ensuring protocol mapper %q for client scope %q: %w", pm.Name, cs.Name, err)
 			}
 		}
@@ -133,7 +133,7 @@ func (p *Provisioner) provisionRealm(ctx context.Context, realm config.Realm, st
 		}
 
 		for _, pm := range c.ProtocolMappers {
-			if err := p.ensureProtocolMapper(ctx, realm.Realm, clientUUID, pm, strategy); err != nil {
+			if err := p.ensureProtocolMapper(ctx, realm.Realm, clientMapperTarget(clientUUID, c.ClientID), pm, strategy); err != nil {
 				return fmt.Errorf("ensuring protocol mapper %q for client %q: %w", pm.Name, c.ClientID, err)
 			}
 		}

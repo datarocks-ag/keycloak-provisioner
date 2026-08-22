@@ -417,7 +417,7 @@ func TestEnsureClientScopeProtocolMapperCreatesWhenMissing(t *testing.T) {
 	p := New(newTestClient(t, server.URL), &config.Config{})
 	pm := config.ProtocolMapper{Name: "audience", Protocol: "openid-connect", ProtocolMapper: "oidc-audience-mapper"}
 
-	if err := p.ensureClientScopeProtocolMapper(context.Background(), "test", "cs-1", "orders:read", pm, "update"); err != nil {
+	if err := p.ensureProtocolMapper(context.Background(), "test", clientScopeMapperTarget("cs-1", "orders:read"), pm, "update"); err != nil {
 		t.Fatalf("ensureClientScopeProtocolMapper: %v", err)
 	}
 
@@ -448,7 +448,7 @@ func TestEnsureClientScopeProtocolMapperUpdatesExisting(t *testing.T) {
 	p := New(newTestClient(t, server.URL), &config.Config{})
 	pm := config.ProtocolMapper{Name: "audience", Protocol: "openid-connect", ProtocolMapper: "oidc-audience-mapper"}
 
-	if err := p.ensureClientScopeProtocolMapper(context.Background(), "test", "cs-1", "orders:read", pm, "update"); err != nil {
+	if err := p.ensureProtocolMapper(context.Background(), "test", clientScopeMapperTarget("cs-1", "orders:read"), pm, "update"); err != nil {
 		t.Fatalf("ensureClientScopeProtocolMapper: %v", err)
 	}
 
@@ -474,7 +474,7 @@ func TestEnsureClientScopeProtocolMapperCreateStrategySkipsExisting(t *testing.T
 	p := New(newTestClient(t, server.URL), &config.Config{})
 	pm := config.ProtocolMapper{Name: "audience", Protocol: "openid-connect", ProtocolMapper: "oidc-audience-mapper"}
 
-	if err := p.ensureClientScopeProtocolMapper(context.Background(), "test", "cs-1", "orders:read", pm, "create"); err != nil {
+	if err := p.ensureProtocolMapper(context.Background(), "test", clientScopeMapperTarget("cs-1", "orders:read"), pm, "create"); err != nil {
 		t.Fatalf("ensureClientScopeProtocolMapper: %v", err)
 	}
 }
