@@ -449,8 +449,6 @@ Each execution is either a `provider` (an authenticator) or a `subflow` (a neste
 
 Two fields apply to subflows only. `providerId` is the subflow's own type, `basic-flow` (the default) or `form-flow` — distinct from the `providerId` on the flow itself. `description` is shown against the subflow in the console; Keycloak ignores it on a plain authenticator.
 
-`authenticationBindings` accepts `browserFlow`, `directGrantFlow`, `resetCredentialsFlow`, `registrationFlow`, `clientAuthenticationFlow`, `dockerAuthenticationFlow` and `firstBrokerLoginFlow`. Each takes a flow alias, and an omitted binding is left as it is.
-
 **Flows are create-only.** A flow whose alias already exists is left untouched, whatever the `strategy`, and the skip is logged at INFO so an edit that does not take effect is visible in the log. Reconciling an existing flow would mean diffing an ordered tree whose entries have no stable name and deleting the executions that are not configured — the provisioner does not remove anything anywhere else, and does not start here. To change a flow, delete it in the Keycloak console or declare it under a new alias.
 
 Declaring a built-in Keycloak flow (`browser`, `direct grant`, …) is rejected with an error pointing at `copyFrom`, since editing built-ins in place is how a realm becomes hard to recover. Use `copyFrom` to derive your own flow from one instead.

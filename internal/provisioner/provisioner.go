@@ -1,8 +1,13 @@
 // Package provisioner reconciles a config against a Keycloak server.
 //
-// Reconciliation is idempotent and additive: resources are created when
-// absent and updated in place otherwise, and nothing is ever deleted. What
-// a config does not mention is left alone.
+// Reconciliation is idempotent and additive: resources are created when absent
+// and, for most kinds, updated in place otherwise. Nothing is ever deleted, and
+// what a config does not mention is left alone.
+//
+// Authentication flows are the exception: a flow whose alias already exists is
+// skipped rather than updated, whatever the strategy. Reconciling one would
+// mean diffing an ordered tree whose entries have no stable name and deleting
+// the executions that are not configured.
 package provisioner
 
 import (
