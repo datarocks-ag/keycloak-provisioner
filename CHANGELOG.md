@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_No unreleased changes._
+
+## [1.8.0] — 2026-08-22
+
+Adds identity provider support, predictable user ids and `fullScopeAllowed`,
+and fixes two ways provisioning could fail on its second run.
+
+No configuration written for 1.7.0 needs changing. Three things behave
+differently after upgrading:
+
+- **Some log messages changed.** Anything that greps or parses the
+  provisioner's output needs updating — the entries under "Changed" name every
+  old and new string. Nothing was lost: each distinction that left a message
+  moved into a structured attribute, which is easier to match on than prose.
+- **Runs that used to fail on their second pass now succeed.** An organization
+  with more than 10 members, or an organization group with more than 10
+  subgroups, hit a Keycloak listing default that hid what already existed; the
+  provisioner then tried to create it again and Keycloak refused with a 409.
+  Both listings now ask for everything.
+- **`${VAR}` in a role map key is expanded.** Previously only the values were,
+  so a templated clientId under a user's `roles.clients` or a client's
+  `serviceAccountRoles.clients` reached Keycloak literally and the run failed
+  with `client "${VAR}" not found`. Such a config now resolves and provisions.
+  A key meant to contain a literal `${...}` needs the `$${VAR}` escape.
+
 ### Added
 
 - `id` on a user, fixing its UUID so it is the same in every
@@ -461,7 +486,8 @@ Initial release.
   (testcontainers-based Keycloak), Trivy scan, GHCR publish, GoReleaser.
 - LICENSE.
 
-[Unreleased]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.8.0...HEAD
+[1.8.0]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.4.0...v1.5.0
