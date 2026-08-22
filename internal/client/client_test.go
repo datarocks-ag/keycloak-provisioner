@@ -2255,3 +2255,34 @@ func TestGetAuthenticationProviders_Error(t *testing.T) {
 		t.Errorf("expected a 403 *StatusError, got %v", err)
 	}
 }
+
+// TestGetOrganizationMembersRequestsAllMembers pins the query parameter, not
+// the response. Keycloak defaults this endpoint to 10 members, which silently
+// truncates the caller's view of who is already a member; the reconciler then
+// re-adds the rest and the run fails on a 409.
+func TestGetOrganizationMembersRequestsAllMembers(t *testing.T) {
+	var mu sync.Mutex
+	var gotQuery string
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/organizations/{id}/members": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			gotQuery = r.URL.RawQuery
+			mu.Unlock()
+			json.NewEncoder(w).Encode([]map[string]any{{"id": "u-1", "username": "alice"}})
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	if _, err := c.GetOrganizationMembers(context.Background(), "test", "org-1"); err != nil {
+		t.Fatalf("GetOrganizationMembers: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if gotQuery != "max=-1" {
+		t.Errorf("listing must ask for every member, got query %q; Keycloak defaults this endpoint to 10", gotQuery)
+	}
+}

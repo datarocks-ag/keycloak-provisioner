@@ -62,6 +62,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Provisioning an organization with more than 10 members is idempotent again.
+  Keycloak defaults `GET /organizations/{id}/members` to 10 results, so the
+  provisioner's view of who was already a member was truncated: it re-added
+  members 11 and beyond on every run and the second run failed with
+  `409 User is already a member of the organization`. The listing now asks for
+  all of them. Among the listings this client uses, only this one is capped —
+  organization groups, their members, organization identity providers, a user's
+  groups, and the realm-level listings were all verified to return in full.
 - `${VAR}` references are now expanded in the **keys** of `roles.clients` under a
   user and under a client's `serviceAccountRoles`, and in the keys of a group's
   `attributes`. Only the values were expanded, so a templated clientId reached
