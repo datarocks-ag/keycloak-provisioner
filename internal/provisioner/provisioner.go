@@ -24,7 +24,7 @@ func New(api KeycloakAPI, cfg *config.Config) *Provisioner {
 }
 
 // Run executes the full provisioning sequence:
-// Master realm (if configured) -> For each realm: Realm -> Client scopes -> Clients (+ protocol mappers + client roles + client scope assignment) -> Realm roles -> Service account roles -> Groups -> Users
+// Master realm (if configured) -> For each realm: Realm -> Client scopes -> Clients (+ protocol mappers + client roles + client scope assignment) -> Realm roles -> Service account roles -> Groups -> Users -> Organizations
 func (p *Provisioner) Run(ctx context.Context) error {
 	slog.Info("Starting provisioning")
 
@@ -155,6 +155,14 @@ func (p *Provisioner) provisionRealm(ctx context.Context, realm config.Realm, st
 	for _, user := range realm.Users {
 		if err := p.ensureUser(ctx, realm.Realm, user, strategy); err != nil {
 			return fmt.Errorf("ensuring user %q: %w", user.Username, err)
+		}
+	}
+
+	// 8. Organizations (+ domains + members). Last, so members resolve to
+	// users created in the same run.
+	for _, org := range realm.Organizations {
+		if err := p.ensureOrganization(ctx, realm.Realm, org, strategy); err != nil {
+			return fmt.Errorf("ensuring organization %q: %w", org.Name, err)
 		}
 	}
 

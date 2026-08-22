@@ -32,6 +32,12 @@ type fakeAPI struct {
 	clientDefaultScopes map[string][]map[string]any // key: realm/clientUUID
 	clientOptionalScope map[string][]map[string]any // key: realm/clientUUID
 
+	organizations map[string][]map[string]any // key: realm
+	orgMembers    map[string][]map[string]any // key: realm/orgID
+	orgGroups     map[string][]map[string]any // key: realm/orgID
+	orgSubGroups  map[string][]map[string]any // key: realm/orgID/parentID
+	orgGroupMbrs  map[string][]map[string]any // key: realm/orgID/groupID
+
 	createCalls atomicCounter
 	updateCalls atomicCounter
 }
@@ -65,6 +71,12 @@ func newFakeAPI() *fakeAPI {
 		realmOptionalScopes: make(map[string][]map[string]any),
 		clientDefaultScopes: make(map[string][]map[string]any),
 		clientOptionalScope: make(map[string][]map[string]any),
+
+		organizations: make(map[string][]map[string]any),
+		orgMembers:    make(map[string][]map[string]any),
+		orgGroups:     make(map[string][]map[string]any),
+		orgSubGroups:  make(map[string][]map[string]any),
+		orgGroupMbrs:  make(map[string][]map[string]any),
 	}
 }
 
@@ -639,4 +651,59 @@ func TestDryRunCreatedClientScopeVisibleInSyntheticRealm(t *testing.T) {
 	if len(scopes) != 1 || scopes[0]["id"] != scopeID {
 		t.Errorf("expected the synthetic scope inside a would-be-created realm, got %v", scopes)
 	}
+}
+
+func (f *fakeAPI) GetOrganizations(_ context.Context, realm, _ string) ([]map[string]any, error) {
+	return f.organizations[realm], nil
+}
+
+func (f *fakeAPI) CreateOrganization(context.Context, string, map[string]any) (string, error) {
+	f.createCalls.inc()
+	return "real-org-uuid", nil
+}
+
+func (f *fakeAPI) UpdateOrganization(context.Context, string, string, map[string]any) error {
+	f.updateCalls.inc()
+	return nil
+}
+
+func (f *fakeAPI) GetOrganizationMembers(_ context.Context, realm, orgID string) ([]map[string]any, error) {
+	return f.orgMembers[realm+"/"+orgID], nil
+}
+
+func (f *fakeAPI) AddOrganizationMember(context.Context, string, string, string) error {
+	f.updateCalls.inc()
+	return nil
+}
+
+func (f *fakeAPI) GetOrganizationGroups(_ context.Context, realm, orgID string) ([]map[string]any, error) {
+	return f.orgGroups[realm+"/"+orgID], nil
+}
+
+func (f *fakeAPI) GetOrganizationSubGroups(_ context.Context, realm, orgID, groupID string) ([]map[string]any, error) {
+	return f.orgSubGroups[realm+"/"+orgID+"/"+groupID], nil
+}
+
+func (f *fakeAPI) CreateOrganizationGroup(context.Context, string, string, map[string]any) (string, error) {
+	f.createCalls.inc()
+	return "real-orggroup-uuid", nil
+}
+
+func (f *fakeAPI) CreateOrganizationSubGroup(context.Context, string, string, string, map[string]any) (string, error) {
+	f.createCalls.inc()
+	return "real-orgsubgroup-uuid", nil
+}
+
+func (f *fakeAPI) UpdateOrganizationGroup(context.Context, string, string, string, map[string]any) error {
+	f.updateCalls.inc()
+	return nil
+}
+
+func (f *fakeAPI) GetOrganizationGroupMembers(_ context.Context, realm, orgID, groupID string) ([]map[string]any, error) {
+	return f.orgGroupMbrs[realm+"/"+orgID+"/"+groupID], nil
+}
+
+func (f *fakeAPI) AddOrganizationGroupMember(context.Context, string, string, string, string) error {
+	f.updateCalls.inc()
+	return nil
 }

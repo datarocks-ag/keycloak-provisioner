@@ -79,4 +79,20 @@ type KeycloakAPI interface {
 	AddGroupRealmRoleMappings(ctx context.Context, realm, groupID string, roles []map[string]any) error
 	GetGroupClientRoleMappings(ctx context.Context, realm, groupID, clientUUID string) ([]map[string]any, error)
 	AddGroupClientRoleMappings(ctx context.Context, realm, groupID, clientUUID string, roles []map[string]any) error
+
+	// Organizations
+	GetOrganizations(ctx context.Context, realm, search string) ([]map[string]any, error)
+	CreateOrganization(ctx context.Context, realm string, body map[string]any) (string, error)
+	UpdateOrganization(ctx context.Context, realm, orgID string, body map[string]any) error
+	GetOrganizationMembers(ctx context.Context, realm, orgID string) ([]map[string]any, error)
+	AddOrganizationMember(ctx context.Context, realm, orgID, userID string) error
+
+	// Organization groups
+	GetOrganizationGroups(ctx context.Context, realm, orgID string) ([]map[string]any, error)
+	GetOrganizationSubGroups(ctx context.Context, realm, orgID, groupID string) ([]map[string]any, error)
+	CreateOrganizationGroup(ctx context.Context, realm, orgID string, body map[string]any) (string, error)
+	CreateOrganizationSubGroup(ctx context.Context, realm, orgID, parentID string, body map[string]any) (string, error)
+	UpdateOrganizationGroup(ctx context.Context, realm, orgID, groupID string, body map[string]any) error
+	GetOrganizationGroupMembers(ctx context.Context, realm, orgID, groupID string) ([]map[string]any, error)
+	AddOrganizationGroupMember(ctx context.Context, realm, orgID, groupID, userID string) error
 }

@@ -27,7 +27,8 @@ realms:
     resetPasswordAllowed: true
 
     # Enable Keycloak Organizations for this realm (Keycloak 26+).
-    # Omit to leave the realm's current setting untouched.
+    # Omit to leave the realm's current setting untouched. Required before
+    # the organizations block below can be used.
     # organizationsEnabled: true
 
     # Realm attributes. Keys and values support ${VAR} expansion.
@@ -160,6 +161,36 @@ realms:
     #     initialPassword: "changeme"
     #     enabled: true
     #     email: "user@example.com"
+
+    # Organizations are provisioned last, so members resolve to users defined
+    # above. Requires organizationsEnabled: true. Membership is additive.
+    # organizations:
+    #   - name: "acme"
+    #     alias: "acme"            # optional; Keycloak derives one when omitted
+    #     enabled: true
+    #     description: "ACME Corp"
+    #     redirectUrl: "https://acme.example.com"
+    #     domains:
+    #       - name: "acme.com"
+    #         verified: true
+    #     attributes:
+    #       tier:
+    #         - "gold"
+    #     members:
+    #       - "service-admin"
+    #     # Organization-scoped groups. These are NOT realm groups: they never
+    #     # appear under the realm's groups and cannot be managed through the
+    #     # normal group API. They support no role mappings, and members must
+    #     # also be listed under the organization's members above.
+    #     groups:
+    #       - name: "engineering"
+    #         attributes:
+    #           tier:
+    #             - "gold"
+    #         members:
+    #           - "service-admin"
+    #         subGroups:
+    #           - name: "backend"
 
     groups:
       - name: "engineering"

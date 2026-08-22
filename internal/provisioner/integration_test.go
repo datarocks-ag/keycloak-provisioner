@@ -23,8 +23,9 @@ func setupKeycloak(t *testing.T) (*client.Client, func()) {
 	ctx := context.Background()
 
 	kcContainer, err := keycloak.Run(ctx,
-		// 26.2+ is required for Standard Token Exchange (RFC 8693).
-		"keycloak/keycloak:26.2",
+		// 26.2+ is required for Standard Token Exchange (RFC 8693) and 26+
+		// for Organizations. The supported floor is 26.6.
+		"keycloak/keycloak:26.6",
 		keycloak.WithAdminUsername("admin"),
 		keycloak.WithAdminPassword("admin"),
 	)
@@ -1581,4 +1582,240 @@ func containsScopeNamed(scopes []map[string]any, name string) bool {
 		}
 	}
 	return false
+}
+
+func TestIntegrationOrganizations(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	configYAML := `
+realms:
+  - realm: "orgs-realm"
+    enabled: true
+    organizationsEnabled: true
+    users:
+      - username: "alice"
+        password: "alice-pw"
+        enabled: true
+        email: "alice@acme.com"
+    organizations:
+      - name: "acme"
+        alias: "acme"
+        enabled: true
+        description: "ACME Corp"
+        redirectUrl: "https://acme.example.com"
+        domains:
+          - name: "acme.com"
+            verified: true
+        attributes:
+          tier:
+            - "gold"
+        members:
+          - "alice"
+`
+	cfgPath := writeTestConfig(t, configYAML)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	orgs, err := kc.GetOrganizations(ctx, "orgs-realm", "acme")
+	if err != nil {
+		t.Fatalf("getting organizations: %v", err)
+	}
+	if len(orgs) != 1 {
+		t.Fatalf("expected 1 organization, got %d: %v", len(orgs), orgs)
+	}
+
+	org := orgs[0]
+	orgID, _ := org["id"].(string)
+	if org["name"] != "acme" {
+		t.Errorf("unexpected organization name: %v", org["name"])
+	}
+	if org["description"] != "ACME Corp" {
+		t.Errorf("unexpected description: %v", org["description"])
+	}
+
+	domains, ok := org["domains"].([]any)
+	if !ok || len(domains) != 1 {
+		t.Fatalf("unexpected domains: %v", org["domains"])
+	}
+	domain, _ := domains[0].(map[string]any)
+	if domain["name"] != "acme.com" {
+		t.Errorf("unexpected domain: %v", domain)
+	}
+
+	// The member endpoint takes the user ID as a bare JSON string rather than
+	// an object, which is unique among the endpoints this client calls.
+	members, err := kc.GetOrganizationMembers(ctx, "orgs-realm", orgID)
+	if err != nil {
+		t.Fatalf("getting organization members: %v", err)
+	}
+	found := false
+	for _, m := range members {
+		if m["username"] == "alice" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("alice was not added as an organization member: %v", members)
+	}
+
+	// Re-running must not duplicate the membership or fail.
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+
+	members, err = kc.GetOrganizationMembers(ctx, "orgs-realm", orgID)
+	if err != nil {
+		t.Fatalf("getting organization members after second run: %v", err)
+	}
+	count := 0
+	for _, m := range members {
+		if m["username"] == "alice" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected exactly 1 membership for alice, got %d", count)
+	}
+}
+
+func TestIntegrationOrganizationGroups(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	configYAML := `
+realms:
+  - realm: "orggroups-realm"
+    enabled: true
+    organizationsEnabled: true
+    users:
+      - username: "alice"
+        password: "alice-pw"
+        enabled: true
+        email: "alice@acme.com"
+      - username: "mallory"
+        password: "mallory-pw"
+        enabled: true
+        email: "mallory@example.com"
+    organizations:
+      - name: "acme"
+        alias: "acme"
+        enabled: true
+        domains:
+          - name: "acme.com"
+        members:
+          - "alice"
+        groups:
+          - name: "engineering"
+            attributes:
+              tier:
+                - "gold"
+            members:
+              - "alice"
+              # mallory is not an organization member, so this is warned about
+              # and skipped rather than failing the run.
+              - "mallory"
+            subGroups:
+              - name: "backend"
+                members:
+                  - "alice"
+`
+	cfgPath := writeTestConfig(t, configYAML)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	orgs, err := kc.GetOrganizations(ctx, "orggroups-realm", "acme")
+	if err != nil || len(orgs) == 0 {
+		t.Fatalf("getting organization: %v", err)
+	}
+	orgID, _ := orgs[0]["id"].(string)
+
+	groups, err := kc.GetOrganizationGroups(ctx, "orggroups-realm", orgID)
+	if err != nil {
+		t.Fatalf("getting organization groups: %v", err)
+	}
+	var engID string
+	for _, g := range groups {
+		if g["name"] == "engineering" {
+			engID, _ = g["id"].(string)
+		}
+	}
+	if engID == "" {
+		t.Fatalf("group engineering not created: %v", groups)
+	}
+
+	// Organization groups must not leak into the realm's own groups.
+	realmGroups, err := kc.GetGroups(ctx, "orggroups-realm", "engineering")
+	if err != nil {
+		t.Fatalf("getting realm groups: %v", err)
+	}
+	if len(realmGroups) != 0 {
+		t.Errorf("organization group leaked into realm groups: %v", realmGroups)
+	}
+
+	children, err := kc.GetOrganizationSubGroups(ctx, "orggroups-realm", orgID, engID)
+	if err != nil {
+		t.Fatalf("getting subgroups: %v", err)
+	}
+	if len(children) != 1 || children[0]["name"] != "backend" {
+		t.Errorf("unexpected subgroups: %v", children)
+	}
+
+	members, err := kc.GetOrganizationGroupMembers(ctx, "orggroups-realm", orgID, engID)
+	if err != nil {
+		t.Fatalf("getting group members: %v", err)
+	}
+	names := map[string]bool{}
+	for _, m := range members {
+		if u, ok := m["username"].(string); ok {
+			names[u] = true
+		}
+	}
+	if !names["alice"] {
+		t.Errorf("alice was not added to the group: %v", members)
+	}
+	if names["mallory"] {
+		t.Error("mallory is not an organization member and must not have been added")
+	}
+
+	// Second run must be a clean no-op.
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+
+	groups, err = kc.GetOrganizationGroups(ctx, "orggroups-realm", orgID)
+	if err != nil {
+		t.Fatalf("getting groups after second run: %v", err)
+	}
+	count := 0
+	for _, g := range groups {
+		if g["name"] == "engineering" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected exactly 1 engineering group after two runs, got %d", count)
+	}
+
+	children, err = kc.GetOrganizationSubGroups(ctx, "orggroups-realm", orgID, engID)
+	if err != nil {
+		t.Fatalf("getting subgroups after second run: %v", err)
+	}
+	if len(children) != 1 {
+		t.Errorf("expected exactly 1 subgroup after two runs, got %d: %v", len(children), children)
+	}
 }

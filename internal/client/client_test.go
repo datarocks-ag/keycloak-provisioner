@@ -1765,3 +1765,95 @@ func TestClientScopeAssignmentEndpoints(t *testing.T) {
 		}
 	}
 }
+
+func TestOrganizationGroupEndpoints(t *testing.T) {
+	var mu sync.Mutex
+	seen := map[string]string{}
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/organizations/{id}/groups": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{{"id": "g-1", "name": "engineering"}})
+		},
+		"GET /admin/realms/{realm}/organizations/{id}/groups/{gid}/children": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{{"id": "g-2", "name": "backend"}})
+		},
+		"POST /admin/realms/{realm}/organizations/{id}/groups": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Location", "http://kc/admin/realms/test/organizations/org-1/groups/g-9")
+			w.WriteHeader(http.StatusCreated)
+		},
+		"POST /admin/realms/{realm}/organizations/{id}/groups/{gid}/children": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Location", "http://kc/admin/realms/test/organizations/org-1/groups/g-10")
+			w.WriteHeader(http.StatusCreated)
+		},
+		"PUT /admin/realms/{realm}/organizations/{id}/groups/{gid}": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			seen["update"] = r.PathValue("gid")
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		},
+		"GET /admin/realms/{realm}/organizations/{id}/groups/{gid}/members": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{{"id": "u-1", "username": "alice"}})
+		},
+		"PUT /admin/realms/{realm}/organizations/{id}/groups/{gid}/members/{uid}": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			seen["addMember"] = r.PathValue("gid") + "/" + r.PathValue("uid")
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	ctx := context.Background()
+
+	groups, err := c.GetOrganizationGroups(ctx, "test", "org-1")
+	if err != nil || len(groups) != 1 {
+		t.Fatalf("get groups: %v %v", groups, err)
+	}
+	children, err := c.GetOrganizationSubGroups(ctx, "test", "org-1", "g-1")
+	if err != nil || len(children) != 1 || children[0]["name"] != "backend" {
+		t.Fatalf("get children: %v %v", children, err)
+	}
+	id, err := c.CreateOrganizationGroup(ctx, "test", "org-1", map[string]any{"name": "sales"})
+	if err != nil || id != "g-9" {
+		t.Fatalf("create group: %q %v", id, err)
+	}
+	subID, err := c.CreateOrganizationSubGroup(ctx, "test", "org-1", "g-1", map[string]any{"name": "backend"})
+	if err != nil || subID != "g-10" {
+		t.Fatalf("create subgroup: %q %v", subID, err)
+	}
+	if err := c.UpdateOrganizationGroup(ctx, "test", "org-1", "g-1", map[string]any{"name": "engineering"}); err != nil {
+		t.Fatalf("update group: %v", err)
+	}
+	members, err := c.GetOrganizationGroupMembers(ctx, "test", "org-1", "g-1")
+	if err != nil || len(members) != 1 {
+		t.Fatalf("get group members: %v %v", members, err)
+	}
+	if err := c.AddOrganizationGroupMember(ctx, "test", "org-1", "g-1", "u-2"); err != nil {
+		t.Fatalf("add group member: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if seen["update"] != "g-1" {
+		t.Errorf("unexpected update target: %q", seen["update"])
+	}
+	if seen["addMember"] != "g-1/u-2" {
+		t.Errorf("unexpected member add: %q", seen["addMember"])
+	}
+}
+
+func TestAddOrganizationGroupMember_NonOrgMemberError(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"PUT /admin/realms/{realm}/organizations/{id}/groups/{gid}/members/{uid}": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"errorMessage":"User is not member of the organization"}`))
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	if err := c.AddOrganizationGroupMember(context.Background(), "test", "org-1", "g-1", "u-1"); err == nil {
+		t.Fatal("expected error for a user that is not an organization member")
+	}
+}

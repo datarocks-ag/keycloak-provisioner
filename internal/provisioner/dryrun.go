@@ -511,3 +511,87 @@ func (d *dryRunAPI) AddClientOptionalScope(_ context.Context, realm, clientUUID,
 	slog.Info("DRY-RUN: would assign optional client scope", "realm", realm, "clientUUID", clientUUID, "scopeUUID", scopeID)
 	return nil
 }
+
+// Organizations.
+
+func (d *dryRunAPI) GetOrganizations(ctx context.Context, realm, search string) ([]map[string]any, error) {
+	if d.realmIsSynthetic(realm) {
+		return nil, nil
+	}
+	return d.inner.GetOrganizations(ctx, realm, search)
+}
+
+// CreateOrganization returns a synthetic id so the organization's groups and
+// members can still be reported. Unlike client scopes there is no bookkeeping
+// to keep: an organization is looked up once per run, so nothing rediscovers it
+// by name later.
+func (d *dryRunAPI) CreateOrganization(_ context.Context, realm string, body map[string]any) (string, error) {
+	name, _ := body["name"].(string)
+	slog.Info("DRY-RUN: would create organization", "realm", realm, "organization", name)
+
+	return d.newID("organization"), nil
+}
+
+func (d *dryRunAPI) UpdateOrganization(_ context.Context, realm, orgID string, body map[string]any) error {
+	name, _ := body["name"].(string)
+	slog.Info("DRY-RUN: would update organization", "realm", realm, "organization", name, "uuid", orgID)
+	return nil
+}
+
+func (d *dryRunAPI) GetOrganizationMembers(ctx context.Context, realm, orgID string) ([]map[string]any, error) {
+	if d.realmIsSynthetic(realm) || isSyntheticID(orgID) {
+		return nil, nil
+	}
+	return d.inner.GetOrganizationMembers(ctx, realm, orgID)
+}
+
+func (d *dryRunAPI) AddOrganizationMember(_ context.Context, realm, orgID, userID string) error {
+	slog.Info("DRY-RUN: would add user to organization", "realm", realm, "orgUUID", orgID, "userID", userID)
+	return nil
+}
+
+// Organization groups.
+
+func (d *dryRunAPI) GetOrganizationGroups(ctx context.Context, realm, orgID string) ([]map[string]any, error) {
+	if d.realmIsSynthetic(realm) || isSyntheticID(orgID) {
+		return nil, nil
+	}
+	return d.inner.GetOrganizationGroups(ctx, realm, orgID)
+}
+
+func (d *dryRunAPI) GetOrganizationSubGroups(ctx context.Context, realm, orgID, groupID string) ([]map[string]any, error) {
+	if d.realmIsSynthetic(realm) || isSyntheticID(orgID) || isSyntheticID(groupID) {
+		return nil, nil
+	}
+	return d.inner.GetOrganizationSubGroups(ctx, realm, orgID, groupID)
+}
+
+func (d *dryRunAPI) CreateOrganizationGroup(_ context.Context, realm, orgID string, body map[string]any) (string, error) {
+	name, _ := body["name"].(string)
+	slog.Info("DRY-RUN: would create organization group", "realm", realm, "orgUUID", orgID, "group", name)
+	return d.newID("orggroup"), nil
+}
+
+func (d *dryRunAPI) CreateOrganizationSubGroup(_ context.Context, realm, orgID, parentID string, body map[string]any) (string, error) {
+	name, _ := body["name"].(string)
+	slog.Info("DRY-RUN: would create organization subgroup", "realm", realm, "orgUUID", orgID, "group", name, "parent", parentID)
+	return d.newID("orggroup"), nil
+}
+
+func (d *dryRunAPI) UpdateOrganizationGroup(_ context.Context, realm, orgID, groupID string, body map[string]any) error {
+	name, _ := body["name"].(string)
+	slog.Info("DRY-RUN: would update organization group", "realm", realm, "orgUUID", orgID, "group", name, "uuid", groupID)
+	return nil
+}
+
+func (d *dryRunAPI) GetOrganizationGroupMembers(ctx context.Context, realm, orgID, groupID string) ([]map[string]any, error) {
+	if d.realmIsSynthetic(realm) || isSyntheticID(orgID) || isSyntheticID(groupID) {
+		return nil, nil
+	}
+	return d.inner.GetOrganizationGroupMembers(ctx, realm, orgID, groupID)
+}
+
+func (d *dryRunAPI) AddOrganizationGroupMember(_ context.Context, realm, orgID, groupID, userID string) error {
+	slog.Info("DRY-RUN: would add user to organization group", "realm", realm, "orgUUID", orgID, "groupUUID", groupID, "userID", userID)
+	return nil
+}

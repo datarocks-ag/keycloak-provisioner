@@ -80,7 +80,53 @@ type Realm struct {
 	Roles        []RealmRole   `yaml:"roles"`
 	Users        []User        `yaml:"users"`
 	Groups       []Group       `yaml:"groups"`
-	Strategy     string        `yaml:"strategy"`
+	// Organizations are provisioned last, so members can reference users
+	// defined in the same config. Requires organizationsEnabled: true.
+	Organizations []Organization `yaml:"organizations"`
+	Strategy      string         `yaml:"strategy"`
+}
+
+// Organization defines a Keycloak organization within a realm.
+// Requires Keycloak 26+ and organizationsEnabled on the realm.
+type Organization struct {
+	Name string `yaml:"name"`
+	// Alias defaults to the name when empty. It is immutable in Keycloak
+	// once the organization exists.
+	Alias       string               `yaml:"alias"`
+	Enabled     *bool                `yaml:"enabled"`
+	Description string               `yaml:"description"`
+	RedirectUrl string               `yaml:"redirectUrl"`
+	Domains     []OrganizationDomain `yaml:"domains"`
+	Attributes  map[string][]string  `yaml:"attributes"` // Keycloak organization attributes are multivalued
+	// Members are usernames of users in the same realm. Membership is
+	// additive; members are never removed. A username that cannot be
+	// resolved is logged as a warning and skipped.
+	Members []string `yaml:"members"`
+	// Groups are organization-scoped groups. They live in a namespace of
+	// their own: they do not appear under the realm's groups, and Keycloak
+	// refuses to manage them through the normal group API.
+	Groups []OrganizationGroup `yaml:"groups"`
+}
+
+// OrganizationGroup is a group owned by an organization.
+//
+// Unlike a realm Group it has no realmRoles or clientRoles: Keycloak exposes
+// no role-mapping endpoint for organization groups, and the realm group API
+// refuses them outright.
+type OrganizationGroup struct {
+	Name       string              `yaml:"name"`
+	Attributes map[string][]string `yaml:"attributes"` // Keycloak group attributes are multivalued
+	// Members are usernames. A user must already be a member of the
+	// organization before it can join one of its groups, so list them under
+	// the organization's members as well. Membership is additive.
+	Members   []string            `yaml:"members"`
+	SubGroups []OrganizationGroup `yaml:"subGroups"`
+}
+
+// OrganizationDomain is a domain owned by an organization.
+type OrganizationDomain struct {
+	Name     string `yaml:"name"`
+	Verified *bool  `yaml:"verified"`
 }
 
 // validClientScopeTypes is the allowlist of realm-level client scope types.
@@ -252,6 +298,63 @@ func expandUsers(users []User) {
 	}
 }
 
+// expandOrganization expands env vars in an organization and its domains,
+// attributes and member list.
+func expandOrganization(o *Organization) {
+	o.Name = expandEnvVars(o.Name)
+	o.Alias = expandEnvVars(o.Alias)
+	o.Description = expandEnvVars(o.Description)
+	o.RedirectUrl = expandEnvVars(o.RedirectUrl)
+
+	for i := range o.Domains {
+		o.Domains[i].Name = expandEnvVars(o.Domains[i].Name)
+	}
+
+	for i := range o.Members {
+		o.Members[i] = expandEnvVars(o.Members[i])
+	}
+
+	for i := range o.Groups {
+		expandOrganizationGroup(&o.Groups[i])
+	}
+
+	o.Attributes = expandMultiValueMap(o.Attributes)
+}
+
+// expandOrganizationGroup expands env vars in an organization group and, by
+// recursion, its subgroups.
+func expandOrganizationGroup(g *OrganizationGroup) {
+	g.Name = expandEnvVars(g.Name)
+	g.Attributes = expandMultiValueMap(g.Attributes)
+
+	for i := range g.Members {
+		g.Members[i] = expandEnvVars(g.Members[i])
+	}
+
+	for i := range g.SubGroups {
+		expandOrganizationGroup(&g.SubGroups[i])
+	}
+}
+
+// expandMultiValueMap returns a copy of m with env vars expanded in keys and
+// in every value. It returns m unchanged when empty so a nil map stays nil.
+func expandMultiValueMap(m map[string][]string) map[string][]string {
+	if len(m) == 0 {
+		return m
+	}
+
+	expanded := make(map[string][]string, len(m))
+	for k, values := range m {
+		vs := make([]string, len(values))
+		for i, v := range values {
+			vs[i] = expandEnvVars(v)
+		}
+		expanded[expandEnvVars(k)] = vs
+	}
+
+	return expanded
+}
+
 // expandProtocolMappers expands env vars in a protocol mapper list, which is
 // shared between clients and client scopes.
 func expandProtocolMappers(mappers []ProtocolMapper) {
@@ -346,6 +449,10 @@ func expandConfig(cfg *Config) {
 		}
 
 		expandUsers(r.Users)
+
+		for j := range r.Organizations {
+			expandOrganization(&r.Organizations[j])
+		}
 
 		for j := range r.Groups {
 			expandGroup(&r.Groups[j])
@@ -552,6 +659,10 @@ func validate(cfg *Config) error {
 		if err := validateGroups(fmt.Sprintf("realms[%d].groups", i), r.Groups); err != nil {
 			return err
 		}
+
+		if err := validateOrganizations(i, r); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -590,6 +701,137 @@ func validateClientScopes(realmIdx int, scopes []ClientScope) error {
 		}
 
 		if err := validateProtocolMappers(prefix, cs.ProtocolMappers); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func validateOrganizations(realmIdx int, r Realm) error {
+	if len(r.Organizations) == 0 {
+		return nil
+	}
+
+	// Mirrors the serviceAccountRoles/serviceAccountsEnabled rule: a feature
+	// that cannot work without its realm-level toggle is rejected up front
+	// rather than failing mid-run against Keycloak.
+	if r.OrganizationsEnabled == nil || !*r.OrganizationsEnabled {
+		return fmt.Errorf("realms[%d].organizations: requires organizationsEnabled: true on the realm", realmIdx)
+	}
+
+	names := make(map[string]bool)
+
+	for i, o := range r.Organizations {
+		prefix := fmt.Sprintf("realms[%d].organizations[%d]", realmIdx, i)
+
+		if o.Name == "" {
+			return fmt.Errorf("%s.name: is required", prefix)
+		}
+		if names[o.Name] {
+			return fmt.Errorf("%s.name: duplicate organization name %q", prefix, o.Name)
+		}
+		names[o.Name] = true
+
+		if err := scanNullBytes(map[string]string{
+			prefix + ".name":        o.Name,
+			prefix + ".alias":       o.Alias,
+			prefix + ".description": o.Description,
+			prefix + ".redirectUrl": o.RedirectUrl,
+		}); err != nil {
+			return err
+		}
+
+		domains := make(map[string]bool)
+		for j, d := range o.Domains {
+			if d.Name == "" {
+				return fmt.Errorf("%s.domains[%d].name: is required", prefix, j)
+			}
+			if containsNullByte(d.Name) {
+				return fmt.Errorf("%s.domains[%d].name: contains null byte", prefix, j)
+			}
+			if domains[d.Name] {
+				return fmt.Errorf("%s.domains[%d].name: duplicate domain %q", prefix, j, d.Name)
+			}
+			domains[d.Name] = true
+		}
+
+		if err := validateMultiValueAttributes(prefix+".attributes", o.Attributes); err != nil {
+			return err
+		}
+
+		if err := validateMemberNames(prefix+".members", o.Members); err != nil {
+			return err
+		}
+
+		if err := validateOrganizationGroups(prefix+".groups", o.Groups); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateMultiValueAttributes checks a multivalued attribute map for empty
+// keys and null bytes. It is shared by organizations and their groups.
+func validateMultiValueAttributes(path string, attrs map[string][]string) error {
+	for k, values := range attrs {
+		if k == "" {
+			return fmt.Errorf("%s: attribute name is required", path)
+		}
+		if containsNullByte(k) {
+			return fmt.Errorf("%s: contains null byte", path)
+		}
+		if err := scanSliceNullBytes(fmt.Sprintf("%s[%s]", path, k), values); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func validateMemberNames(path string, members []string) error {
+	for i, m := range members {
+		if m == "" {
+			return fmt.Errorf("%s[%d]: username is required", path, i)
+		}
+		if containsNullByte(m) {
+			return fmt.Errorf("%s[%d]: contains null byte", path, i)
+		}
+	}
+
+	return nil
+}
+
+// validateOrganizationGroups validates an organization group tree recursively,
+// following the same shape as validateGroups: names must be unique among
+// siblings, but may repeat at different levels.
+func validateOrganizationGroups(prefix string, groups []OrganizationGroup) error {
+	names := make(map[string]bool)
+
+	for i, g := range groups {
+		path := fmt.Sprintf("%s[%d]", prefix, i)
+
+		if g.Name == "" {
+			return fmt.Errorf("%s.name: is required", path)
+		}
+		if containsNullByte(g.Name) {
+			return fmt.Errorf("%s.name: contains null byte", path)
+		}
+		if names[g.Name] {
+			return fmt.Errorf("%s.name: duplicate group name %q", path, g.Name)
+		}
+		names[g.Name] = true
+
+		if err := validateMultiValueAttributes(path+".attributes", g.Attributes); err != nil {
+			return err
+		}
+
+		if err := validateMemberNames(path+".members", g.Members); err != nil {
+			return err
+		}
+
+		if err := validateOrganizationGroups(path+".subGroups", g.SubGroups); err != nil {
 			return err
 		}
 	}
