@@ -119,44 +119,6 @@ func buildClientScopeBody(cs config.ClientScope) map[string]any {
 	return body
 }
 
-// ensureClientScopeProtocolMapper creates or updates one protocol mapper on a
-// client scope. It mirrors ensureProtocolMapper, which does the same for the
-// mappers attached directly to a client.
-func (p *Provisioner) ensureClientScopeProtocolMapper(ctx context.Context, realm, scopeID, scopeName string, pm config.ProtocolMapper, strategy string) error {
-	existing, err := p.client.GetProtocolMappers(ctx, realm, client.MapperContainerClientScopes, scopeID)
-	if err != nil {
-		return err
-	}
-
-	body := buildProtocolMapperBody(pm)
-
-	for _, m := range existing {
-		name, ok := m["name"].(string)
-		if !ok || name != pm.Name {
-			continue
-		}
-
-		if strategy == "create" {
-			slog.Info("Skipping existing client scope protocol mapper (strategy=create)", "realm", realm, "clientScope", scopeName, "mapper", pm.Name)
-			return nil
-		}
-
-		id, ok := m["id"].(string)
-		if !ok {
-			return fmt.Errorf("client scope protocol mapper %q: missing or invalid id in response", pm.Name)
-		}
-
-		slog.Info("Updating client scope protocol mapper", "realm", realm, "clientScope", scopeName, "mapper", pm.Name)
-		body["id"] = id
-
-		return p.client.UpdateProtocolMapper(ctx, realm, client.MapperContainerClientScopes, scopeID, id, body)
-	}
-
-	slog.Info("Creating client scope protocol mapper", "realm", realm, "clientScope", scopeName, "mapper", pm.Name)
-
-	return p.client.CreateProtocolMapper(ctx, realm, client.MapperContainerClientScopes, scopeID, body)
-}
-
 // ensureRealmClientScopeType assigns a scope to the realm's default or optional
 // client scopes. Assignment is additive: a scope is added when missing and
 // never removed, so switching a scope's type in config does not detach it from

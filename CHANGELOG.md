@@ -60,7 +60,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   | `would create client scope protocol mapper` | `would create protocol mapper` | `container=client-scopes` |
   | `would update client scope protocol mapper` | `would update protocol mapper` | `container=client-scopes` |
 
-  The provisioner's non-dry-run log messages are unchanged.
+  The port collapse itself left the non-dry-run messages alone; the reconciler
+  changes below came later.
+- The two protocol mapper reconcilers were merged into one. A mapper on a
+  client scope now logs `Creating protocol mapper` rather than
+  `Creating client scope protocol mapper` (likewise updating and skipping), with
+  the container carried in `container`, `containerId` and `containerName`
+  attributes. Mappers on a client gained the same attributes in place of the
+  bare `clientUUID`, and `containerName` is the clientId, which is more use in a
+  log than the UUID. This matches how the dry-run adapter already reports them.
 - `realmRoles` and `clientRoles` on an organization group are now rejected at
   config load with an explanation, instead of being rejected as unknown fields.
   Keycloak 26.7 accepts the corresponding role-mapping call and reads the role

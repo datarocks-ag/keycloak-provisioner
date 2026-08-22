@@ -397,7 +397,7 @@ func TestProvisionRealmSkipsClientScopeListingWhenUnused(t *testing.T) {
 	}
 }
 
-func TestEnsureClientScopeProtocolMapperCreatesWhenMissing(t *testing.T) {
+func TestEnsureProtocolMapperOnClientScopeCreatesWhenMissing(t *testing.T) {
 	var mu sync.Mutex
 	var created map[string]any
 
@@ -417,8 +417,8 @@ func TestEnsureClientScopeProtocolMapperCreatesWhenMissing(t *testing.T) {
 	p := New(newTestClient(t, server.URL), &config.Config{})
 	pm := config.ProtocolMapper{Name: "audience", Protocol: "openid-connect", ProtocolMapper: "oidc-audience-mapper"}
 
-	if err := p.ensureClientScopeProtocolMapper(context.Background(), "test", "cs-1", "orders:read", pm, "update"); err != nil {
-		t.Fatalf("ensureClientScopeProtocolMapper: %v", err)
+	if err := p.ensureProtocolMapper(context.Background(), "test", clientScopeMapperTarget("cs-1", "orders:read"), pm, "update"); err != nil {
+		t.Fatalf("ensureProtocolMapper on client scope: %v", err)
 	}
 
 	mu.Lock()
@@ -428,7 +428,7 @@ func TestEnsureClientScopeProtocolMapperCreatesWhenMissing(t *testing.T) {
 	}
 }
 
-func TestEnsureClientScopeProtocolMapperUpdatesExisting(t *testing.T) {
+func TestEnsureProtocolMapperOnClientScopeUpdatesExisting(t *testing.T) {
 	var mu sync.Mutex
 	var updated map[string]any
 
@@ -448,8 +448,8 @@ func TestEnsureClientScopeProtocolMapperUpdatesExisting(t *testing.T) {
 	p := New(newTestClient(t, server.URL), &config.Config{})
 	pm := config.ProtocolMapper{Name: "audience", Protocol: "openid-connect", ProtocolMapper: "oidc-audience-mapper"}
 
-	if err := p.ensureClientScopeProtocolMapper(context.Background(), "test", "cs-1", "orders:read", pm, "update"); err != nil {
-		t.Fatalf("ensureClientScopeProtocolMapper: %v", err)
+	if err := p.ensureProtocolMapper(context.Background(), "test", clientScopeMapperTarget("cs-1", "orders:read"), pm, "update"); err != nil {
+		t.Fatalf("ensureProtocolMapper on client scope: %v", err)
 	}
 
 	mu.Lock()
@@ -459,7 +459,7 @@ func TestEnsureClientScopeProtocolMapperUpdatesExisting(t *testing.T) {
 	}
 }
 
-func TestEnsureClientScopeProtocolMapperCreateStrategySkipsExisting(t *testing.T) {
+func TestEnsureProtocolMapperOnClientScopeCreateStrategySkipsExisting(t *testing.T) {
 	server := testServer(t, map[string]http.HandlerFunc{
 		"GET /admin/realms/{realm}/client-scopes/{id}/protocol-mappers/models": func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode([]map[string]any{{"id": "m-1", "name": "audience"}})
@@ -474,7 +474,7 @@ func TestEnsureClientScopeProtocolMapperCreateStrategySkipsExisting(t *testing.T
 	p := New(newTestClient(t, server.URL), &config.Config{})
 	pm := config.ProtocolMapper{Name: "audience", Protocol: "openid-connect", ProtocolMapper: "oidc-audience-mapper"}
 
-	if err := p.ensureClientScopeProtocolMapper(context.Background(), "test", "cs-1", "orders:read", pm, "create"); err != nil {
-		t.Fatalf("ensureClientScopeProtocolMapper: %v", err)
+	if err := p.ensureProtocolMapper(context.Background(), "test", clientScopeMapperTarget("cs-1", "orders:read"), pm, "create"); err != nil {
+		t.Fatalf("ensureProtocolMapper on client scope: %v", err)
 	}
 }
