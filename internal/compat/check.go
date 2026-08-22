@@ -2,8 +2,10 @@ package compat
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 
 	"keycloak-provisioner/internal/config"
@@ -33,6 +35,8 @@ type ServerInfo struct {
 	Parsed  bool
 	// Features maps a Keycloak feature name to whether it is enabled.
 	Features map[string]bool
+	// ProtocolMappers maps a protocol to the mapper type ids valid for it.
+	ProtocolMappers map[string]map[string]bool
 }
 
 // Problem is one thing the server cannot satisfy: a capability whose version
@@ -63,7 +67,10 @@ func ReadServerInfo(ctx context.Context, reader ServerInfoReader) (ServerInfo, e
 		return ServerInfo{}, fmt.Errorf("reading server info: %w", err)
 	}
 
-	info := ServerInfo{Features: map[string]bool{}}
+	info := ServerInfo{
+		Features:        map[string]bool{},
+		ProtocolMappers: map[string]map[string]bool{},
+	}
 
 	if system, ok := raw["systemInfo"].(map[string]any); ok {
 		info.RawVersion, _ = system["version"].(string)
@@ -89,6 +96,28 @@ func ReadServerInfo(ctx context.Context, reader ServerInfoReader) (ServerInfo, e
 		if nameOK && enabledOK {
 			info.Features[name] = enabled
 		}
+	}
+
+	types, _ := raw["protocolMapperTypes"].(map[string]any)
+	for protocol, entry := range types {
+		mappers, ok := entry.([]any)
+		if !ok {
+			continue
+		}
+
+		ids := map[string]bool{}
+
+		for _, m := range mappers {
+			mapper, ok := m.(map[string]any)
+			if !ok {
+				continue
+			}
+			if id, ok := mapper["id"].(string); ok {
+				ids[id] = true
+			}
+		}
+
+		info.ProtocolMappers[protocol] = ids
 	}
 
 	return info, nil
@@ -145,33 +174,76 @@ func (r Requirement) unsatisfiedBy(info ServerInfo) string {
 	return ""
 }
 
+// statusCoder is any error that carries an HTTP status. *client.StatusError
+// implements it; matching the interface keeps this package from importing the
+// client just to read a status.
+type statusCoder interface {
+	StatusCode() int
+}
+
+// isPermissionDenied reports whether the error is Keycloak refusing the request
+// rather than failing it.
+func isPermissionDenied(err error) bool {
+	var status statusCoder
+	if !errors.As(err, &status) {
+		return false
+	}
+
+	code := status.StatusCode()
+
+	return code == http.StatusUnauthorized || code == http.StatusForbidden
+}
+
 // Verify checks the config against the server and returns an error naming every
 // mismatch, or nil when there is nothing to report. It logs what it found so a
 // successful check is visible too.
+//
+// A check it cannot perform is skipped with a warning rather than failing the
+// run. The admin account only needs enough rights to provision; reading the
+// server's capabilities takes more, and a least-privilege account — one holding
+// create-realm and nothing else — is refused the provider lists. Aborting there
+// would break setups that provision perfectly well, which is a worse outcome
+// than not checking.
 func Verify(ctx context.Context, reader ServerReader, cfg *config.Config) error {
-	info, err := ReadServerInfo(ctx, reader)
-	if err != nil {
-		return err
-	}
+	var problems []Problem
 
-	if !info.Parsed {
-		slog.Warn("Could not parse the Keycloak version; skipping version checks",
-			"version", info.RawVersion)
-	} else {
+	info, err := ReadServerInfo(ctx, reader)
+
+	switch {
+	case err != nil:
+		// Only a permission problem is tolerated. A network failure, a 5xx or
+		// an unreadable payload means something is actually wrong, and hiding
+		// it here would surface later as a partial provisioning run with a
+		// murkier cause.
+		if !isPermissionDenied(err) {
+			return err
+		}
+
+		slog.Warn("Not permitted to read the Keycloak server info; skipping version and feature checks", "error", err)
+	case !info.Parsed:
+		slog.Warn("Could not parse the Keycloak version; skipping version checks", "version", info.RawVersion)
+	default:
 		slog.Info("Detected Keycloak version", "version", info.RawVersion)
 	}
 
-	problems := Check(cfg, info)
+	if err == nil {
+		problems = append(problems, Check(cfg, info)...)
+	}
 
 	// Ask the server what it actually offers, which catches a provider missing
 	// for any reason — a disabled feature, a version difference, or a typo —
 	// without anyone having to record the mapping.
-	caps, err := ReadCapabilities(ctx, reader)
-	if err != nil {
-		return err
-	}
+	caps, capsErr := ReadCapabilities(ctx, reader, info)
 
-	problems = append(problems, CheckCapabilities(cfg, caps)...)
+	switch {
+	case capsErr != nil && !isPermissionDenied(capsErr):
+		return capsErr
+	case capsErr != nil:
+		slog.Warn("Not permitted to read the server's provider lists; skipping provider validation",
+			"error", capsErr)
+	default:
+		problems = append(problems, CheckCapabilities(cfg, caps)...)
+	}
 
 	if len(problems) == 0 {
 		return nil

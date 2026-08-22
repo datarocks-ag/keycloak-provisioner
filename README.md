@@ -539,6 +539,21 @@ Suggestions use edit distance, so a genuine typo gets one and a provider that is
 
 If the server does not report its providers, nothing is rejected on the strength of a question that could not be asked.
 
+### Permissions
+
+Provider validation needs more rights than provisioning does. An account holding only `create-realm` can read the server info — so version and feature checks work — but is refused the provider lists with 403.
+
+A check the account is **not permitted** to perform is skipped with a warning, never treated as a failure; provisioning that works must keep working:
+
+```
+WARN  Could not read the server's provider lists; skipping provider validation
+      error="reading authenticator-providers: unexpected status 403: ..."
+```
+
+The two halves degrade independently, so losing the provider lists still leaves the version and feature checks in place.
+
+Only 401 and 403 are treated this way. A network failure, a 5xx or an unreadable response means something is actually wrong and fails the run, rather than quietly disabling the check.
+
 Pass `--skip-version-check` to bypass all of this.
 
 ## Connection Retry

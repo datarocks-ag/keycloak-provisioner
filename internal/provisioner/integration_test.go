@@ -2266,7 +2266,14 @@ func TestIntegrationCapabilitiesMatchServer(t *testing.T) {
 	kc, cleanup := setupKeycloak(t)
 	defer cleanup()
 
-	caps, err := compat.ReadCapabilities(context.Background(), kc)
+	ctx := context.Background()
+
+	info, err := compat.ReadServerInfo(ctx, kc)
+	if err != nil {
+		t.Fatalf("ReadServerInfo: %v", err)
+	}
+
+	caps, err := compat.ReadCapabilities(ctx, kc, info)
 	if err != nil {
 		t.Fatalf("ReadCapabilities: %v", err)
 	}
