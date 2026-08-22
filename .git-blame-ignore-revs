@@ -1,0 +1,5 @@
+# Revisions listed here are pure code movement. Configure git to skip them:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# Split provisioner tests to mirror their sources (no content change)
+2069b2d63826c82d41d001af1e45588286eace70
