@@ -34,12 +34,10 @@ type fakeAPI struct {
 	groupRealmRoleMaps  map[string][]map[string]any // key: realm/groupID
 	groupClientRoleMaps map[string][]map[string]any // key: realm/groupID/clientUUID
 
-	clientScopes        map[string][]map[string]any // key: realm
-	scopeMappers        map[string][]map[string]any // key: realm/scopeID
-	realmDefaultScopes  map[string][]map[string]any // key: realm
-	realmOptionalScopes map[string][]map[string]any // key: realm
-	clientDefaultScopes map[string][]map[string]any // key: realm/clientUUID
-	clientOptionalScope map[string][]map[string]any // key: realm/clientUUID
+	clientScopes           map[string][]map[string]any // key: realm
+	scopeMappers           map[string][]map[string]any // key: realm/scopeID
+	realmScopeAssignments  map[string][]map[string]any // key: realm/kind
+	clientScopeAssignments map[string][]map[string]any // key: realm/clientUUID/kind
 
 	organizations map[string][]map[string]any // key: realm
 	orgMembers    map[string][]map[string]any // key: realm/orgID
@@ -70,12 +68,10 @@ func newFakeAPI() *fakeAPI {
 		groupRealmRoleMaps:  make(map[string][]map[string]any),
 		groupClientRoleMaps: make(map[string][]map[string]any),
 
-		clientScopes:        make(map[string][]map[string]any),
-		scopeMappers:        make(map[string][]map[string]any),
-		realmDefaultScopes:  make(map[string][]map[string]any),
-		realmOptionalScopes: make(map[string][]map[string]any),
-		clientDefaultScopes: make(map[string][]map[string]any),
-		clientOptionalScope: make(map[string][]map[string]any),
+		clientScopes:           make(map[string][]map[string]any),
+		scopeMappers:           make(map[string][]map[string]any),
+		realmScopeAssignments:  make(map[string][]map[string]any),
+		clientScopeAssignments: make(map[string][]map[string]any),
 
 		organizations: make(map[string][]map[string]any),
 		orgMembers:    make(map[string][]map[string]any),
@@ -152,22 +148,6 @@ func (f *fakeAPI) GetClientScopeProtocolMappers(_ context.Context, realm, scopeI
 	return f.scopeMappers[realm+"/"+scopeID], nil
 }
 
-func (f *fakeAPI) GetRealmDefaultClientScopes(_ context.Context, realm string) ([]map[string]any, error) {
-	return f.realmDefaultScopes[realm], nil
-}
-
-func (f *fakeAPI) GetRealmOptionalClientScopes(_ context.Context, realm string) ([]map[string]any, error) {
-	return f.realmOptionalScopes[realm], nil
-}
-
-func (f *fakeAPI) GetClientDefaultScopes(_ context.Context, realm, clientUUID string) ([]map[string]any, error) {
-	return f.clientDefaultScopes[realm+"/"+clientUUID], nil
-}
-
-func (f *fakeAPI) GetClientOptionalScopes(_ context.Context, realm, clientUUID string) ([]map[string]any, error) {
-	return f.clientOptionalScope[realm+"/"+clientUUID], nil
-}
-
 func (f *fakeAPI) GetOrganizations(_ context.Context, realm, _ string) ([]map[string]any, error) {
 	return f.organizations[realm], nil
 }
@@ -194,4 +174,12 @@ func (f *fakeAPI) GetAuthenticationFlows(_ context.Context, realm string) ([]map
 
 func (f *fakeAPI) GetAuthenticationFlowExecutions(_ context.Context, realm, flowAlias string) ([]map[string]any, error) {
 	return f.flowExecutions[realm+"/"+flowAlias], nil
+}
+
+func (f *fakeAPI) GetRealmClientScopes(_ context.Context, realm, kind string) ([]map[string]any, error) {
+	return f.realmScopeAssignments[realm+"/"+kind], nil
+}
+
+func (f *fakeAPI) GetClientScopeAssignments(_ context.Context, realm, clientUUID, kind string) ([]map[string]any, error) {
+	return f.clientScopeAssignments[realm+"/"+clientUUID+"/"+kind], nil
 }

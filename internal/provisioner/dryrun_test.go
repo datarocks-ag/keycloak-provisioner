@@ -3,6 +3,8 @@ package provisioner
 import (
 	"context"
 	"testing"
+
+	"keycloak-provisioner/internal/client"
 )
 
 func TestDryRunSkipsAllMutations(t *testing.T) {
@@ -249,16 +251,16 @@ func TestDryRunSkipsClientScopeMutations(t *testing.T) {
 	if err := d.UpdateClientScopeProtocolMapper(ctx, "r", scopeID, "mid", map[string]any{"name": "m"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.AddRealmDefaultClientScope(ctx, "r", scopeID); err != nil {
+	if err := d.AddRealmClientScope(ctx, "r", scopeID, client.ClientScopeDefault); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.AddRealmOptionalClientScope(ctx, "r", scopeID); err != nil {
+	if err := d.AddRealmClientScope(ctx, "r", scopeID, client.ClientScopeOptional); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.AddClientDefaultScope(ctx, "r", "uuid", scopeID); err != nil {
+	if err := d.AddClientScopeAssignment(ctx, "r", "uuid", scopeID, client.ClientScopeDefault); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.AddClientOptionalScope(ctx, "r", "uuid", scopeID); err != nil {
+	if err := d.AddClientScopeAssignment(ctx, "r", "uuid", scopeID, client.ClientScopeOptional); err != nil {
 		t.Fatal(err)
 	}
 

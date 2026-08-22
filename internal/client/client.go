@@ -1032,53 +1032,46 @@ func (c *Client) putClientScopeAssignment(ctx context.Context, path string) erro
 	return nil
 }
 
-// GetRealmDefaultClientScopes returns the realm's default client scopes, which
-// Keycloak assigns to every newly created client.
-func (c *Client) GetRealmDefaultClientScopes(ctx context.Context, realm string) ([]map[string]any, error) {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/default-default-client-scopes"
-	return c.listClientScopeAssignments(ctx, path, "realm default client scopes")
+// Client scope assignment kinds. Keycloak spells the realm-level and
+// client-level endpoints differently, but both distinguish the same two kinds,
+// and they are the values config.ClientScope.Type already carries.
+const (
+	ClientScopeDefault  = "default"
+	ClientScopeOptional = "optional"
+)
+
+// realmClientScopePath is the realm-level default/optional scope endpoint.
+// Keycloak names these "default-default-" and "default-optional-".
+func realmClientScopePath(realm, kind string) string {
+	return "/admin/realms/" + url.PathEscape(realm) + "/default-" + url.PathEscape(kind) + "-client-scopes"
 }
 
-// AddRealmDefaultClientScope adds a client scope to the realm's defaults.
-func (c *Client) AddRealmDefaultClientScope(ctx context.Context, realm, scopeID string) error {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/default-default-client-scopes/" + url.PathEscape(scopeID)
-	return c.putClientScopeAssignment(ctx, path)
+func clientScopePath(realm, clientUUID, kind string) string {
+	return "/admin/realms/" + url.PathEscape(realm) + "/clients/" + url.PathEscape(clientUUID) +
+		"/" + url.PathEscape(kind) + "-client-scopes"
 }
 
-// GetRealmOptionalClientScopes returns the realm's optional client scopes.
-func (c *Client) GetRealmOptionalClientScopes(ctx context.Context, realm string) ([]map[string]any, error) {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/default-optional-client-scopes"
-	return c.listClientScopeAssignments(ctx, path, "realm optional client scopes")
+// GetRealmClientScopes returns the realm's default or optional client scopes.
+// Default scopes are the ones Keycloak assigns to every newly created client.
+func (c *Client) GetRealmClientScopes(ctx context.Context, realm, kind string) ([]map[string]any, error) {
+	return c.listClientScopeAssignments(ctx, realmClientScopePath(realm, kind), "realm "+kind+" client scopes")
 }
 
-// AddRealmOptionalClientScope adds a client scope to the realm's optionals.
-func (c *Client) AddRealmOptionalClientScope(ctx context.Context, realm, scopeID string) error {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/default-optional-client-scopes/" + url.PathEscape(scopeID)
-	return c.putClientScopeAssignment(ctx, path)
+// AddRealmClientScope adds a client scope to the realm's defaults or optionals.
+func (c *Client) AddRealmClientScope(ctx context.Context, realm, scopeID, kind string) error {
+	return c.putClientScopeAssignment(ctx, realmClientScopePath(realm, kind)+"/"+url.PathEscape(scopeID))
 }
 
-// GetClientDefaultScopes returns the default client scopes assigned to a client.
-func (c *Client) GetClientDefaultScopes(ctx context.Context, realm, clientUUID string) ([]map[string]any, error) {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/clients/" + url.PathEscape(clientUUID) + "/default-client-scopes"
-	return c.listClientScopeAssignments(ctx, path, "client default scopes")
+// GetClientScopeAssignments returns the default or optional scopes assigned to
+// a client.
+func (c *Client) GetClientScopeAssignments(ctx context.Context, realm, clientUUID, kind string) ([]map[string]any, error) {
+	return c.listClientScopeAssignments(ctx, clientScopePath(realm, clientUUID, kind), "client "+kind+" scopes")
 }
 
-// AddClientDefaultScope assigns a client scope to a client as a default scope.
-func (c *Client) AddClientDefaultScope(ctx context.Context, realm, clientUUID, scopeID string) error {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/clients/" + url.PathEscape(clientUUID) + "/default-client-scopes/" + url.PathEscape(scopeID)
-	return c.putClientScopeAssignment(ctx, path)
-}
-
-// GetClientOptionalScopes returns the optional client scopes assigned to a client.
-func (c *Client) GetClientOptionalScopes(ctx context.Context, realm, clientUUID string) ([]map[string]any, error) {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/clients/" + url.PathEscape(clientUUID) + "/optional-client-scopes"
-	return c.listClientScopeAssignments(ctx, path, "client optional scopes")
-}
-
-// AddClientOptionalScope assigns a client scope to a client as an optional scope.
-func (c *Client) AddClientOptionalScope(ctx context.Context, realm, clientUUID, scopeID string) error {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/clients/" + url.PathEscape(clientUUID) + "/optional-client-scopes/" + url.PathEscape(scopeID)
-	return c.putClientScopeAssignment(ctx, path)
+// AddClientScopeAssignment assigns a client scope to a client as a default or
+// optional scope.
+func (c *Client) AddClientScopeAssignment(ctx context.Context, realm, clientUUID, scopeID, kind string) error {
+	return c.putClientScopeAssignment(ctx, clientScopePath(realm, clientUUID, kind)+"/"+url.PathEscape(scopeID))
 }
 
 // GetOrganizations returns organizations in the realm matching the given name

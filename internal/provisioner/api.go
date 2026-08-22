@@ -75,17 +75,13 @@ type ClientScopeAPI interface {
 	UpdateClientScopeProtocolMapper(ctx context.Context, realm, scopeID, mapperID string, body map[string]any) error
 }
 
-// ClientScopeAssignmentAPI covers attaching client scopes, both as
-// realm defaults and to an individual client.
+// ClientScopeAssignmentAPI covers attaching client scopes, both as realm
+// defaults and to an individual client. kind is "default" or "optional".
 type ClientScopeAssignmentAPI interface {
-	GetRealmDefaultClientScopes(ctx context.Context, realm string) ([]map[string]any, error)
-	AddRealmDefaultClientScope(ctx context.Context, realm, scopeID string) error
-	GetRealmOptionalClientScopes(ctx context.Context, realm string) ([]map[string]any, error)
-	AddRealmOptionalClientScope(ctx context.Context, realm, scopeID string) error
-	GetClientDefaultScopes(ctx context.Context, realm, clientUUID string) ([]map[string]any, error)
-	AddClientDefaultScope(ctx context.Context, realm, clientUUID, scopeID string) error
-	GetClientOptionalScopes(ctx context.Context, realm, clientUUID string) ([]map[string]any, error)
-	AddClientOptionalScope(ctx context.Context, realm, clientUUID, scopeID string) error
+	GetRealmClientScopes(ctx context.Context, realm, kind string) ([]map[string]any, error)
+	AddRealmClientScope(ctx context.Context, realm, scopeID, kind string) error
+	GetClientScopeAssignments(ctx context.Context, realm, clientUUID, kind string) ([]map[string]any, error)
+	AddClientScopeAssignment(ctx context.Context, realm, clientUUID, scopeID, kind string) error
 }
 
 // UserAPI covers users and their credentials.

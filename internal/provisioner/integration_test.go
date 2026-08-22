@@ -1569,7 +1569,7 @@ realms:
 		t.Errorf("unexpected scope protocol mappers: %v", mappers)
 	}
 
-	realmOptional, err := kc.GetRealmOptionalClientScopes(ctx, "scope-realm")
+	realmOptional, err := kc.GetRealmClientScopes(ctx, "scope-realm", client.ClientScopeOptional)
 	if err != nil {
 		t.Fatalf("getting realm optional scopes: %v", err)
 	}
@@ -1583,7 +1583,7 @@ realms:
 	}
 	uuid, _ := clients[0]["id"].(string)
 
-	clientOptional, err := kc.GetClientOptionalScopes(ctx, "scope-realm", uuid)
+	clientOptional, err := kc.GetClientScopeAssignments(ctx, "scope-realm", uuid, client.ClientScopeOptional)
 	if err != nil {
 		t.Fatalf("getting client optional scopes: %v", err)
 	}
@@ -1647,7 +1647,7 @@ realms:
 	}
 	uuid, _ := clients[0]["id"].(string)
 
-	assigned, err := kc.GetClientDefaultScopes(ctx, "scope-update-realm", uuid)
+	assigned, err := kc.GetClientScopeAssignments(ctx, "scope-update-realm", uuid, client.ClientScopeDefault)
 	if err != nil {
 		t.Fatalf("getting client default scopes: %v", err)
 	}

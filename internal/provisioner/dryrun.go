@@ -498,51 +498,31 @@ func (d *dryRunAPI) UpdateClientScopeProtocolMapper(_ context.Context, realm, sc
 
 // Client scope assignment.
 
-func (d *dryRunAPI) GetRealmDefaultClientScopes(ctx context.Context, realm string) ([]map[string]any, error) {
+func (d *dryRunAPI) GetRealmClientScopes(ctx context.Context, realm, kind string) ([]map[string]any, error) {
 	if d.realmIsSynthetic(realm) {
 		return nil, nil
 	}
-	return d.inner.GetRealmDefaultClientScopes(ctx, realm)
+
+	return d.inner.GetRealmClientScopes(ctx, realm, kind)
 }
 
-func (d *dryRunAPI) AddRealmDefaultClientScope(_ context.Context, realm, scopeID string) error {
-	slog.Info("DRY-RUN: would assign client scope to realm defaults", "realm", realm, "scopeUUID", scopeID)
+func (d *dryRunAPI) AddRealmClientScope(_ context.Context, realm, scopeID, kind string) error {
+	slog.Info("DRY-RUN: would assign client scope to realm", "realm", realm, "scopeUUID", scopeID, "type", kind)
 	return nil
 }
 
-func (d *dryRunAPI) GetRealmOptionalClientScopes(ctx context.Context, realm string) ([]map[string]any, error) {
-	if d.realmIsSynthetic(realm) {
-		return nil, nil
-	}
-	return d.inner.GetRealmOptionalClientScopes(ctx, realm)
-}
-
-func (d *dryRunAPI) AddRealmOptionalClientScope(_ context.Context, realm, scopeID string) error {
-	slog.Info("DRY-RUN: would assign client scope to realm optionals", "realm", realm, "scopeUUID", scopeID)
-	return nil
-}
-
-func (d *dryRunAPI) GetClientDefaultScopes(ctx context.Context, realm, clientUUID string) ([]map[string]any, error) {
+func (d *dryRunAPI) GetClientScopeAssignments(ctx context.Context, realm, clientUUID, kind string) ([]map[string]any, error) {
 	if d.realmIsSynthetic(realm) || isSyntheticID(clientUUID) {
 		return nil, nil
 	}
-	return d.inner.GetClientDefaultScopes(ctx, realm, clientUUID)
+
+	return d.inner.GetClientScopeAssignments(ctx, realm, clientUUID, kind)
 }
 
-func (d *dryRunAPI) AddClientDefaultScope(_ context.Context, realm, clientUUID, scopeID string) error {
-	slog.Info("DRY-RUN: would assign default client scope", "realm", realm, "clientUUID", clientUUID, "scopeUUID", scopeID)
-	return nil
-}
+func (d *dryRunAPI) AddClientScopeAssignment(_ context.Context, realm, clientUUID, scopeID, kind string) error {
+	slog.Info("DRY-RUN: would assign client scope",
+		"realm", realm, "clientUUID", clientUUID, "scopeUUID", scopeID, "type", kind)
 
-func (d *dryRunAPI) GetClientOptionalScopes(ctx context.Context, realm, clientUUID string) ([]map[string]any, error) {
-	if d.realmIsSynthetic(realm) || isSyntheticID(clientUUID) {
-		return nil, nil
-	}
-	return d.inner.GetClientOptionalScopes(ctx, realm, clientUUID)
-}
-
-func (d *dryRunAPI) AddClientOptionalScope(_ context.Context, realm, clientUUID, scopeID string) error {
-	slog.Info("DRY-RUN: would assign optional client scope", "realm", realm, "clientUUID", clientUUID, "scopeUUID", scopeID)
 	return nil
 }
 

@@ -1814,28 +1814,28 @@ func TestClientScopeAssignmentEndpoints(t *testing.T) {
 	c := connectClient(t, server.URL)
 	ctx := context.Background()
 
-	if _, err := c.GetRealmDefaultClientScopes(ctx, "test"); err != nil {
+	if _, err := c.GetRealmClientScopes(ctx, "test", ClientScopeDefault); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.AddRealmDefaultClientScope(ctx, "test", "cs-1"); err != nil {
+	if err := c.AddRealmClientScope(ctx, "test", "cs-1", ClientScopeDefault); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.GetRealmOptionalClientScopes(ctx, "test"); err != nil {
+	if _, err := c.GetRealmClientScopes(ctx, "test", ClientScopeOptional); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.AddRealmOptionalClientScope(ctx, "test", "cs-2"); err != nil {
+	if err := c.AddRealmClientScope(ctx, "test", "cs-2", ClientScopeOptional); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.GetClientDefaultScopes(ctx, "test", "uuid-1"); err != nil {
+	if _, err := c.GetClientScopeAssignments(ctx, "test", "uuid-1", ClientScopeDefault); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.AddClientDefaultScope(ctx, "test", "uuid-1", "cs-3"); err != nil {
+	if err := c.AddClientScopeAssignment(ctx, "test", "uuid-1", "cs-3", ClientScopeDefault); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.GetClientOptionalScopes(ctx, "test", "uuid-1"); err != nil {
+	if _, err := c.GetClientScopeAssignments(ctx, "test", "uuid-1", ClientScopeOptional); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.AddClientOptionalScope(ctx, "test", "uuid-1", "cs-4"); err != nil {
+	if err := c.AddClientScopeAssignment(ctx, "test", "uuid-1", "cs-4", ClientScopeOptional); err != nil {
 		t.Fatal(err)
 	}
 

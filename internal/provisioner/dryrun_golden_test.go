@@ -147,6 +147,12 @@ realms:
 
 // TestDryRunGoldenLog pins the whole dry-run surface.
 //
+// Two messages lost a word when the default/optional client scope methods were
+// collapsed: the discriminator moved out of the message text and into a "type"
+// attribute, so the message is now stable and the variance is structured. No
+// information was lost, and the change was deliberate — the golden is the
+// record of it.
+//
 // Dry-run's behaviour *is* what it logs: nothing is written, so the log is the
 // only observable output. Asserting the ordered message list is therefore the
 // only way to prove a refactor of the adapter or the port changed nothing. A
@@ -162,11 +168,11 @@ func TestDryRunGoldenLog(t *testing.T) {
 		"would update realm",
 		"would create client scope",
 		"would create client scope protocol mapper",
-		"would assign client scope to realm optionals",
+		"would assign client scope to realm",
 		"would create client",
 		"would create protocol mapper",
 		"would create client role",
-		"would assign optional client scope",
+		"would assign client scope",
 		"would create realm role",
 		"would assign realm roles",
 		"would create group",
