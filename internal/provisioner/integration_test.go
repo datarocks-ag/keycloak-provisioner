@@ -2352,7 +2352,7 @@ realms:
 		t.Errorf("email not applied: %v", users[0]["email"])
 	}
 
-	roles, err := kc.GetUserRealmRoleMappings(ctx, "uid-realm", gotID)
+	roles, err := kc.GetRealmRoleMappings(ctx, "uid-realm", client.RoleSubjectUsers, gotID)
 	if err != nil {
 		t.Fatalf("getting role mappings: %v", err)
 	}
