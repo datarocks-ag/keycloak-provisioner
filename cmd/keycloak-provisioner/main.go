@@ -12,6 +12,7 @@ import (
 
 	"keycloak-provisioner/internal/cli"
 	"keycloak-provisioner/internal/client"
+	"keycloak-provisioner/internal/compat"
 	"keycloak-provisioner/internal/config"
 	"keycloak-provisioner/internal/provisioner"
 )
@@ -51,6 +52,15 @@ func main() {
 	kc := client.New(opts.KeycloakURL, opts.Username, opts.Password)
 	if err := kc.Connect(ctx); err != nil {
 		slog.Error("Failed to connect to Keycloak", "error", err)
+		os.Exit(1)
+	}
+
+	// Refuse a config the server cannot apply before anything is mutated,
+	// rather than failing partway through with a raw Keycloak error.
+	if opts.SkipVersionCheck {
+		slog.Warn("Skipping the Keycloak compatibility check (--skip-version-check)")
+	} else if err := compat.Verify(ctx, kc, cfg); err != nil {
+		slog.Error("Keycloak compatibility check failed", "error", err)
 		os.Exit(1)
 	}
 

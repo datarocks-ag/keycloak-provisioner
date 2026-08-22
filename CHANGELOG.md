@@ -58,6 +58,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `authenticationFlowBindingOverrides` on clients, given as flow aliases
   and resolved to the flow IDs Keycloak stores on the client. An alias
   that does not resolve is an error rather than a silent skip.
+- Pre-flight Keycloak compatibility check. Before anything is
+  provisioned, the tool reads the server version and feature list and
+  refuses a config the server cannot apply, so a run either does the
+  whole job or changes nothing instead of failing partway with a raw
+  Keycloak error. The error names each unsupported capability, the
+  version it needs, and the config paths that use it. The check also
+  covers server feature flags, not just versions: a capability can be
+  supported by the release and still be switched off on the server,
+  which a version comparison alone cannot catch. Two cases are
+  deliberately not failures — a version string the tool cannot parse
+  (custom and nightly builds), where comparisons are skipped with a
+  warning and feature checks still apply, and a feature the server does
+  not report at all, which means the release predates it and is already
+  covered by the version comparison.
+- `--skip-version-check` to bypass the compatibility check.
+- A published compatibility table in the README, generated from the
+  requirement registry in `internal/compat/requirements.go`. A test
+  fails if the two drift apart; `go test ./internal/compat -update`
+  regenerates it.
 
 ### Fixed
 

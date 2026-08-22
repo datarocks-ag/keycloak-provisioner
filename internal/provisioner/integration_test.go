@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"keycloak-provisioner/internal/client"
+	"keycloak-provisioner/internal/compat"
 	"keycloak-provisioner/internal/config"
 	"keycloak-provisioner/internal/provisioner"
 
@@ -18,14 +19,25 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
+// keycloakImage is the version these tests target. 26.2+ is required for
+// Standard Token Exchange (RFC 8693), 26+ for Organizations, and 26.6+ for
+// organization groups, so 26.6 is the supported floor.
+const keycloakImage = "keycloak/keycloak:26.6"
+
 func setupKeycloak(t *testing.T) (*client.Client, func()) {
+	t.Helper()
+
+	return setupKeycloakVersion(t, keycloakImage)
+}
+
+// setupKeycloakVersion starts a specific Keycloak image, so a test can check
+// behaviour against a release older than the supported floor.
+func setupKeycloakVersion(t *testing.T, image string) (*client.Client, func()) {
 	t.Helper()
 	ctx := context.Background()
 
 	kcContainer, err := keycloak.Run(ctx,
-		// 26.2+ is required for Standard Token Exchange (RFC 8693) and 26+
-		// for Organizations. The supported floor is 26.6.
-		"keycloak/keycloak:26.6",
+		image,
 		keycloak.WithAdminUsername("admin"),
 		keycloak.WithAdminPassword("admin"),
 	)
@@ -2028,5 +2040,106 @@ realms:
 	}
 	if !strings.Contains(err.Error(), "copyFrom") {
 		t.Errorf("error should point at copyFrom, got: %v", err)
+	}
+}
+
+// TestIntegrationCompatibilityCheckPasses confirms the gate does not stand in
+// the way of a config the server genuinely supports.
+func TestIntegrationCompatibilityCheckPasses(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	configYAML := `
+realms:
+  - realm: "compat-ok-realm"
+    enabled: true
+    organizationsEnabled: true
+    organizations:
+      - name: "acme"
+        domains:
+          - name: "acme.com"
+        groups:
+          - name: "engineering"
+    clients:
+      - clientId: "exchange-app"
+        standardTokenExchangeEnabled: true
+`
+	cfg, err := config.Load(writeTestConfig(t, configYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if err := compat.Verify(ctx, kc, cfg); err != nil {
+		t.Fatalf("config should be supported by %s: %v", keycloakImage, err)
+	}
+
+	info, err := compat.ReadServerInfo(ctx, kc)
+	if err != nil {
+		t.Fatalf("ReadServerInfo: %v", err)
+	}
+	if !info.Parsed {
+		t.Errorf("the server version should be parseable, got %q", info.RawVersion)
+	}
+	if !info.Features["ORGANIZATION"] {
+		t.Errorf("ORGANIZATION should be enabled by default, features: %v", info.Features)
+	}
+}
+
+// TestIntegrationCompatibilityCheckRejectsOldServer runs against a release that
+// predates organization groups and asserts the gate refuses the config —
+// against a real server rather than a fabricated version string.
+func TestIntegrationCompatibilityCheckRejectsOldServer(t *testing.T) {
+	// 26.2 has organizations but not organization groups, which arrived in 26.6.
+	kc, cleanup := setupKeycloakVersion(t, "keycloak/keycloak:26.2")
+	defer cleanup()
+
+	configYAML := `
+realms:
+  - realm: "compat-old-realm"
+    enabled: true
+    organizationsEnabled: true
+    organizations:
+      - name: "acme"
+        domains:
+          - name: "acme.com"
+        groups:
+          - name: "engineering"
+`
+	cfg, err := config.Load(writeTestConfig(t, configYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+
+	err = compat.Verify(ctx, kc, cfg)
+	if err == nil {
+		t.Fatal("expected organization groups to be refused on 26.2")
+	}
+	for _, want := range []string{"organization groups", "26.6", "organizations[0].groups"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should mention %q, got: %v", want, err)
+		}
+	}
+
+	// Organizations themselves are supported on 26.2, so a config without
+	// groups must still pass — the gate has to be precise, not blanket.
+	withoutGroups := `
+realms:
+  - realm: "compat-old-realm"
+    enabled: true
+    organizationsEnabled: true
+    organizations:
+      - name: "acme"
+        domains:
+          - name: "acme.com"
+`
+	cfg, err = config.Load(writeTestConfig(t, withoutGroups))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := compat.Verify(ctx, kc, cfg); err != nil {
+		t.Errorf("organizations without groups should be supported on 26.2: %v", err)
 	}
 }

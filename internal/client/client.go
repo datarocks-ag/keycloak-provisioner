@@ -1426,3 +1426,24 @@ func (c *Client) CreateAuthenticationExecutionConfig(ctx context.Context, realm,
 	}
 	return nil
 }
+
+// GetServerInfo returns the Keycloak server info document, which carries the
+// server version under "systemInfo" and the server feature list under
+// "features". It is the only source for both, and is read once at startup.
+func (c *Client) GetServerInfo(ctx context.Context) (map[string]any, error) {
+	resp, err := c.doRequest(ctx, http.MethodGet, "/admin/serverinfo", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding server info: %w", err)
+	}
+	return result, nil
+}
