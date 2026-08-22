@@ -219,12 +219,37 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any) (
 	return nil, fmt.Errorf("unexpected: exhausted 401 retries for %s %s", method, path)
 }
 
+// StatusError is returned when Keycloak answers with an unexpected status.
+// Callers that need to react to a particular status — telling "you may not do
+// this" apart from "the server is broken" — can reach it with errors.As rather
+// than matching on the message.
+type StatusError struct {
+	Code int
+	Body string
+}
+
+func (e *StatusError) Error() string {
+	if e.Body == "" {
+		return fmt.Sprintf("unexpected status %d", e.Code)
+	}
+
+	return fmt.Sprintf("unexpected status %d: %s", e.Code, e.Body)
+}
+
+// StatusCode reports the HTTP status. It is a method rather than a bare field
+// so callers can match on a minimal interface instead of importing this
+// package.
+func (e *StatusError) StatusCode() int {
+	return e.Code
+}
+
 func readError(resp *http.Response) error {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("unexpected status %d (failed to read body: %v)", resp.StatusCode, err)
 	}
-	return fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
+
+	return &StatusError{Code: resp.StatusCode, Body: string(body)}
 }
 
 // GetRealm returns a realm representation or nil if not found.

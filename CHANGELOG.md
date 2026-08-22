@@ -99,14 +99,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- The compatibility check no longer fails a run it cannot fully perform.
-  Reading the server info and provider lists needs more rights than
-  provisioning does — an account holding only `create-realm` is refused
-  the provider lists with 403 — and aborting there would have broken
-  setups that provision perfectly well. Each check is now skipped with a
-  warning when the account cannot perform it, and the two degrade
-  independently, so losing the provider lists still leaves the version
-  and feature checks in place.
+- The compatibility check no longer fails a run it is not permitted to
+  perform. Provider validation needs more rights than provisioning does:
+  an account holding only `create-realm` can read the server info, so
+  version and feature checks work, but is refused the provider lists with
+  403 — and aborting there broke setups that provision perfectly well.
+  A check the account is not permitted to perform is now skipped with a
+  warning, and the two degrade independently. Only 401 and 403 are
+  treated this way; a network failure, a 5xx or an unreadable response
+  still fails the run rather than quietly disabling the check.
 
 - A client scope added to an existing client's `defaultClientScopes` or
   `optionalClientScopes` is now actually attached. Keycloak honours those

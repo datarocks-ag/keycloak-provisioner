@@ -2,8 +2,10 @@ package compat
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 
 	"keycloak-provisioner/internal/config"
@@ -172,6 +174,26 @@ func (r Requirement) unsatisfiedBy(info ServerInfo) string {
 	return ""
 }
 
+// statusCoder is any error that carries an HTTP status. *client.StatusError
+// implements it; matching the interface keeps this package from importing the
+// client just to read a status.
+type statusCoder interface {
+	StatusCode() int
+}
+
+// isPermissionDenied reports whether the error is Keycloak refusing the request
+// rather than failing it.
+func isPermissionDenied(err error) bool {
+	var status statusCoder
+	if !errors.As(err, &status) {
+		return false
+	}
+
+	code := status.StatusCode()
+
+	return code == http.StatusUnauthorized || code == http.StatusForbidden
+}
+
 // Verify checks the config against the server and returns an error naming every
 // mismatch, or nil when there is nothing to report. It logs what it found so a
 // successful check is visible too.
@@ -186,9 +208,18 @@ func Verify(ctx context.Context, reader ServerReader, cfg *config.Config) error 
 	var problems []Problem
 
 	info, err := ReadServerInfo(ctx, reader)
+
 	switch {
 	case err != nil:
-		slog.Warn("Could not read the Keycloak server info; skipping version and feature checks", "error", err)
+		// Only a permission problem is tolerated. A network failure, a 5xx or
+		// an unreadable payload means something is actually wrong, and hiding
+		// it here would surface later as a partial provisioning run with a
+		// murkier cause.
+		if !isPermissionDenied(err) {
+			return err
+		}
+
+		slog.Warn("Not permitted to read the Keycloak server info; skipping version and feature checks", "error", err)
 	case !info.Parsed:
 		slog.Warn("Could not parse the Keycloak version; skipping version checks", "version", info.RawVersion)
 	default:
@@ -203,10 +234,14 @@ func Verify(ctx context.Context, reader ServerReader, cfg *config.Config) error 
 	// for any reason — a disabled feature, a version difference, or a typo —
 	// without anyone having to record the mapping.
 	caps, capsErr := ReadCapabilities(ctx, reader, info)
-	if capsErr != nil {
-		slog.Warn("Could not read the server's provider lists; skipping provider validation",
+
+	switch {
+	case capsErr != nil && !isPermissionDenied(capsErr):
+		return capsErr
+	case capsErr != nil:
+		slog.Warn("Not permitted to read the server's provider lists; skipping provider validation",
 			"error", capsErr)
-	} else {
+	default:
 		problems = append(problems, CheckCapabilities(cfg, caps)...)
 	}
 

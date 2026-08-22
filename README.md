@@ -541,9 +541,9 @@ If the server does not report its providers, nothing is rejected on the strength
 
 ### Permissions
 
-The check needs more rights than provisioning does. Reading the server info and the provider lists requires an admin account with broad read access; an account holding only `create-realm`, for instance, is refused the provider lists.
+Provider validation needs more rights than provisioning does. An account holding only `create-realm` can read the server info — so version and feature checks work — but is refused the provider lists with 403.
 
-A check the account cannot perform is **skipped with a warning**, never treated as a failure — provisioning that works must keep working:
+A check the account is **not permitted** to perform is skipped with a warning, never treated as a failure; provisioning that works must keep working:
 
 ```
 WARN  Could not read the server's provider lists; skipping provider validation
@@ -551,6 +551,8 @@ WARN  Could not read the server's provider lists; skipping provider validation
 ```
 
 The two halves degrade independently, so losing the provider lists still leaves the version and feature checks in place.
+
+Only 401 and 403 are treated this way. A network failure, a 5xx or an unreadable response means something is actually wrong and fails the run, rather than quietly disabling the check.
 
 Pass `--skip-version-check` to bypass all of this.
 

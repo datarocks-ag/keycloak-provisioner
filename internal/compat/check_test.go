@@ -3,6 +3,7 @@ package compat
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -390,17 +391,30 @@ func TestCheckStepUpAuthentication(t *testing.T) {
 	}
 }
 
+// statusErr models what the Keycloak client returns for an unexpected status.
+type statusErr struct{ code int }
+
+func (e statusErr) Error() string   { return fmt.Sprintf("unexpected status %d", e.code) }
+func (e statusErr) StatusCode() int { return e.code }
+
 // errOnProviders answers server info but refuses the provider lists, the way a
 // least-privilege admin account does: create-realm is enough to provision but
 // not to read /authentication/*-providers.
-type errOnProviders struct{ doc map[string]any }
+type errOnProviders struct {
+	doc map[string]any
+	err error
+}
 
 func (e errOnProviders) GetServerInfo(context.Context) (map[string]any, error) {
 	return e.doc, nil
 }
 
 func (e errOnProviders) GetAuthenticationProviders(context.Context, string, string) ([]map[string]any, error) {
-	return nil, errors.New("unexpected status 403: Forbidden")
+	if e.err != nil {
+		return nil, e.err
+	}
+
+	return nil, statusErr{code: 403}
 }
 
 // TestVerifySkipsProviderChecksWhenForbidden pins that a check the account
@@ -437,18 +451,75 @@ func TestVerifyStillReportsVersionProblemsWhenProvidersForbidden(t *testing.T) {
 }
 
 // allFail refuses everything, as an account with no admin rights at all would.
-type allFail struct{}
+type allFail struct{ err error }
 
-func (allFail) GetServerInfo(context.Context) (map[string]any, error) {
-	return nil, errors.New("unexpected status 403: Forbidden")
+func (a allFail) GetServerInfo(context.Context) (map[string]any, error) {
+	if a.err != nil {
+		return nil, a.err
+	}
+
+	return nil, statusErr{code: 403}
 }
 
-func (allFail) GetAuthenticationProviders(context.Context, string, string) ([]map[string]any, error) {
-	return nil, errors.New("unexpected status 403: Forbidden")
+func (a allFail) GetAuthenticationProviders(context.Context, string, string) ([]map[string]any, error) {
+	if a.err != nil {
+		return nil, a.err
+	}
+
+	return nil, statusErr{code: 403}
 }
 
 func TestVerifySkipsEverythingWhenServerInfoForbidden(t *testing.T) {
 	if err := Verify(context.Background(), allFail{}, orgGroupConfig()); err != nil {
 		t.Fatalf("an unreadable server must not fail the run: %v", err)
+	}
+}
+
+// TestVerifyPropagatesNonPermissionErrors pins the other half: a failure that
+// is not the server refusing the request means something is actually wrong, and
+// hiding it would surface later as a partial run with a murkier cause.
+func TestVerifyPropagatesNonPermissionErrors(t *testing.T) {
+	t.Run("server info", func(t *testing.T) {
+		reader := allFail{err: errors.New("dial tcp: connection refused")}
+
+		if err := Verify(context.Background(), reader, orgGroupConfig()); err == nil {
+			t.Fatal("a network failure must not be silently skipped")
+		}
+	})
+
+	t.Run("provider lists", func(t *testing.T) {
+		reader := errOnProviders{
+			doc: serverInfoDoc("26.6.4", map[string]bool{"ORGANIZATION": true}),
+			err: statusErr{code: 500},
+		}
+
+		err := Verify(context.Background(), reader, orgGroupConfig())
+		if err == nil {
+			t.Fatal("a 5xx must not be silently skipped")
+		}
+		if !strings.Contains(err.Error(), "500") {
+			t.Errorf("expected the underlying error, got: %v", err)
+		}
+	})
+}
+
+func TestIsPermissionDenied(t *testing.T) {
+	tests := []struct {
+		err  error
+		want bool
+	}{
+		{statusErr{code: 401}, true},
+		{statusErr{code: 403}, true},
+		{statusErr{code: 404}, false},
+		{statusErr{code: 500}, false},
+		{fmt.Errorf("wrapped: %w", statusErr{code: 403}), true},
+		{errors.New("connection refused"), false},
+		{nil, false},
+	}
+
+	for _, tt := range tests {
+		if got := isPermissionDenied(tt.err); got != tt.want {
+			t.Errorf("isPermissionDenied(%v) = %v, want %v", tt.err, got, tt.want)
+		}
 	}
 }
