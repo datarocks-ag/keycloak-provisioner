@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1222,6 +1223,88 @@ func TestAuthenticate_RejectsEmptyAccessToken(t *testing.T) {
 	}
 }
 
+// --- Group Membership tests ---
+
+func TestGetUserGroups(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/users/{id}/groups": func(w http.ResponseWriter, r *http.Request) {
+			if got := r.PathValue("id"); got != "u-1" {
+				t.Errorf("expected user id u-1, got %q", got)
+			}
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"id": "g-1", "name": "engineering", "path": "/engineering"},
+			})
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+
+	groups, err := c.GetUserGroups(context.Background(), "test", "u-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(groups) != 1 || groups[0]["path"] != "/engineering" {
+		t.Errorf("unexpected groups: %v", groups)
+	}
+}
+
+func TestGetUserGroups_Error(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/users/{id}/groups": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("error"))
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	if _, err := c.GetUserGroups(context.Background(), "test", "u-1"); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestAddUserToGroup(t *testing.T) {
+	var mu sync.Mutex
+	var seen string
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"PUT /admin/realms/{realm}/users/{id}/groups/{gid}": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			seen = r.PathValue("id") + "/" + r.PathValue("gid")
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	if err := c.AddUserToGroup(context.Background(), "test", "u-1", "g-1"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if seen != "u-1/g-1" {
+		t.Errorf("unexpected path values: %q", seen)
+	}
+}
+
+func TestAddUserToGroup_Error(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"PUT /admin/realms/{realm}/users/{id}/groups/{gid}": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte("nope"))
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	if err := c.AddUserToGroup(context.Background(), "test", "u-1", "g-1"); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
 // --- Group tests ---
 
 func TestGetGroups(t *testing.T) {
@@ -1596,6 +1679,8 @@ func TestAddGroupClientRoleMappings_Error(t *testing.T) {
 	}
 }
 
+// --- Client Scope tests ---
+
 func TestGetClientScopes(t *testing.T) {
 	server := testServer(t, map[string]http.HandlerFunc{
 		"GET /admin/realms/{realm}/client-scopes": func(w http.ResponseWriter, r *http.Request) {
@@ -1696,6 +1781,8 @@ func TestClientScopeProtocolMappers(t *testing.T) {
 	}
 }
 
+// --- Client Scope Assignment tests ---
+
 func TestClientScopeAssignmentEndpoints(t *testing.T) {
 	var mu sync.Mutex
 	seen := map[string]string{}
@@ -1767,192 +1854,7 @@ func TestClientScopeAssignmentEndpoints(t *testing.T) {
 	}
 }
 
-func TestOrganizationGroupEndpoints(t *testing.T) {
-	var mu sync.Mutex
-	seen := map[string]string{}
-
-	server := testServer(t, map[string]http.HandlerFunc{
-		"GET /admin/realms/{realm}/organizations/{id}/groups": func(w http.ResponseWriter, r *http.Request) {
-			json.NewEncoder(w).Encode([]map[string]any{{"id": "g-1", "name": "engineering"}})
-		},
-		"GET /admin/realms/{realm}/organizations/{id}/groups/{gid}/children": func(w http.ResponseWriter, r *http.Request) {
-			json.NewEncoder(w).Encode([]map[string]any{{"id": "g-2", "name": "backend"}})
-		},
-		"POST /admin/realms/{realm}/organizations/{id}/groups": func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Location", "http://kc/admin/realms/test/organizations/org-1/groups/g-9")
-			w.WriteHeader(http.StatusCreated)
-		},
-		"POST /admin/realms/{realm}/organizations/{id}/groups/{gid}/children": func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Location", "http://kc/admin/realms/test/organizations/org-1/groups/g-10")
-			w.WriteHeader(http.StatusCreated)
-		},
-		"PUT /admin/realms/{realm}/organizations/{id}/groups/{gid}": func(w http.ResponseWriter, r *http.Request) {
-			mu.Lock()
-			seen["update"] = r.PathValue("gid")
-			mu.Unlock()
-			w.WriteHeader(http.StatusNoContent)
-		},
-		"GET /admin/realms/{realm}/organizations/{id}/groups/{gid}/members": func(w http.ResponseWriter, r *http.Request) {
-			json.NewEncoder(w).Encode([]map[string]any{{"id": "u-1", "username": "alice"}})
-		},
-		"PUT /admin/realms/{realm}/organizations/{id}/groups/{gid}/members/{uid}": func(w http.ResponseWriter, r *http.Request) {
-			mu.Lock()
-			seen["addMember"] = r.PathValue("gid") + "/" + r.PathValue("uid")
-			mu.Unlock()
-			w.WriteHeader(http.StatusNoContent)
-		},
-	})
-	defer server.Close()
-
-	c := connectClient(t, server.URL)
-	ctx := context.Background()
-
-	groups, err := c.GetOrganizationGroups(ctx, "test", "org-1")
-	if err != nil || len(groups) != 1 {
-		t.Fatalf("get groups: %v %v", groups, err)
-	}
-	children, err := c.GetOrganizationSubGroups(ctx, "test", "org-1", "g-1")
-	if err != nil || len(children) != 1 || children[0]["name"] != "backend" {
-		t.Fatalf("get children: %v %v", children, err)
-	}
-	id, err := c.CreateOrganizationGroup(ctx, "test", "org-1", map[string]any{"name": "sales"})
-	if err != nil || id != "g-9" {
-		t.Fatalf("create group: %q %v", id, err)
-	}
-	subID, err := c.CreateOrganizationSubGroup(ctx, "test", "org-1", "g-1", map[string]any{"name": "backend"})
-	if err != nil || subID != "g-10" {
-		t.Fatalf("create subgroup: %q %v", subID, err)
-	}
-	if err := c.UpdateOrganizationGroup(ctx, "test", "org-1", "g-1", map[string]any{"name": "engineering"}); err != nil {
-		t.Fatalf("update group: %v", err)
-	}
-	members, err := c.GetOrganizationGroupMembers(ctx, "test", "org-1", "g-1")
-	if err != nil || len(members) != 1 {
-		t.Fatalf("get group members: %v %v", members, err)
-	}
-	if err := c.AddOrganizationGroupMember(ctx, "test", "org-1", "g-1", "u-2"); err != nil {
-		t.Fatalf("add group member: %v", err)
-	}
-
-	mu.Lock()
-	defer mu.Unlock()
-	if seen["update"] != "g-1" {
-		t.Errorf("unexpected update target: %q", seen["update"])
-	}
-	if seen["addMember"] != "g-1/u-2" {
-		t.Errorf("unexpected member add: %q", seen["addMember"])
-	}
-}
-
-func TestAddOrganizationGroupMember_NonOrgMemberError(t *testing.T) {
-	server := testServer(t, map[string]http.HandlerFunc{
-		"PUT /admin/realms/{realm}/organizations/{id}/groups/{gid}/members/{uid}": func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write([]byte(`{"errorMessage":"User is not member of the organization"}`))
-		},
-	})
-	defer server.Close()
-
-	c := connectClient(t, server.URL)
-	if err := c.AddOrganizationGroupMember(context.Background(), "test", "org-1", "g-1", "u-1"); err == nil {
-		t.Fatal("expected error for a user that is not an organization member")
-	}
-}
-
-func TestAuthenticationFlowEndpoints(t *testing.T) {
-	var mu sync.Mutex
-	calls := map[string]string{}
-
-	server := testServer(t, map[string]http.HandlerFunc{
-		"GET /admin/realms/{realm}/authentication/flows": func(w http.ResponseWriter, r *http.Request) {
-			json.NewEncoder(w).Encode([]map[string]any{{"id": "f-1", "alias": "browser", "builtIn": true}})
-		},
-		"POST /admin/realms/{realm}/authentication/flows": func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusCreated)
-		},
-		"POST /admin/realms/{realm}/authentication/flows/{alias}/copy": func(w http.ResponseWriter, r *http.Request) {
-			var body map[string]any
-			json.NewDecoder(r.Body).Decode(&body)
-			mu.Lock()
-			defer mu.Unlock()
-			calls["copy"] = r.PathValue("alias") + "->" + body["newName"].(string)
-			w.WriteHeader(http.StatusCreated)
-		},
-		"GET /admin/realms/{realm}/authentication/flows/{alias}/executions": func(w http.ResponseWriter, r *http.Request) {
-			json.NewEncoder(w).Encode([]map[string]any{{"id": "ex-1", "providerId": "auth-cookie", "level": 0, "index": 0}})
-		},
-		"PUT /admin/realms/{realm}/authentication/flows/{alias}/executions": func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusNoContent)
-		},
-		"POST /admin/realms/{realm}/authentication/flows/{alias}/executions/execution": func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusCreated)
-		},
-		"POST /admin/realms/{realm}/authentication/flows/{alias}/executions/flow": func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusCreated)
-		},
-		"POST /admin/realms/{realm}/authentication/executions/{id}/config": func(w http.ResponseWriter, r *http.Request) {
-			mu.Lock()
-			defer mu.Unlock()
-			calls["config"] = r.PathValue("id")
-			w.WriteHeader(http.StatusCreated)
-		},
-	})
-	defer server.Close()
-
-	c := connectClient(t, server.URL)
-	ctx := context.Background()
-
-	flows, err := c.GetAuthenticationFlows(ctx, "test")
-	if err != nil || len(flows) != 1 {
-		t.Fatalf("get flows: %v %v", flows, err)
-	}
-	if err := c.CreateAuthenticationFlow(ctx, "test", map[string]any{"alias": "f"}); err != nil {
-		t.Fatalf("create flow: %v", err)
-	}
-	if err := c.CopyAuthenticationFlow(ctx, "test", "browser", "browser-step-up"); err != nil {
-		t.Fatalf("copy flow: %v", err)
-	}
-	execs, err := c.GetAuthenticationFlowExecutions(ctx, "test", "f")
-	if err != nil || len(execs) != 1 {
-		t.Fatalf("get executions: %v %v", execs, err)
-	}
-	if err := c.UpdateAuthenticationFlowExecution(ctx, "test", "f", map[string]any{"id": "ex-1"}); err != nil {
-		t.Fatalf("update execution: %v", err)
-	}
-	if err := c.CreateAuthenticationExecution(ctx, "test", "f", map[string]any{"provider": "auth-cookie"}); err != nil {
-		t.Fatalf("create execution: %v", err)
-	}
-	if err := c.CreateAuthenticationSubflow(ctx, "test", "f", map[string]any{"alias": "sub"}); err != nil {
-		t.Fatalf("create subflow: %v", err)
-	}
-	if err := c.CreateAuthenticationExecutionConfig(ctx, "test", "ex-1", map[string]any{"alias": "cfg"}); err != nil {
-		t.Fatalf("create execution config: %v", err)
-	}
-
-	mu.Lock()
-	defer mu.Unlock()
-	if calls["copy"] != "browser->browser-step-up" {
-		t.Errorf("unexpected copy call: %q", calls["copy"])
-	}
-	if calls["config"] != "ex-1" {
-		t.Errorf("unexpected config call: %q", calls["config"])
-	}
-}
-
-func TestGetAuthenticationFlows_Error(t *testing.T) {
-	server := testServer(t, map[string]http.HandlerFunc{
-		"GET /admin/realms/{realm}/authentication/flows": func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte("error"))
-		},
-	})
-	defer server.Close()
-
-	c := connectClient(t, server.URL)
-	if _, err := c.GetAuthenticationFlows(context.Background(), "test"); err == nil {
-		t.Fatal("expected error")
-	}
-}
+// --- Organization tests ---
 
 func TestOrganizationEndpoints(t *testing.T) {
 	var mu sync.Mutex
@@ -2049,5 +1951,307 @@ func TestAddOrganizationMember_Error(t *testing.T) {
 	c := connectClient(t, server.URL)
 	if err := c.AddOrganizationMember(context.Background(), "test", "org-1", "u-1"); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+// --- Organization Group tests ---
+
+func TestOrganizationGroupEndpoints(t *testing.T) {
+	var mu sync.Mutex
+	seen := map[string]string{}
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/organizations/{id}/groups": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{{"id": "g-1", "name": "engineering"}})
+		},
+		"GET /admin/realms/{realm}/organizations/{id}/groups/{gid}/children": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{{"id": "g-2", "name": "backend"}})
+		},
+		"POST /admin/realms/{realm}/organizations/{id}/groups": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Location", "http://kc/admin/realms/test/organizations/org-1/groups/g-9")
+			w.WriteHeader(http.StatusCreated)
+		},
+		"POST /admin/realms/{realm}/organizations/{id}/groups/{gid}/children": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Location", "http://kc/admin/realms/test/organizations/org-1/groups/g-10")
+			w.WriteHeader(http.StatusCreated)
+		},
+		"PUT /admin/realms/{realm}/organizations/{id}/groups/{gid}": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			seen["update"] = r.PathValue("gid")
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		},
+		"GET /admin/realms/{realm}/organizations/{id}/groups/{gid}/members": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{{"id": "u-1", "username": "alice"}})
+		},
+		"PUT /admin/realms/{realm}/organizations/{id}/groups/{gid}/members/{uid}": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			seen["addMember"] = r.PathValue("gid") + "/" + r.PathValue("uid")
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	ctx := context.Background()
+
+	groups, err := c.GetOrganizationGroups(ctx, "test", "org-1")
+	if err != nil || len(groups) != 1 {
+		t.Fatalf("get groups: %v %v", groups, err)
+	}
+	children, err := c.GetOrganizationSubGroups(ctx, "test", "org-1", "g-1")
+	if err != nil || len(children) != 1 || children[0]["name"] != "backend" {
+		t.Fatalf("get children: %v %v", children, err)
+	}
+	id, err := c.CreateOrganizationGroup(ctx, "test", "org-1", map[string]any{"name": "sales"})
+	if err != nil || id != "g-9" {
+		t.Fatalf("create group: %q %v", id, err)
+	}
+	subID, err := c.CreateOrganizationSubGroup(ctx, "test", "org-1", "g-1", map[string]any{"name": "backend"})
+	if err != nil || subID != "g-10" {
+		t.Fatalf("create subgroup: %q %v", subID, err)
+	}
+	if err := c.UpdateOrganizationGroup(ctx, "test", "org-1", "g-1", map[string]any{"name": "engineering"}); err != nil {
+		t.Fatalf("update group: %v", err)
+	}
+	members, err := c.GetOrganizationGroupMembers(ctx, "test", "org-1", "g-1")
+	if err != nil || len(members) != 1 {
+		t.Fatalf("get group members: %v %v", members, err)
+	}
+	if err := c.AddOrganizationGroupMember(ctx, "test", "org-1", "g-1", "u-2"); err != nil {
+		t.Fatalf("add group member: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if seen["update"] != "g-1" {
+		t.Errorf("unexpected update target: %q", seen["update"])
+	}
+	if seen["addMember"] != "g-1/u-2" {
+		t.Errorf("unexpected member add: %q", seen["addMember"])
+	}
+}
+
+func TestAddOrganizationGroupMember_NonOrgMemberError(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"PUT /admin/realms/{realm}/organizations/{id}/groups/{gid}/members/{uid}": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"errorMessage":"User is not member of the organization"}`))
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	if err := c.AddOrganizationGroupMember(context.Background(), "test", "org-1", "g-1", "u-1"); err == nil {
+		t.Fatal("expected error for a user that is not an organization member")
+	}
+}
+
+// --- Authentication Flow tests ---
+
+func TestAuthenticationFlowEndpoints(t *testing.T) {
+	var mu sync.Mutex
+	calls := map[string]string{}
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/authentication/flows": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{{"id": "f-1", "alias": "browser", "builtIn": true}})
+		},
+		"POST /admin/realms/{realm}/authentication/flows": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusCreated)
+		},
+		"POST /admin/realms/{realm}/authentication/flows/{alias}/copy": func(w http.ResponseWriter, r *http.Request) {
+			var body map[string]any
+			json.NewDecoder(r.Body).Decode(&body)
+			mu.Lock()
+			defer mu.Unlock()
+			calls["copy"] = r.PathValue("alias") + "->" + body["newName"].(string)
+			w.WriteHeader(http.StatusCreated)
+		},
+		"GET /admin/realms/{realm}/authentication/flows/{alias}/executions": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{{"id": "ex-1", "providerId": "auth-cookie", "level": 0, "index": 0}})
+		},
+		"PUT /admin/realms/{realm}/authentication/flows/{alias}/executions": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		},
+		"POST /admin/realms/{realm}/authentication/flows/{alias}/executions/execution": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusCreated)
+		},
+		"POST /admin/realms/{realm}/authentication/flows/{alias}/executions/flow": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusCreated)
+		},
+		"POST /admin/realms/{realm}/authentication/executions/{id}/config": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			defer mu.Unlock()
+			calls["config"] = r.PathValue("id")
+			w.WriteHeader(http.StatusCreated)
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	ctx := context.Background()
+
+	flows, err := c.GetAuthenticationFlows(ctx, "test")
+	if err != nil || len(flows) != 1 {
+		t.Fatalf("get flows: %v %v", flows, err)
+	}
+	if err := c.CreateAuthenticationFlow(ctx, "test", map[string]any{"alias": "f"}); err != nil {
+		t.Fatalf("create flow: %v", err)
+	}
+	if err := c.CopyAuthenticationFlow(ctx, "test", "browser", "browser-step-up"); err != nil {
+		t.Fatalf("copy flow: %v", err)
+	}
+	execs, err := c.GetAuthenticationFlowExecutions(ctx, "test", "f")
+	if err != nil || len(execs) != 1 {
+		t.Fatalf("get executions: %v %v", execs, err)
+	}
+	if err := c.UpdateAuthenticationFlowExecution(ctx, "test", "f", map[string]any{"id": "ex-1"}); err != nil {
+		t.Fatalf("update execution: %v", err)
+	}
+	if err := c.CreateAuthenticationExecution(ctx, "test", "f", map[string]any{"provider": "auth-cookie"}); err != nil {
+		t.Fatalf("create execution: %v", err)
+	}
+	if err := c.CreateAuthenticationSubflow(ctx, "test", "f", map[string]any{"alias": "sub"}); err != nil {
+		t.Fatalf("create subflow: %v", err)
+	}
+	if err := c.CreateAuthenticationExecutionConfig(ctx, "test", "ex-1", map[string]any{"alias": "cfg"}); err != nil {
+		t.Fatalf("create execution config: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if calls["copy"] != "browser->browser-step-up" {
+		t.Errorf("unexpected copy call: %q", calls["copy"])
+	}
+	if calls["config"] != "ex-1" {
+		t.Errorf("unexpected config call: %q", calls["config"])
+	}
+}
+
+func TestGetAuthenticationFlows_Error(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/authentication/flows": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("error"))
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	if _, err := c.GetAuthenticationFlows(context.Background(), "test"); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+// --- Server capability tests ---
+
+func TestGetServerInfo(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/serverinfo": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]any{
+				"systemInfo": map[string]any{"version": "26.6.4"},
+				"features":   []any{map[string]any{"name": "ORGANIZATION", "enabled": true}},
+			})
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+
+	info, err := c.GetServerInfo(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	system, ok := info["systemInfo"].(map[string]any)
+	if !ok || system["version"] != "26.6.4" {
+		t.Errorf("unexpected server info: %v", info)
+	}
+}
+
+func TestGetServerInfo_Error(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/serverinfo": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"error":"HTTP 403 Forbidden"}`))
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+
+	_, err := c.GetServerInfo(context.Background())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	// The compatibility check tells a refusal apart from a failure by status,
+	// so the typed error has to survive.
+	var status *StatusError
+	if !errors.As(err, &status) {
+		t.Fatalf("expected a *StatusError, got %T", err)
+	}
+	if status.StatusCode() != http.StatusForbidden {
+		t.Errorf("expected 403, got %d", status.StatusCode())
+	}
+}
+
+func TestGetAuthenticationProviders(t *testing.T) {
+	var mu sync.Mutex
+	var seenKind string
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/authentication/{kind}": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			seenKind = r.PathValue("kind")
+			mu.Unlock()
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"id": "auth-cookie", "displayName": "Cookie"},
+			})
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+
+	providers, err := c.GetAuthenticationProviders(context.Background(), "master", "authenticator-providers")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(providers) != 1 || providers[0]["id"] != "auth-cookie" {
+		t.Errorf("unexpected providers: %v", providers)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if seenKind != "authenticator-providers" {
+		t.Errorf("kind should reach the path, got %q", seenKind)
+	}
+}
+
+func TestGetAuthenticationProviders_Error(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/authentication/{kind}": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"error":"HTTP 403 Forbidden"}`))
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+
+	err := func() error {
+		_, err := c.GetAuthenticationProviders(context.Background(), "master", "form-providers")
+		return err
+	}()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	var status *StatusError
+	if !errors.As(err, &status) || status.StatusCode() != http.StatusForbidden {
+		t.Errorf("expected a 403 *StatusError, got %v", err)
 	}
 }
