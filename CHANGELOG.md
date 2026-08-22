@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_No unreleased changes._
+
+## [1.7.0] — 2026-08-22
+
+Extends the config schema to cover realm attributes, client scopes,
+organizations and authentication flows, and adds a pre-flight check that
+refuses a config the Keycloak server cannot apply.
+
+No configuration written for 1.6.0 needs changing. Three things do behave
+differently on the first run after upgrading:
+
+- **Client scopes listed on a client are now actually attached.** Keycloak
+  ignores the inline `defaultClientScopes` and `optionalClientScopes` fields
+  when a client is *updated*, so a scope added to an existing client's config
+  was silently dropped on every run. It is applied now, which means the first
+  run after upgrading will attach scopes that were configured but never took
+  effect.
+- **Runs can now be refused before they start.** The compatibility check
+  rejects a config the server cannot apply, including two cases that
+  previously exited 0 while doing nothing useful: `standardTokenExchangeEnabled`
+  against a server with `TOKEN_EXCHANGE_STANDARD_V2` disabled, and `acrLoaMap`
+  with `STEP_UP_AUTHENTICATION` disabled. Pass `--skip-version-check` to
+  bypass it.
+- **An empty attribute name is now a config error.** Previously it was passed
+  through to Keycloak, where it meant nothing.
+
 ### Added
 
 - Realm attributes: an `attributes` map on any realm, with `${VAR}`
@@ -312,7 +338,8 @@ Initial release.
   (testcontainers-based Keycloak), Trivy scan, GHCR publish, GoReleaser.
 - LICENSE.
 
-[Unreleased]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.3.0...v1.4.0
