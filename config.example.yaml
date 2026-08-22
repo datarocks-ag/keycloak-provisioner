@@ -119,6 +119,13 @@ realms:
         # into the client's tokens. Set false to limit them to roles reachable
         # through the assigned client scopes. Omitting it leaves it unmanaged.
         fullScopeAllowed: false
+        # ACR values Keycloak applies when a request asks for none. Each must
+        # be a key of this client's acrLoaMap or the realm's. Keycloak stores
+        # them as a "##"-separated string, not a JSON array — use this field
+        # rather than writing default.acr.values by hand, since a JSON array is
+        # rejected with a message about the ACR map rather than the encoding.
+        # defaultAcrValues:
+        #   - "gold"
         bearerOnly: false
         consentRequired: false
         frontchannelLogout: false

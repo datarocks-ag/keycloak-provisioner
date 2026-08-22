@@ -3,12 +3,22 @@ package provisioner
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // acrLoaMapAttr is the Keycloak attribute holding the ACR-to-Level-of-
 // Authentication mapping used for step-up authentication. It is valid on both
 // realms and clients, and its value is a JSON object.
 const acrLoaMapAttr = "acr.loa.map"
+
+// defaultAcrValuesAttr is the client attribute holding the ACR values Keycloak
+// applies when a request asks for none. Its value is a "##"-separated string,
+// not the JSON array the field's shape suggests.
+const defaultAcrValuesAttr = "default.acr.values"
+
+// acrValueSeparator is how Keycloak packs several ACR values into that one
+// attribute.
+const acrValueSeparator = "##"
 
 // mergeAttributes merges configured attributes over the "attributes" map of an
 // existing Keycloak representation, returning a fresh map. existing may be nil,
@@ -117,4 +127,16 @@ func mergeMultiValueField(existing map[string]any, field string, configured map[
 	}
 
 	return merged
+}
+
+// buildDefaultAcrValuesAttribute joins ACR values the way Keycloak stores them.
+//
+// It returns "" for both a nil and an empty list, so an empty block is treated
+// as omitting it and the attribute is left unmanaged rather than written blank.
+func buildDefaultAcrValuesAttribute(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+
+	return strings.Join(values, acrValueSeparator)
 }

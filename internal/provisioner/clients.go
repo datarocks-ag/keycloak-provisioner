@@ -144,7 +144,9 @@ const standardTokenExchangeAttr = "standard.token.exchange.enabled"
 // client's attributes out of the request entirely.
 func buildClientAttributes(c config.Client, existing map[string]any) map[string]string {
 	acrLoaMap := buildAcrLoaMapAttribute(c.AcrLoaMap)
-	if len(c.Attributes) == 0 && c.StandardTokenExchangeEnabled == nil && acrLoaMap == "" {
+	defaultAcrValues := buildDefaultAcrValuesAttribute(c.DefaultAcrValues)
+
+	if len(c.Attributes) == 0 && c.StandardTokenExchangeEnabled == nil && acrLoaMap == "" && defaultAcrValues == "" {
 		return nil
 	}
 
@@ -154,6 +156,10 @@ func buildClientAttributes(c config.Client, existing map[string]any) map[string]
 	}
 	if acrLoaMap != "" {
 		attrs[acrLoaMapAttr] = acrLoaMap
+	}
+	// The typed field wins over the same key set by hand, matching acrLoaMap.
+	if defaultAcrValues != "" {
+		attrs[defaultAcrValuesAttr] = defaultAcrValues
 	}
 
 	return attrs

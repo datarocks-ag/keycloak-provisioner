@@ -17,7 +17,7 @@ Release notes are maintained in [CHANGELOG.md](CHANGELOG.md).
 - Organizations with domains and additive membership (Keycloak 26+), including organization-scoped groups (Keycloak 26.6+)
 - Authentication flows with nested subflows and execution config, plus realm and client flow bindings
 - Identity providers (identity brokering) with mappers, merged over the server's representation so secrets and unmanaged config keys survive, and linkable to organizations
-- Step-up authentication support via `acrLoaMap` on realms and clients (`acr.loa.map`)
+- Step-up authentication support via `acrLoaMap` on realms and clients, plus `defaultAcrValues` on a client
 - User management with password setting, realm/client role assignment, group membership, required actions, and seeded TOTP credentials
 - Service account role mapping for machine-to-machine clients
 - YAML config with `${VAR}` environment variable expansion (and `$${VAR}` escape for literals)
@@ -265,6 +265,7 @@ Every field is optional except `realm`. A field left out is not sent, so Keycloa
 | `optionalClientScopes` | list | Scopes requestable via the `scope` parameter |
 | `attributes` | map | Client attributes, merged over the current ones |
 | `acrLoaMap` | map | ACR value to Level of Authentication for this client |
+| `defaultAcrValues` | list | ACR values applied when a request asks for none (see Step-Up Authentication) |
 | `authenticationFlowBindingOverrides` | map | Override realm flow bindings (see Authentication Flows) |
 | `protocolMappers` | list | Protocol mappers on this client |
 | `clientRoles` | list | Roles defined on this client |
@@ -541,7 +542,7 @@ Both keys and values support `${VAR}` expansion.
 
 Attributes are **merged**, not replaced. Keycloak's realm update replaces the whole attribute map, and several realm settings live there, so the provisioner reads the realm's current attributes and merges the configured keys over them. Keys you do not declare are preserved; nothing is ever removed. Omitting the `attributes` block entirely leaves realm attributes untouched.
 
-Client `attributes` are merged the same way: Keycloak replaces the whole attribute map on a client update, so the provisioner sends the union of the client's current attributes and the configured ones. A client that declares no `attributes`, `acrLoaMap`, or `standardTokenExchangeEnabled` sends no attributes at all.
+Client `attributes` are merged the same way: Keycloak replaces the whole attribute map on a client update, so the provisioner sends the union of the client's current attributes and the configured ones. A client that declares no `attributes`, `acrLoaMap`, `defaultAcrValues`, or `standardTokenExchangeEnabled` sends no attributes at all.
 
 ## Authentication Flows
 
@@ -604,11 +605,21 @@ realms:
       - clientId: "web"
         acrLoaMap:
           gold: 2
-        attributes:
-          "default.acr.values": '["silver"]'
+        defaultAcrValues:
+          - "silver"
 ```
 
 Under the hood this sets the `acr.loa.map` attribute as a JSON object. Setting the typed field takes precedence over the same key set manually in `attributes`, matching how `standardTokenExchangeEnabled` behaves. Levels must not be negative, and map keys are written in sorted order so repeated runs produce identical values.
+
+### Default ACR values
+
+`defaultAcrValues` is what Keycloak applies when a request asks for no particular ACR. Use the typed field rather than the attribute, because the encoding is not what the shape suggests:
+
+- Keycloak stores the values in `default.acr.values` as one **`##`-separated string** — `gold##silver` — not as a JSON array.
+- A JSON array is rejected, and the message is about the ACR-to-LoA map rather than about encoding, so it reads as the wrong problem: `Default ACR values need to contain values specified in the ACR-To-Loa mapping or number levels from set realm browser flow`.
+- Bare level numbers are rejected too, despite that message mentioning them.
+
+Every value must be a key of the effective map — this client's `acrLoaMap` or the realm's. The config checks that itself when a map is declared, naming the offending value and listing what is available, since Keycloak's refusal names neither. When no map is declared anywhere the check is skipped, because the map may already exist on the server.
 
 The LoA map on its own does not create a step-up flow — it only names the levels. A browser flow containing a `conditional-level-of-authentication` subflow is what actually enforces them.
 
