@@ -138,3 +138,62 @@ func TestReadServerInfoToleratesMissingIdentityProviderKeys(t *testing.T) {
 		t.Errorf("expected empty maps, got %v / %v", info.IdentityProviders, info.IdentityProviderMappers)
 	}
 }
+
+// TestCheckCapabilitiesRejectsUnknownRequiredAction earns its place the same
+// way the mapper check does: Keycloak accepts an unknown required action with
+// 204 and then drops it, so the config looks applied while the user is never
+// asked to do anything.
+func TestCheckCapabilitiesRejectsUnknownRequiredAction(t *testing.T) {
+	caps := testCapabilities()
+	caps.RequiredActions = map[string]bool{"CONFIGURE_TOTP": true, "UPDATE_PASSWORD": true}
+
+	cfg := &config.Config{Realms: []config.Realm{{
+		Realm: "test",
+		Users: []config.User{{Username: "bob", RequiredActions: []string{"CONFIGURE_TOPT"}}},
+	}}}
+
+	problems := CheckCapabilities(cfg, caps)
+	if len(problems) != 1 {
+		t.Fatalf("expected one problem, got %v", problems)
+	}
+	if !strings.Contains(problems[0].Paths[0], "users[0].requiredActions[0]") {
+		t.Errorf("unexpected path: %v", problems[0].Paths)
+	}
+	// A transposition should get a suggestion.
+	if !strings.Contains(problems[0].Reason, "CONFIGURE_TOTP") {
+		t.Errorf("expected a suggestion, got: %s", problems[0].Reason)
+	}
+}
+
+func TestCheckCapabilitiesAcceptsKnownRequiredAction(t *testing.T) {
+	caps := testCapabilities()
+	caps.RequiredActions = map[string]bool{"CONFIGURE_TOTP": true}
+
+	cfg := &config.Config{Realms: []config.Realm{{
+		Realm: "test",
+		Users: []config.User{{Username: "bob", RequiredActions: []string{"CONFIGURE_TOTP"}}},
+	}}}
+
+	if problems := CheckCapabilities(cfg, caps); len(problems) != 0 {
+		t.Errorf("expected no problems, got %v", problems)
+	}
+}
+
+// TestCheckCapabilitiesCoversMasterRealmUsers guards the path that is easy to
+// forget: master realm users reuse the same User type.
+func TestCheckCapabilitiesCoversMasterRealmUsers(t *testing.T) {
+	caps := testCapabilities()
+	caps.RequiredActions = map[string]bool{"CONFIGURE_TOTP": true}
+
+	cfg := &config.Config{MasterRealm: &config.MasterRealmConfig{
+		Users: []config.User{{Username: "admin2", RequiredActions: []string{"NOT_A_THING"}}},
+	}}
+
+	problems := CheckCapabilities(cfg, caps)
+	if len(problems) != 1 {
+		t.Fatalf("expected one problem, got %v", problems)
+	}
+	if !strings.Contains(problems[0].Paths[0], "masterRealm.users[0]") {
+		t.Errorf("unexpected path: %v", problems[0].Paths)
+	}
+}

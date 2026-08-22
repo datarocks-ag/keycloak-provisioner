@@ -7,7 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No unreleased changes._
+### Added
+
+- `requiredActions` on a user, listing what Keycloak makes them complete at
+  their next login. Declaring the field replaces the user's current list;
+  omitting it leaves them alone, so an empty list is how to clear them. Master
+  realm users get this too, since they reuse the same type.
+- `credentials` on a user, seeding a TOTP secret so a realm rebuilds from config
+  without an out-of-band admin call. `otp` is the only supported type:
+  passwords already have their own fields, WebAuthn is device-bound, and
+  recovery codes are generated for one-time display.
+
+  **The secret is not base32.** Keycloak uses the characters of `secret`
+  directly as the HMAC key rather than base32-decoding them, so an authenticator
+  app must be given `base32(secret)` — which is what Keycloak's own QR code
+  shows once the credential exists.
+
+  Seeding is additive and never rotates. Keycloak's user update *appends* the
+  credentials it is given rather than reconciling them, so a credential of the
+  same type and label is left alone; otherwise every run would add another.
+- Server-driven validation of required action names, alongside the existing
+  provider checks. Keycloak accepts an unknown action with `204` and then drops
+  it silently, so a typo would look applied while the user is never asked to do
+  anything.
+
+### Changed
+
+- Dry-run reports a credential-only user update as
+  `would seed user credentials`, naming each credential, rather than the generic
+  `would update user` it would otherwise share with every other user change.
 
 ## [1.8.1] — 2026-08-22
 

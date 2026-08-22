@@ -203,6 +203,32 @@ realms:
     #       - "engineering"
     #       - "/engineering/backend"
     #
+    #   # Make the user complete actions at their next login. Declaring the
+    #   # field replaces whatever the user has; omitting it leaves them alone.
+    #   # Names are validated against the server, which otherwise accepts an
+    #   # unknown action and silently drops it.
+    #   - username: "otp-user"
+    #     requiredActions:
+    #       - "CONFIGURE_TOTP"
+    #
+    #   # Or seed a known TOTP secret, so the realm rebuilds from config with
+    #   # no manual admin call.
+    #   #
+    #   # The secret is NOT base32. Keycloak uses these characters directly as
+    #   # the HMAC key; an authenticator app needs base32(secret), which is what
+    #   # Keycloak's own QR code shows once the credential exists.
+    #   #
+    #   # Seeding is additive: a credential of the same type and label is left
+    #   # alone, so a run never adds a second one and never rotates a secret.
+    #   - username: "seeded-otp-user"
+    #     credentials:
+    #       - type: "otp"            # the only supported type
+    #         label: "seeded"        # shown in the account console
+    #         secret: "${BOB_TOTP_SECRET}"
+    #         # digits: 6            # defaults match Keycloak's own
+    #         # period: 30
+    #         # algorithm: "HmacSHA1"
+
     #   # Use initialPassword instead of password for one-time setup.
     #   # Only set when the user is first created; ignored on subsequent runs.
     #   # The user must change the password on first login.

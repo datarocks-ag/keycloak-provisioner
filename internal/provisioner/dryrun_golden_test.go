@@ -128,6 +128,12 @@ realms:
     users:
       - username: "alice"
         password: "pw"
+        requiredActions:
+          - "CONFIGURE_TOTP"
+        credentials:
+          - type: "otp"
+            label: "seeded"
+            secret: "s3cr3t"
         roles:
           realm:
             - "app-admin"
@@ -200,6 +206,7 @@ func TestDryRunGoldenLog(t *testing.T) {
 		"would reset user password",
 		"would assign realm roles",
 		"would add user to group",
+		"would seed user credentials",
 		"would create identity provider",
 		"would create identity provider mapper",
 		"would create organization",
