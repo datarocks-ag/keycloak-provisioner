@@ -283,8 +283,6 @@ func (d *dryRunAPI) ResetUserPassword(_ context.Context, realm, userID string, _
 	return nil
 }
 
-// Role mappings.
-
 // Group memberships.
 
 func (d *dryRunAPI) GetUserGroups(ctx context.Context, realm, userID string) ([]map[string]any, error) {
@@ -298,6 +296,8 @@ func (d *dryRunAPI) AddUserToGroup(_ context.Context, realm, userID, groupID str
 	slog.Info("DRY-RUN: would add user to group", "realm", realm, "userID", userID, "groupID", groupID)
 	return nil
 }
+
+// Role mappings.
 
 func (d *dryRunAPI) GetRealmRoleMappings(ctx context.Context, realm, subject, subjectID string) ([]map[string]any, error) {
 	if d.realmIsSynthetic(realm) || isSyntheticID(subjectID) {
