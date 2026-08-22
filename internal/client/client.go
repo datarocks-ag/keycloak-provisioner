@@ -1380,3 +1380,176 @@ func (c *Client) PartialImportUsers(ctx context.Context, realm string, users []m
 	}
 	return nil
 }
+
+// identityProviderPath is the instances endpoint for one realm.
+func identityProviderPath(realm string) string {
+	return "/admin/realms/" + url.PathEscape(realm) + "/identity-provider/instances"
+}
+
+// GetIdentityProviders returns every identity provider in the realm.
+//
+// The listing carries each provider's full representation, including its config
+// and the organization it belongs to, so one call per realm is enough and
+// nothing has to be re-read per alias.
+//
+// realmOnly is deliberately not set: it hides providers that belong to an
+// organization, and a caller that could not see them would try to create one
+// that already exists and get a 409 on every run.
+func (c *Client) GetIdentityProviders(ctx context.Context, realm string) ([]map[string]any, error) {
+	resp, err := c.doRequest(ctx, http.MethodGet, identityProviderPath(realm), nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding identity providers: %w", err)
+	}
+	return result, nil
+}
+
+// CreateIdentityProvider creates an identity provider.
+//
+// A duplicate alias is a 409, so callers must check the listing first. The
+// Location header carries the alias the caller already knows, so nothing is
+// parsed out of it.
+func (c *Client) CreateIdentityProvider(ctx context.Context, realm string, body map[string]any) error {
+	resp, err := c.doRequest(ctx, http.MethodPost, identityProviderPath(realm), body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		return readError(resp)
+	}
+	return nil
+}
+
+// UpdateIdentityProvider replaces an identity provider.
+//
+// Keycloak replaces the whole representation: a field or config key left out of
+// body is removed, not left alone. Callers must send the merged result of the
+// current representation and their changes. The body's alias must equal the one
+// in the path — a different alias renames the provider.
+func (c *Client) UpdateIdentityProvider(ctx context.Context, realm, alias string, body map[string]any) error {
+	path := identityProviderPath(realm) + "/" + url.PathEscape(alias)
+
+	resp, err := c.doRequest(ctx, http.MethodPut, path, body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return readError(resp)
+	}
+	return nil
+}
+
+// GetIdentityProviderMappers returns the mappers of an identity provider.
+func (c *Client) GetIdentityProviderMappers(ctx context.Context, realm, alias string) ([]map[string]any, error) {
+	path := identityProviderPath(realm) + "/" + url.PathEscape(alias) + "/mappers"
+
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding identity provider mappers: %w", err)
+	}
+	return result, nil
+}
+
+// CreateIdentityProviderMapper creates a mapper on an identity provider.
+// A duplicate name is a 400 rather than a 409, so callers must look up by name
+// first.
+func (c *Client) CreateIdentityProviderMapper(ctx context.Context, realm, alias string, body map[string]any) error {
+	path := identityProviderPath(realm) + "/" + url.PathEscape(alias) + "/mappers"
+
+	resp, err := c.doRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		return readError(resp)
+	}
+	return nil
+}
+
+// UpdateIdentityProviderMapper replaces a mapper.
+//
+// body must carry id, name, identityProviderAlias and identityProviderMapper:
+// without the id Keycloak answers 500, and without the mapper type it answers
+// 409.
+func (c *Client) UpdateIdentityProviderMapper(ctx context.Context, realm, alias, mapperID string, body map[string]any) error {
+	path := identityProviderPath(realm) + "/" + url.PathEscape(alias) + "/mappers/" + url.PathEscape(mapperID)
+
+	resp, err := c.doRequest(ctx, http.MethodPut, path, body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return readError(resp)
+	}
+	return nil
+}
+
+// GetOrganizationIdentityProviders returns the providers associated with an
+// organization.
+func (c *Client) GetOrganizationIdentityProviders(ctx context.Context, realm, orgID string) ([]map[string]any, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/organizations/" + url.PathEscape(orgID) + "/identity-providers"
+
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding organization identity providers: %w", err)
+	}
+	return result, nil
+}
+
+// AddOrganizationIdentityProvider associates an existing provider with an
+// organization.
+//
+// Like AddOrganizationMember, the body is a bare JSON string rather than an
+// object; an object is rejected with 400. A provider already associated
+// elsewhere is also a 400, and one already associated here is a 409.
+func (c *Client) AddOrganizationIdentityProvider(ctx context.Context, realm, orgID, alias string) error {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/organizations/" + url.PathEscape(orgID) + "/identity-providers"
+
+	resp, err := c.doRequest(ctx, http.MethodPost, path, alias)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusCreated {
+		return readError(resp)
+	}
+	return nil
+}
