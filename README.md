@@ -570,7 +570,15 @@ These are **not** realm groups. They live in a namespace of their own: they neve
 
 Two further differences from realm groups:
 
-- **No role mappings.** Keycloak exposes no role-mapping endpoint for organization groups, so `realmRoles` and `clientRoles` are not available on them.
+- **No role mappings**, and the API is a trap. `realmRoles` and `clientRoles` are
+  rejected at config load rather than silently omitted, because the underlying
+  endpoint misleads. On Keycloak 26.6,
+  `POST /organizations/{org}/groups/{group}/role-mappings/realm` answers **404**.
+  On 26.7 it answers **204**, and the subsequent `GET` returns the role — but the
+  mapping has no effect: a member's composite realm roles are unchanged,
+  `GET /roles/{name}/users` stays empty, and the role reaches no token claim.
+  Reading the API alone, it looks supported, so the provisioner names the trap
+  instead of leaving it to be rediscovered.
 - **Members must already belong to the organization.** Keycloak rejects adding a non-member with `User is not member of the organization`, so list the user under the organization's `members` as well. A group member the organization does not have is logged as a warning and skipped rather than failing the run.
 
 Group names must be unique among siblings but may repeat at different levels, matching realm groups. Subgroups nest to any depth, and both group creation and membership are additive.

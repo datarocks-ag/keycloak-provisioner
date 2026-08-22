@@ -211,6 +211,17 @@ type OrganizationGroup struct {
 	// the organization's members as well. Membership is additive.
 	Members   []string            `yaml:"members"`
 	SubGroups []OrganizationGroup `yaml:"subGroups"`
+
+	// RealmRoles and ClientRoles are accepted by the parser only so that
+	// validation can reject them with an explanation. Organization groups
+	// cannot carry role mappings, but Keycloak's API does not say so: on 26.6
+	// the role-mapping endpoint answers 404, while on 26.7 it answers 204 and
+	// reads the role back even though the mapping never reaches a member's
+	// effective roles or any token claim. Leaving these fields out would make
+	// the parser reject them as unknown, which reads as "not implemented yet"
+	// and invites someone to wire the endpoint up by hand and get silence.
+	RealmRoles  []string            `yaml:"realmRoles"`
+	ClientRoles map[string][]string `yaml:"clientRoles"`
 }
 
 // OrganizationDomain is a domain owned by an organization.
@@ -1052,6 +1063,13 @@ func validateOrganizationGroups(prefix string, groups []OrganizationGroup) error
 			return fmt.Errorf("%s.name: duplicate group name %q", path, g.Name)
 		}
 		names[g.Name] = true
+
+		if len(g.RealmRoles) > 0 || len(g.ClientRoles) > 0 {
+			return fmt.Errorf("%s: organization groups cannot carry role mappings; "+
+				"Keycloak stores them but they never reach a member's effective roles "+
+				"or any token claim. Assign the roles to the members directly, or use a "+
+				"realm group", path)
+		}
 
 		if err := validateMultiValueAttributes(path+".attributes", g.Attributes); err != nil {
 			return err
