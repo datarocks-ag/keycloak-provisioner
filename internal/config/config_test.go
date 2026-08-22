@@ -2422,3 +2422,112 @@ realms:
 		t.Errorf("expected colliding organization attribute keys to merge into 2 values, got %v", attrs)
 	}
 }
+
+func TestValidationOrganizationGroupRejectsRealmRoles(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    organizationsEnabled: true
+    organizations:
+      - name: "acme"
+        domains:
+          - name: "acme.test"
+        groups:
+          - name: "engineers"
+            realmRoles:
+              - "org-inherited-role"
+`
+	path := writeTempConfig(t, yaml)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected organization group realmRoles to be rejected")
+	}
+	if !strings.Contains(err.Error(), "cannot carry role mappings") {
+		t.Errorf("error should explain the trap, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "token claim") {
+		t.Errorf("error should say the mapping never reaches a token claim, got: %v", err)
+	}
+}
+
+func TestValidationOrganizationGroupRejectsClientRoles(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    organizationsEnabled: true
+    organizations:
+      - name: "acme"
+        domains:
+          - name: "acme.test"
+        groups:
+          - name: "engineers"
+            subGroups:
+              - name: "backend"
+                clientRoles:
+                  "app": ["admin"]
+`
+	path := writeTempConfig(t, yaml)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected organization subgroup clientRoles to be rejected")
+	}
+	if !strings.Contains(err.Error(), "cannot carry role mappings") {
+		t.Errorf("error should explain the trap, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "subGroups[0]") {
+		t.Errorf("error should name the offending subgroup, got: %v", err)
+	}
+}
+
+// TestValidationOrganizationGroupRejectsEmptyRoleFields covers presence rather
+// than content: someone writing "realmRoles: []" is reaching for the feature,
+// so the explanation is due then, not once they add the first entry.
+func TestValidationOrganizationGroupRejectsEmptyRoleFields(t *testing.T) {
+	for _, field := range []string{"realmRoles: []", "clientRoles: {}"} {
+		t.Run(field, func(t *testing.T) {
+			yaml := `
+realms:
+  - realm: "test"
+    organizationsEnabled: true
+    organizations:
+      - name: "acme"
+        domains:
+          - name: "acme.test"
+        groups:
+          - name: "engineers"
+            ` + field + "\n"
+
+			path := writeTempConfig(t, yaml)
+			_, err := Load(path)
+			if err == nil {
+				t.Fatalf("expected %q to be rejected", field)
+			}
+			if !strings.Contains(err.Error(), "cannot carry role mappings") {
+				t.Errorf("error should explain the trap, got: %v", err)
+			}
+		})
+	}
+}
+
+// TestValidationOrganizationGroupAcceptsAbsentRoleFields is the control: a
+// group that never mentions the fields must still load.
+func TestValidationOrganizationGroupAcceptsAbsentRoleFields(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    organizationsEnabled: true
+    organizations:
+      - name: "acme"
+        domains:
+          - name: "acme.test"
+        groups:
+          - name: "engineers"
+            attributes:
+              tier:
+                - "gold"
+`
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err != nil {
+		t.Fatalf("a group without role fields must load: %v", err)
+	}
+}

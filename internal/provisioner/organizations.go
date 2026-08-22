@@ -103,9 +103,11 @@ func groupsAssignMembers(groups []config.OrganizationGroup) bool {
 // its subgroups. parentID is empty for a top-level group.
 //
 // It mirrors ensureGroup for realm groups, with one difference: organization
-// groups have no role mappings. Keycloak exposes no role-mapping endpoint for
-// them, and the realm group API refuses them outright, so there is nothing to
-// reconcile beyond attributes, members and subgroups.
+// groups carry no role mappings, so there is nothing to reconcile beyond
+// attributes, members and subgroups. Keycloak 26.7 does expose a role-mapping
+// endpoint for them, but it is inert — the mapping reaches neither a member's
+// effective roles nor any token claim — so config declaring one is rejected at
+// load rather than written here.
 func (p *Provisioner) ensureOrganizationGroup(
 	ctx context.Context,
 	realm string,

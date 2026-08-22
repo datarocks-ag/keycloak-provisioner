@@ -23,6 +23,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   username so re-runs stay idempotent. Everything after creation —
   password, roles, group memberships — is unchanged.
 
+### Changed
+
+- `realmRoles` and `clientRoles` on an organization group are now rejected at
+  config load with an explanation, instead of being rejected as unknown fields.
+  Keycloak 26.7 accepts the corresponding role-mapping call and reads the role
+  back, but the mapping never reaches a member's effective roles or any token
+  claim. An unknown-field error reads as "not implemented yet", which invites
+  wiring the endpoint up by hand; naming the trap does not.
+
 ### Fixed
 
 - `${VAR}` references are now expanded in the **keys** of `roles.clients` under a
@@ -35,6 +44,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are merged instead of one silently overwriting the other, and the merge is now
   order-independent. Organization and organization-group attributes previously
   dropped one side, nondeterministically.
+- Corrected the 1.7.0 note claiming Keycloak exposes no role-mapping endpoint
+  for organization groups. It does not on 26.6, but 26.7 exposes one that is
+  accepted and inert — which is worse, and now documented as such.
 
 ## [1.7.0] — 2026-08-22
 
@@ -94,10 +106,10 @@ differently on the first run after upgrading:
   multivalued `attributes`, additive `members`, and nested `subGroups`.
   These are organization-scoped and separate from realm groups — they do
   not appear under the realm's groups, and Keycloak refuses to manage
-  them through the normal group API. They support no role mappings,
-  since Keycloak exposes no role-mapping endpoint for them, and a member
-  must already belong to the organization or it is logged as a warning
-  and skipped.
+  them through the normal group API. They support no role mappings — see
+  the README for why the endpoint that appears to offer them does not —
+  and a member must already belong to the organization or it is logged
+  as a warning and skipped.
 - Authentication flows: an `authenticationFlows` list on any realm, with
   nested subflows, per-execution `requirement`, authenticator `config`,
   and `copyFrom` to seed a flow from an existing one. Executions are
