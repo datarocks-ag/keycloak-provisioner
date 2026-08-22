@@ -323,9 +323,6 @@ func organizationID(org map[string]any, name string) (string, error) {
 	return id, nil
 }
 
-// buildOrganizationBody builds the organization representation. onCreate
-// controls whether the alias is included: Keycloak rejects changing it on an
-// existing organization.
 // buildOrganizationCreateBody builds the representation for a new organization.
 // Nothing exists to preserve, so only what the config declares is sent and
 // Keycloak fills in the rest — including deriving an alias when none is given.
@@ -334,6 +331,11 @@ func buildOrganizationCreateBody(o config.Organization) map[string]any {
 
 	if o.Alias != "" {
 		body["alias"] = o.Alias
+	}
+
+	// Sent as declared: there is no stored map to merge with yet.
+	if len(o.Attributes) > 0 {
+		body["attributes"] = o.Attributes
 	}
 
 	applyOrganizationConfig(body, o)
@@ -386,8 +388,10 @@ func buildOrganizationUpdateBody(o config.Organization, current map[string]any) 
 	return body, nil
 }
 
-// applyOrganizationConfig overlays the fields a config may declare. Attributes
-// are handled by the callers, which differ on whether to merge.
+// applyOrganizationConfig overlays the fields a config may declare that both
+// paths treat identically. Attributes are not among them: create sends them as
+// declared, update merges them over the stored map, so each caller sets them
+// itself.
 func applyOrganizationConfig(body map[string]any, o config.Organization) {
 	if o.Enabled != nil {
 		body["enabled"] = *o.Enabled

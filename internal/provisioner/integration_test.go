@@ -2921,6 +2921,19 @@ realms:
 	}
 	orgID := orgs[0]["id"].(string)
 
+	// Assert the create path before touching anything. Checking attributes only
+	// at the end would pass even if create dropped them, because the second
+	// run's merge puts them back.
+	created, err := kc.GetOrganization(ctx, "orgupdate-realm", orgID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	createdAttrs, _ := created["attributes"].(map[string]any)
+	if _, ok := createdAttrs["tier"]; !ok {
+		t.Errorf("create must send configured attributes, got %v", created["attributes"])
+	}
+
 	// Set an attribute out of band, the way an operator would. The config never
 	// mentions it, so only a merge keeps it.
 	current, err := kc.GetOrganization(ctx, "orgupdate-realm", orgID)

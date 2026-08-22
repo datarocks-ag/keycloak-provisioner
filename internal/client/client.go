@@ -1020,7 +1020,6 @@ func (c *Client) UpdateOrganization(ctx context.Context, realm, orgID string, bo
 	return nil
 }
 
-// GetOrganizationMembers returns the members of an organization.
 // GetOrganization returns one organization's full representation.
 //
 // The search listing omits "attributes", so an update that has to merge them
@@ -1047,6 +1046,7 @@ func (c *Client) GetOrganization(ctx context.Context, realm, orgID string) (map[
 	return result, nil
 }
 
+// GetOrganizationMembers returns the members of an organization.
 func (c *Client) GetOrganizationMembers(ctx context.Context, realm, orgID string) ([]map[string]any, error) {
 	// max=-1 asks for every member. Keycloak defaults this endpoint to 10,
 	// which silently truncates the caller's view of who is already a member —

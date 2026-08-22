@@ -648,3 +648,24 @@ func TestEnsureOrganizationGroupsSkipMemberReadWhenNoneAssigned(t *testing.T) {
 		t.Errorf("no group assigns members, so the member listing should not be read; got %d", orgMemberReads)
 	}
 }
+
+// TestBuildOrganizationCreateBodySendsAttributes guards the create path, which
+// is easy to lose when the two builders are split: the update path merges
+// attributes, so an organization created without them looks correct from the
+// second run onward and only the first run is wrong.
+func TestBuildOrganizationCreateBodySendsAttributes(t *testing.T) {
+	o := config.Organization{
+		Name:       "acme",
+		Attributes: map[string][]string{"tier": {"gold"}},
+	}
+
+	body := buildOrganizationCreateBody(o)
+
+	attrs, ok := body["attributes"].(map[string][]string)
+	if !ok {
+		t.Fatalf("create body must carry attributes, got %T: %v", body["attributes"], body["attributes"])
+	}
+	if len(attrs["tier"]) != 1 || attrs["tier"][0] != "gold" {
+		t.Errorf("unexpected attributes: %v", attrs)
+	}
+}
