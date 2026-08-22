@@ -1022,7 +1022,13 @@ func (c *Client) UpdateOrganization(ctx context.Context, realm, orgID string, bo
 
 // GetOrganizationMembers returns the members of an organization.
 func (c *Client) GetOrganizationMembers(ctx context.Context, realm, orgID string) ([]map[string]any, error) {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/organizations/" + url.PathEscape(orgID) + "/members"
+	// max=-1 asks for every member. Keycloak defaults this endpoint to 10,
+	// which silently truncates the caller's view of who is already a member —
+	// it then re-adds the rest and Keycloak answers 409. Among the listings
+	// this client uses, only this one is capped: organization groups, their
+	// members, organization identity providers, a user's groups, and the
+	// realm-level listings all return in full.
+	path := "/admin/realms/" + url.PathEscape(realm) + "/organizations/" + url.PathEscape(orgID) + "/members?max=-1"
 	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err

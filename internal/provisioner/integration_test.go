@@ -2741,3 +2741,66 @@ realms:
 		t.Errorf("error should name the alias, got: %v", err)
 	}
 }
+
+// TestIntegrationOrganizationWithManyMembersIsIdempotent covers a listing
+// default rather than a code path: Keycloak returns only the first 10 members
+// of an organization unless asked otherwise. Without an explicit max the
+// provisioner's "already a member" set is truncated, so members 11 and beyond
+// are re-added on every run and Keycloak answers 409.
+//
+// Twelve members is the smallest count that crosses the boundary and leaves the
+// failure unambiguous.
+func TestIntegrationOrganizationWithManyMembersIsIdempotent(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	var users, members strings.Builder
+
+	for i := 1; i <= 12; i++ {
+		fmt.Fprintf(&users, "      - username: \"member%02d\"\n        enabled: true\n        email: \"member%02d@acme.test\"\n        emailVerified: true\n", i, i)
+		fmt.Fprintf(&members, "          - \"member%02d\"\n", i)
+	}
+
+	configYAML := `
+realms:
+  - realm: "manymembers-realm"
+    enabled: true
+    organizationsEnabled: true
+    users:
+` + users.String() + `    organizations:
+      - name: "acme"
+        domains:
+          - name: "acme.test"
+        members:
+` + members.String()
+
+	cfgPath := writeTestConfig(t, configYAML)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+
+	orgs, err := kc.GetOrganizations(ctx, "manymembers-realm", "acme")
+	if err != nil || len(orgs) == 0 {
+		t.Fatalf("organization not found: %v", err)
+	}
+
+	all, err := kc.GetOrganizationMembers(ctx, "manymembers-realm", orgs[0]["id"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 12 {
+		t.Errorf("expected the listing to return all 12 members, got %d", len(all))
+	}
+
+	// The second run is the assertion: every member already exists, so a
+	// truncated listing makes the provisioner re-add the ones it cannot see.
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("second run must be idempotent for an organization above the listing default: %v", err)
+	}
+}
