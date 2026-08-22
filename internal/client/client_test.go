@@ -2324,7 +2324,15 @@ func TestGetOrganizationGroupsRequestsAllGroups(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	for level, got := range queries {
+	// Iterating the map alone would pass on an empty map, so assert each level
+	// was actually reached before checking what it asked for.
+	for _, level := range []string{"top", "children"} {
+		got, ok := queries[level]
+		if !ok {
+			t.Errorf("the %s listing was never requested", level)
+			continue
+		}
+
 		if got != "max=-1" {
 			t.Errorf("%s listing must ask for every group, got query %q", level, got)
 		}
