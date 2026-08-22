@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_No unreleased changes._
+
+## [1.10.0] — 2026-08-22
+
+Makes `fullScopeAllowed: false` usable. It shipped in 1.8.0 as a switch with
+nothing behind it: it limits a client's tokens to the roles in its scope, and
+nothing in the config could put a role there. Measured against 26.6 the result
+is not a narrower token but a client that reaches nothing — Keycloak derives the
+audiences a client may request from the roles in its scope, so every token
+exchange fails with `Requested audience not available`. `scopeMappings` is the
+missing half.
+
+Two things to know before upgrading:
+
+- **A client declaring `defaultClientScopes` was losing Keycloak's own default
+  scopes**, `roles` among them, so its tokens carried no `resource_access` at
+  all. That is fixed for clients created from now on, but the reconciler only
+  adds: a client provisioned by an earlier version keeps its narrowed set. Check
+  any client that declares either scope list, and either name the missing
+  built-ins (`roles`, `basic`, `profile`, `email`, `web-origins`, `acr`) in
+  `defaultClientScopes` or recreate the client.
+- **`fullScopeAllowed: false` still needs `scopeMappings` to be useful.** The
+  flag alone leaves a client with scope on nothing; naming the roles it should
+  reach is what makes an audience reachable. Nothing about an existing config
+  changes on its own — both fields are opt-in.
+
 ### Added
 
 - `scopeMappings` on a client and on a client scope: the roles that are in that
