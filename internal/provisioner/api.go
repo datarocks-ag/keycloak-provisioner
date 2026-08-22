@@ -153,10 +153,10 @@ type OrganizationAPI interface {
 // OrganizationGroupAPI covers the groups an organization owns. They are a
 // separate namespace from realm groups and cannot be reached through GroupAPI.
 type OrganizationGroupAPI interface {
-	GetOrganizationGroups(ctx context.Context, realm, orgID string) ([]map[string]any, error)
-	GetOrganizationSubGroups(ctx context.Context, realm, orgID, groupID string) ([]map[string]any, error)
-	CreateOrganizationGroup(ctx context.Context, realm, orgID string, body map[string]any) (string, error)
-	CreateOrganizationSubGroup(ctx context.Context, realm, orgID, parentID string, body map[string]any) (string, error)
+	// GetOrganizationGroups searches one level: parentID is "" for top level.
+	GetOrganizationGroups(ctx context.Context, realm, orgID, parentID string) ([]map[string]any, error)
+	// CreateOrganizationGroup creates at one level: parentID is "" for top level.
+	CreateOrganizationGroup(ctx context.Context, realm, orgID, parentID string, body map[string]any) (string, error)
 	UpdateOrganizationGroup(ctx context.Context, realm, orgID, groupID string, body map[string]any) error
 	GetOrganizationGroupMembers(ctx context.Context, realm, orgID, groupID string) ([]map[string]any, error)
 	AddOrganizationGroupMember(ctx context.Context, realm, orgID, groupID, userID string) error

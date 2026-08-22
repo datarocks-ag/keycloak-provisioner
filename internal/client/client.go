@@ -1172,21 +1172,20 @@ func (c *Client) AddOrganizationMember(ctx context.Context, realm, orgID, userID
 	return nil
 }
 
-// GetOrganizationGroups returns the top-level groups of an organization.
+// GetOrganizationGroups returns the groups of an organization at one level.
+// parentID is "" for top-level groups; otherwise the children of that group are
+// returned.
 //
 // Organization groups live in a namespace of their own: they do not appear
 // under the realm's groups, and Keycloak refuses to manage them through the
-// normal group API. The returned entries never populate "subGroups" — use
-// GetOrganizationSubGroups to descend.
-func (c *Client) GetOrganizationGroups(ctx context.Context, realm, orgID string) ([]map[string]any, error) {
+// normal group API. The listing never populates "subGroups", which is why
+// descending needs a call per level.
+func (c *Client) GetOrganizationGroups(ctx context.Context, realm, orgID, parentID string) ([]map[string]any, error) {
 	path := "/admin/realms/" + url.PathEscape(realm) + "/organizations/" + url.PathEscape(orgID) + "/groups"
-	return c.listOrganizationGroups(ctx, path)
-}
+	if parentID != "" {
+		path += "/" + url.PathEscape(parentID) + "/children"
+	}
 
-// GetOrganizationSubGroups returns the direct children of an organization group.
-func (c *Client) GetOrganizationSubGroups(ctx context.Context, realm, orgID, groupID string) ([]map[string]any, error) {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/organizations/" + url.PathEscape(orgID) +
-		"/groups/" + url.PathEscape(groupID) + "/children"
 	return c.listOrganizationGroups(ctx, path)
 }
 
@@ -1208,11 +1207,17 @@ func (c *Client) listOrganizationGroups(ctx context.Context, path string) ([]map
 	return result, nil
 }
 
-// CreateOrganizationGroup creates a top-level group in an organization.
-// Returns the UUID from the Location header. Keycloak rejects a duplicate name
-// with 409, so callers must check for an existing group first.
-func (c *Client) CreateOrganizationGroup(ctx context.Context, realm, orgID string, body map[string]any) (string, error) {
+// CreateOrganizationGroup creates a group in an organization and returns its
+// UUID from the Location header. parentID is "" for a top-level group.
+//
+// Keycloak rejects a duplicate name with 409, so callers must check the listing
+// first.
+func (c *Client) CreateOrganizationGroup(ctx context.Context, realm, orgID, parentID string, body map[string]any) (string, error) {
 	path := "/admin/realms/" + url.PathEscape(realm) + "/organizations/" + url.PathEscape(orgID) + "/groups"
+	if parentID != "" {
+		path += "/" + url.PathEscape(parentID) + "/children"
+	}
+
 	resp, err := c.doRequest(ctx, http.MethodPost, path, body)
 	if err != nil {
 		return "", err
@@ -1223,22 +1228,6 @@ func (c *Client) CreateOrganizationGroup(ctx context.Context, realm, orgID strin
 		return "", readError(resp)
 	}
 	return parseLocationID(resp, "creating organization group")
-}
-
-// CreateOrganizationSubGroup creates a group nested under an organization group.
-func (c *Client) CreateOrganizationSubGroup(ctx context.Context, realm, orgID, parentID string, body map[string]any) (string, error) {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/organizations/" + url.PathEscape(orgID) +
-		"/groups/" + url.PathEscape(parentID) + "/children"
-	resp, err := c.doRequest(ctx, http.MethodPost, path, body)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusCreated {
-		return "", readError(resp)
-	}
-	return parseLocationID(resp, "creating organization subgroup")
 }
 
 // UpdateOrganizationGroup updates an organization group by ID.

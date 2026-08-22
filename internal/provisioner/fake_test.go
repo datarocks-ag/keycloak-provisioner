@@ -176,12 +176,12 @@ func (f *fakeAPI) GetOrganizationMembers(_ context.Context, realm, orgID string)
 	return f.orgMembers[realm+"/"+orgID], nil
 }
 
-func (f *fakeAPI) GetOrganizationGroups(_ context.Context, realm, orgID string) ([]map[string]any, error) {
-	return f.orgGroups[realm+"/"+orgID], nil
-}
+func (f *fakeAPI) GetOrganizationGroups(_ context.Context, realm, orgID, parentID string) ([]map[string]any, error) {
+	if parentID == "" {
+		return f.orgGroups[realm+"/"+orgID], nil
+	}
 
-func (f *fakeAPI) GetOrganizationSubGroups(_ context.Context, realm, orgID, groupID string) ([]map[string]any, error) {
-	return f.orgSubGroups[realm+"/"+orgID+"/"+groupID], nil
+	return f.orgSubGroups[realm+"/"+orgID+"/"+parentID], nil
 }
 
 func (f *fakeAPI) GetOrganizationGroupMembers(_ context.Context, realm, orgID, groupID string) ([]map[string]any, error) {

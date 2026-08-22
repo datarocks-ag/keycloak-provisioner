@@ -151,12 +151,11 @@ func (p *Provisioner) reconcileOrganizationGroup(
 	if existing == nil {
 		if parentID == "" {
 			slog.Info("Creating organization group", "realm", realm, "group", g.Name)
-			return p.client.CreateOrganizationGroup(ctx, realm, orgID, body)
+		} else {
+			slog.Info("Creating organization subgroup", "realm", realm, "group", g.Name, "parent", parentID)
 		}
 
-		slog.Info("Creating organization subgroup", "realm", realm, "group", g.Name, "parent", parentID)
-
-		return p.client.CreateOrganizationSubGroup(ctx, realm, orgID, parentID, body)
+		return p.client.CreateOrganizationGroup(ctx, realm, orgID, parentID, body)
 	}
 
 	groupID, ok := existing["id"].(string)
@@ -185,16 +184,7 @@ func (p *Provisioner) reconcileOrganizationGroup(
 // Keycloak's ?search on the groups endpoint matches across the whole tree, so
 // the children endpoint is used for nested levels rather than a search.
 func (p *Provisioner) findOrganizationGroup(ctx context.Context, realm, orgID, parentID, name string) (map[string]any, error) {
-	var (
-		candidates []map[string]any
-		err        error
-	)
-
-	if parentID == "" {
-		candidates, err = p.client.GetOrganizationGroups(ctx, realm, orgID)
-	} else {
-		candidates, err = p.client.GetOrganizationSubGroups(ctx, realm, orgID, parentID)
-	}
+	candidates, err := p.client.GetOrganizationGroups(ctx, realm, orgID, parentID)
 	if err != nil {
 		return nil, err
 	}

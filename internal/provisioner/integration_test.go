@@ -1825,7 +1825,7 @@ realms:
 	}
 	orgID, _ := orgs[0]["id"].(string)
 
-	groups, err := kc.GetOrganizationGroups(ctx, "orggroups-realm", orgID)
+	groups, err := kc.GetOrganizationGroups(ctx, "orggroups-realm", orgID, "")
 	if err != nil {
 		t.Fatalf("getting organization groups: %v", err)
 	}
@@ -1848,7 +1848,7 @@ realms:
 		t.Errorf("organization group leaked into realm groups: %v", realmGroups)
 	}
 
-	children, err := kc.GetOrganizationSubGroups(ctx, "orggroups-realm", orgID, engID)
+	children, err := kc.GetOrganizationGroups(ctx, "orggroups-realm", orgID, engID)
 	if err != nil {
 		t.Fatalf("getting subgroups: %v", err)
 	}
@@ -1878,7 +1878,7 @@ realms:
 		t.Fatalf("second run: %v", err)
 	}
 
-	groups, err = kc.GetOrganizationGroups(ctx, "orggroups-realm", orgID)
+	groups, err = kc.GetOrganizationGroups(ctx, "orggroups-realm", orgID, "")
 	if err != nil {
 		t.Fatalf("getting groups after second run: %v", err)
 	}
@@ -1892,7 +1892,7 @@ realms:
 		t.Errorf("expected exactly 1 engineering group after two runs, got %d", count)
 	}
 
-	children, err = kc.GetOrganizationSubGroups(ctx, "orggroups-realm", orgID, engID)
+	children, err = kc.GetOrganizationGroups(ctx, "orggroups-realm", orgID, engID)
 	if err != nil {
 		t.Fatalf("getting subgroups after second run: %v", err)
 	}

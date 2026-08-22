@@ -644,29 +644,23 @@ func (d *dryRunAPI) AddOrganizationMember(_ context.Context, realm, orgID, userI
 
 // Organization groups.
 
-func (d *dryRunAPI) GetOrganizationGroups(ctx context.Context, realm, orgID string) ([]map[string]any, error) {
-	if d.realmIsSynthetic(realm) || isSyntheticID(orgID) {
+func (d *dryRunAPI) GetOrganizationGroups(ctx context.Context, realm, orgID, parentID string) ([]map[string]any, error) {
+	if d.realmIsSynthetic(realm) || isSyntheticID(orgID) || isSyntheticID(parentID) {
 		return nil, nil
 	}
-	return d.inner.GetOrganizationGroups(ctx, realm, orgID)
+
+	return d.inner.GetOrganizationGroups(ctx, realm, orgID, parentID)
 }
 
-func (d *dryRunAPI) GetOrganizationSubGroups(ctx context.Context, realm, orgID, groupID string) ([]map[string]any, error) {
-	if d.realmIsSynthetic(realm) || isSyntheticID(orgID) || isSyntheticID(groupID) {
-		return nil, nil
+func (d *dryRunAPI) CreateOrganizationGroup(_ context.Context, realm, orgID, parentID string, body map[string]any) (string, error) {
+	name, _ := body["name"].(string)
+	if parentID == "" {
+		slog.Info("DRY-RUN: would create organization group", "realm", realm, "orgUUID", orgID, "group", name)
+	} else {
+		slog.Info("DRY-RUN: would create organization subgroup",
+			"realm", realm, "orgUUID", orgID, "group", name, "parent", parentID)
 	}
-	return d.inner.GetOrganizationSubGroups(ctx, realm, orgID, groupID)
-}
 
-func (d *dryRunAPI) CreateOrganizationGroup(_ context.Context, realm, orgID string, body map[string]any) (string, error) {
-	name, _ := body["name"].(string)
-	slog.Info("DRY-RUN: would create organization group", "realm", realm, "orgUUID", orgID, "group", name)
-	return d.newID("orggroup"), nil
-}
-
-func (d *dryRunAPI) CreateOrganizationSubGroup(_ context.Context, realm, orgID, parentID string, body map[string]any) (string, error) {
-	name, _ := body["name"].(string)
-	slog.Info("DRY-RUN: would create organization subgroup", "realm", realm, "orgUUID", orgID, "group", name, "parent", parentID)
 	return d.newID("orggroup"), nil
 }
 

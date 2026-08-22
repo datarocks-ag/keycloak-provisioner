@@ -1996,19 +1996,19 @@ func TestOrganizationGroupEndpoints(t *testing.T) {
 	c := connectClient(t, server.URL)
 	ctx := context.Background()
 
-	groups, err := c.GetOrganizationGroups(ctx, "test", "org-1")
+	groups, err := c.GetOrganizationGroups(ctx, "test", "org-1", "")
 	if err != nil || len(groups) != 1 {
 		t.Fatalf("get groups: %v %v", groups, err)
 	}
-	children, err := c.GetOrganizationSubGroups(ctx, "test", "org-1", "g-1")
+	children, err := c.GetOrganizationGroups(ctx, "test", "org-1", "g-1")
 	if err != nil || len(children) != 1 || children[0]["name"] != "backend" {
 		t.Fatalf("get children: %v %v", children, err)
 	}
-	id, err := c.CreateOrganizationGroup(ctx, "test", "org-1", map[string]any{"name": "sales"})
+	id, err := c.CreateOrganizationGroup(ctx, "test", "org-1", "", map[string]any{"name": "sales"})
 	if err != nil || id != "g-9" {
 		t.Fatalf("create group: %q %v", id, err)
 	}
-	subID, err := c.CreateOrganizationSubGroup(ctx, "test", "org-1", "g-1", map[string]any{"name": "backend"})
+	subID, err := c.CreateOrganizationGroup(ctx, "test", "org-1", "g-1", map[string]any{"name": "backend"})
 	if err != nil || subID != "g-10" {
 		t.Fatalf("create subgroup: %q %v", subID, err)
 	}
