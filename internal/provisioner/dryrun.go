@@ -42,6 +42,8 @@ func NewDryRunAdapter(inner KeycloakAPI) KeycloakAPI {
 		createdGroups:      make(map[groupKey]string),
 		createdScopes:      make(map[clientScopeKey]string),
 		createdFlows:       make(map[flowKey]string),
+		createdUsers:       make(map[userKey]string),
+		createdOrgMembers:  make(map[orgMemberKey]bool),
 	}
 }
 
@@ -53,6 +55,8 @@ type (
 	groupKey       struct{ realm, parentID, name string } // parentID "" for top-level
 	clientScopeKey struct{ realm, name string }
 	flowKey        struct{ realm, alias string }
+	userKey        struct{ realm, username string }
+	orgMemberKey   struct{ realm, orgID, userID string }
 )
 
 type dryRunAPI struct {
@@ -68,6 +72,8 @@ type dryRunAPI struct {
 	createdGroups      map[groupKey]string       // -> synthetic group id
 	createdScopes      map[clientScopeKey]string // -> synthetic client scope id
 	createdFlows       map[flowKey]string        // -> synthetic authentication flow id
+	createdUsers       map[userKey]string        // -> synthetic user id
+	createdOrgMembers  map[orgMemberKey]bool     // organization memberships added this run
 }
 
 func (d *dryRunAPI) realmIsSynthetic(realm string) bool {
@@ -215,16 +221,51 @@ func (d *dryRunAPI) UpdateProtocolMapper(_ context.Context, realm, clientUUID, m
 
 // Users.
 
+// GetUsers reports the realm's real users plus any created earlier in this
+// dry-run. Without the synthetic ones, a step that resolves a username — adding
+// a member to an organization, for instance — would treat a user created
+// moments ago as missing and silently drop that part of the report.
 func (d *dryRunAPI) GetUsers(ctx context.Context, realm, username string) ([]map[string]any, error) {
-	if d.realmIsSynthetic(realm) {
-		return nil, nil
+	var users []map[string]any
+
+	if !d.realmIsSynthetic(realm) {
+		var err error
+
+		users, err = d.inner.GetUsers(ctx, realm, username)
+		if err != nil {
+			return nil, err
+		}
 	}
-	return d.inner.GetUsers(ctx, realm, username)
+
+	if id, ok := d.syntheticUser(realm, username); ok {
+		users = append(users, map[string]any{"id": id, "username": username})
+	}
+
+	return users, nil
+}
+
+// syntheticUser returns the id of a user that would have been created in this
+// run, if any.
+func (d *dryRunAPI) syntheticUser(realm, username string) (string, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	id, ok := d.createdUsers[userKey{realm, username}]
+
+	return id, ok
 }
 
 func (d *dryRunAPI) CreateUser(_ context.Context, realm string, body map[string]any) (string, error) {
-	slog.Info("DRY-RUN: would create user", "realm", realm, "username", body["username"])
-	return d.newID("user"), nil
+	username, _ := body["username"].(string)
+	slog.Info("DRY-RUN: would create user", "realm", realm, "username", username)
+
+	id := d.newID("user")
+
+	d.mu.Lock()
+	d.createdUsers[userKey{realm, username}] = id
+	d.mu.Unlock()
+
+	return id, nil
 }
 
 func (d *dryRunAPI) UpdateUser(_ context.Context, realm, userID string, body map[string]any) error {
@@ -307,13 +348,6 @@ func (d *dryRunAPI) GetGroups(ctx context.Context, realm, search string) ([]map[
 		return nil, nil
 	}
 	return d.inner.GetGroups(ctx, realm, search)
-}
-
-func (d *dryRunAPI) GetGroup(ctx context.Context, realm, id string) (map[string]any, error) {
-	if isSyntheticID(id) || d.realmIsSynthetic(realm) {
-		return nil, nil
-	}
-	return d.inner.GetGroup(ctx, realm, id)
 }
 
 func (d *dryRunAPI) GetSubGroups(ctx context.Context, realm, parentID, search string) ([]map[string]any, error) {
@@ -545,15 +579,73 @@ func (d *dryRunAPI) UpdateOrganization(_ context.Context, realm, orgID string, b
 	return nil
 }
 
+// GetOrganizationMembers reports the organization's real members plus any added
+// earlier in this dry-run, so organization group membership — which resolves
+// its users against this listing — is reported rather than skipped.
+//
+// A synthetic member can only be named when the user was also created in this
+// run, since that is the only place a username is known for an id. One that
+// cannot be named is left out: the caller matches on username, so an entry
+// without one would not help it.
 func (d *dryRunAPI) GetOrganizationMembers(ctx context.Context, realm, orgID string) ([]map[string]any, error) {
-	if d.realmIsSynthetic(realm) || isSyntheticID(orgID) {
-		return nil, nil
+	var members []map[string]any
+
+	if !d.realmIsSynthetic(realm) && !isSyntheticID(orgID) {
+		var err error
+
+		members, err = d.inner.GetOrganizationMembers(ctx, realm, orgID)
+		if err != nil {
+			return nil, err
+		}
 	}
-	return d.inner.GetOrganizationMembers(ctx, realm, orgID)
+
+	return append(members, d.syntheticOrgMembers(realm, orgID)...), nil
+}
+
+// syntheticOrgMembers returns the memberships added so far in this dry-run for
+// the given organization, sorted by username so output is stable.
+func (d *dryRunAPI) syntheticOrgMembers(realm, orgID string) []map[string]any {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	byID := make(map[string]string, len(d.createdUsers))
+	for key, id := range d.createdUsers {
+		if key.realm == realm {
+			byID[id] = key.username
+		}
+	}
+
+	usernames := make([]string, 0, len(d.createdOrgMembers))
+
+	for key := range d.createdOrgMembers {
+		if key.realm != realm || key.orgID != orgID {
+			continue
+		}
+
+		if username, ok := byID[key.userID]; ok {
+			usernames = append(usernames, username)
+		}
+	}
+	sort.Strings(usernames)
+
+	members := make([]map[string]any, 0, len(usernames))
+	for _, username := range usernames {
+		members = append(members, map[string]any{
+			"id":       d.createdUsers[userKey{realm, username}],
+			"username": username,
+		})
+	}
+
+	return members
 }
 
 func (d *dryRunAPI) AddOrganizationMember(_ context.Context, realm, orgID, userID string) error {
 	slog.Info("DRY-RUN: would add user to organization", "realm", realm, "orgUUID", orgID, "userID", userID)
+
+	d.mu.Lock()
+	d.createdOrgMembers[orgMemberKey{realm, orgID, userID}] = true
+	d.mu.Unlock()
+
 	return nil
 }
 
