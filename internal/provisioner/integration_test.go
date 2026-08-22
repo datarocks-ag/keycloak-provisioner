@@ -109,8 +109,13 @@ func startKeycloak(image string) (*client.Client, func(), error) {
 		"--user", "admin",
 		"--password", "admin",
 	})
-	if err != nil || exitCode != 0 {
-		return nil, nil, fmt.Errorf("disabling SSL on master realm: exit=%d err=%w", exitCode, err)
+	if err != nil {
+		return nil, nil, fmt.Errorf("disabling SSL on master realm: %w", err)
+	}
+	// Exec reports a non-zero status without returning an error, so this is a
+	// separate case: wrapping a nil err with %w would render "%!w(<nil>)".
+	if exitCode != 0 {
+		return nil, nil, fmt.Errorf("disabling SSL on master realm: kcadm exited %d", exitCode)
 	}
 
 	baseURL, err := kcContainer.GetAuthServerURL(ctx)
@@ -2205,5 +2210,83 @@ realms:
 	}
 	if err := compat.Verify(ctx, kc, cfg); err != nil {
 		t.Errorf("organizations without groups should be supported on 26.2: %v", err)
+	}
+}
+
+// TestIntegrationCapabilityCheckRejectsUnknownProvider asks the real server
+// what it offers and confirms a config naming something it does not have is
+// refused, with the config path and a suggestion.
+func TestIntegrationCapabilityCheckRejectsUnknownProvider(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	configYAML := `
+realms:
+  - realm: "capability-realm"
+    enabled: true
+    authenticationFlows:
+      - alias: "typo-flow"
+        executions:
+          - provider: "auth-cookei"
+    clients:
+      - clientId: "web"
+        protocolMappers:
+          - name: "aud"
+            protocol: "openid-connect"
+            protocolMapper: "oidc-audiance-mapper"
+`
+	cfg, err := config.Load(writeTestConfig(t, configYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = compat.Verify(context.Background(), kc, cfg)
+	if err == nil {
+		t.Fatal("expected the unknown authenticator and mapper to be refused")
+	}
+
+	for _, want := range []string{
+		"auth-cookei",
+		`did you mean "auth-cookie"`,
+		"authenticationFlows[0].executions[0].provider",
+		"oidc-audiance-mapper",
+		`did you mean "oidc-audience-mapper"`,
+		"clients[0].protocolMappers[0].protocolMapper",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should mention %q, got: %v", want, err)
+		}
+	}
+}
+
+// TestIntegrationCapabilitiesMatchServer confirms the capability lists are read
+// correctly from a real server, so the check is not silently comparing against
+// nothing.
+func TestIntegrationCapabilitiesMatchServer(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	caps, err := compat.ReadCapabilities(context.Background(), kc)
+	if err != nil {
+		t.Fatalf("ReadCapabilities: %v", err)
+	}
+
+	// Providers from several of the four lists, to prove they are unioned.
+	for _, want := range []string{
+		"auth-cookie",                         // authenticator-providers
+		"conditional-level-of-authentication", // present while step-up is enabled
+		"registration-page-form",              // form-providers
+		"client-secret",                       // client-authenticator-providers
+	} {
+		if !caps.Authenticators[want] {
+			t.Errorf("expected provider %q to be reported by the server", want)
+		}
+	}
+
+	if !caps.ProtocolMappers["openid-connect"]["oidc-audience-mapper"] {
+		t.Errorf("expected the OIDC audience mapper, got %d protocols", len(caps.ProtocolMappers))
+	}
+	if !caps.ProtocolMappers["saml"]["saml-audience-mapper"] {
+		t.Error("expected SAML mapper types to be reported too")
 	}
 }

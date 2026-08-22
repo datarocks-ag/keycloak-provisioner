@@ -49,13 +49,40 @@ func TestDocsTableRendersEveryRequirement(t *testing.T) {
 	table := DocsTable()
 
 	for _, r := range Requirements {
-		if !strings.Contains(table, r.Name) {
-			t.Errorf("table is missing %q", r.Name)
+		row := requirementRow(t, table, r.Name)
+
+		want := r.MinVersion
+		if want == "" {
+			// strings.Contains(table, "") is vacuously true, so a version-less
+			// requirement has to be checked for the rendered placeholder
+			// instead — otherwise this assertion tests nothing.
+			want = "any"
 		}
-		if !strings.Contains(table, r.MinVersion) {
-			t.Errorf("table is missing the minimum version for %q", r.Name)
+
+		if !strings.Contains(row, want) {
+			t.Errorf("row for %q should show version %q, got: %s", r.Name, want, row)
+		}
+
+		if r.Feature != "" && !strings.Contains(row, r.Feature) {
+			t.Errorf("row for %q should name feature %q, got: %s", r.Name, r.Feature, row)
 		}
 	}
+}
+
+// requirementRow returns the generated table row for a requirement, so an
+// assertion cannot accidentally be satisfied by a different row.
+func requirementRow(t *testing.T, table, name string) string {
+	t.Helper()
+
+	for _, line := range strings.Split(table, "\n") {
+		if strings.Contains(line, "| "+name+" |") {
+			return line
+		}
+	}
+
+	t.Fatalf("table has no row for %q:\n%s", name, table)
+
+	return ""
 }
 
 func TestReplaceDocsTableReportsMissingMarkers(t *testing.T) {

@@ -12,10 +12,29 @@ import (
 type fakeServerInfo struct {
 	doc map[string]any
 	err error
+	// providers maps an authentication kind to the provider ids the server
+	// offers. Nil means the default set used by tests that do not care.
+	providers map[string][]string
 }
 
 func (f fakeServerInfo) GetServerInfo(context.Context) (map[string]any, error) {
 	return f.doc, f.err
+}
+
+func (f fakeServerInfo) GetAuthenticationProviders(_ context.Context, _, kind string) ([]map[string]any, error) {
+	ids, ok := f.providers[kind]
+	if !ok && f.providers == nil && kind == "authenticator-providers" {
+		// A sensible default so tests focused on versions and features do not
+		// have to enumerate providers they never use.
+		ids = []string{"auth-cookie", "auth-otp-form", "conditional-level-of-authentication"}
+	}
+
+	out := make([]map[string]any, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, map[string]any{"id": id})
+	}
+
+	return out, nil
 }
 
 func serverInfoDoc(version string, features map[string]bool) map[string]any {
@@ -123,8 +142,8 @@ func TestCheckRejectsVersionTooOld(t *testing.T) {
 	if len(problems) != 1 {
 		t.Fatalf("expected exactly the organization groups problem, got %v", problems)
 	}
-	if problems[0].Requirement.Name != "organization groups" {
-		t.Errorf("unexpected requirement: %s", problems[0].Requirement.Name)
+	if problems[0].Capability != "organization groups" {
+		t.Errorf("unexpected requirement: %s", problems[0].Capability)
 	}
 	if !strings.Contains(problems[0].Reason, "26.6") {
 		t.Errorf("reason should name the required version, got %q", problems[0].Reason)

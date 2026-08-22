@@ -9,11 +9,19 @@ import (
 	"keycloak-provisioner/internal/config"
 )
 
-// ServerInfoReader reads the Keycloak server info document. *client.Client is
-// the production implementation; it is a one-method port so this package does
-// not depend on the whole admin API.
+// ServerInfoReader reads the Keycloak server info document.
 type ServerInfoReader interface {
 	GetServerInfo(ctx context.Context) (map[string]any, error)
+}
+
+// ServerReader is everything this package needs from Keycloak. *client.Client
+// is the production implementation; it is kept narrow so this package does not
+// depend on the whole admin API.
+type ServerReader interface {
+	ServerInfoReader
+	// GetAuthenticationProviders lists the providers of one authentication
+	// kind, such as "authenticator-providers".
+	GetAuthenticationProviders(ctx context.Context, realm, kind string) ([]map[string]any, error)
 }
 
 // ServerInfo is the part of Keycloak's server info this package needs.
@@ -27,17 +35,20 @@ type ServerInfo struct {
 	Features map[string]bool
 }
 
-// Problem is one capability the server cannot satisfy.
+// Problem is one thing the server cannot satisfy: a capability whose version
+// or feature requirement is unmet, or a provider the config names that the
+// server does not offer.
 type Problem struct {
-	Requirement Requirement
-	// Paths are the config locations that rely on the capability.
+	// Capability is the requirement name, or the provider id that is missing.
+	Capability string
+	// Paths are the config locations that rely on it.
 	Paths []string
-	// Reason says whether the version is too old or the feature is disabled.
+	// Reason says why the server cannot satisfy it.
 	Reason string
 }
 
 func (p Problem) Error() string {
-	return fmt.Sprintf("%s: %s (used at %s)", p.Requirement.Name, p.Reason, strings.Join(p.Paths, ", "))
+	return fmt.Sprintf("%s: %s (used at %s)", p.Capability, p.Reason, strings.Join(p.Paths, ", "))
 }
 
 // ReadServerInfo fetches and interprets the server info document.
@@ -95,7 +106,7 @@ func Check(cfg *config.Config, info ServerInfo) []Problem {
 		}
 
 		if reason := req.unsatisfiedBy(info); reason != "" {
-			problems = append(problems, Problem{Requirement: req, Paths: paths, Reason: reason})
+			problems = append(problems, Problem{Capability: req.Name, Paths: paths, Reason: reason})
 		}
 	}
 
@@ -137,7 +148,7 @@ func (r Requirement) unsatisfiedBy(info ServerInfo) string {
 // Verify checks the config against the server and returns an error naming every
 // mismatch, or nil when there is nothing to report. It logs what it found so a
 // successful check is visible too.
-func Verify(ctx context.Context, reader ServerInfoReader, cfg *config.Config) error {
+func Verify(ctx context.Context, reader ServerReader, cfg *config.Config) error {
 	info, err := ReadServerInfo(ctx, reader)
 	if err != nil {
 		return err
@@ -151,13 +162,24 @@ func Verify(ctx context.Context, reader ServerInfoReader, cfg *config.Config) er
 	}
 
 	problems := Check(cfg, info)
+
+	// Ask the server what it actually offers, which catches a provider missing
+	// for any reason — a disabled feature, a version difference, or a typo —
+	// without anyone having to record the mapping.
+	caps, err := ReadCapabilities(ctx, reader)
+	if err != nil {
+		return err
+	}
+
+	problems = append(problems, CheckCapabilities(cfg, caps)...)
+
 	if len(problems) == 0 {
 		return nil
 	}
 
 	for _, p := range problems {
 		slog.Error("Unsupported by this Keycloak server",
-			"capability", p.Requirement.Name,
+			"capability", p.Capability,
 			"reason", p.Reason,
 			"usedAt", strings.Join(p.Paths, ", "))
 	}

@@ -520,7 +520,26 @@ Two cases are deliberately **not** treated as failures:
 - **A version string the tool cannot parse.** Custom and nightly builds report shapes this tool should not be the judge of, so version comparisons are skipped with a warning and feature checks still apply. (`999.0.0-SNAPSHOT` parses fine and counts as newer than any release.)
 - **A feature the server does not mention at all.** That means the release predates it, which the version comparison already covers.
 
-Pass `--skip-version-check` to bypass the check entirely.
+### Provider validation
+
+Alongside the table, the check asks the server which authenticators and protocol mapper types it actually offers, and refuses config naming anything else. That covers more than a table can: a provider missing because a feature is switched off, one that does not exist in this release, or simply a typo.
+
+```
+ERROR Unsupported by this Keycloak server  capability=auth-cookei
+      reason="authenticator \"auth-cookei\" is not available on this server (did you mean \"auth-cookie\"?)"
+      usedAt=realms[0].authenticationFlows[0].executions[0].provider
+```
+
+Validated:
+
+- `provider` on every authentication flow execution, against the union of the server's authenticator, form, form-action and client-authenticator providers. The union rather than the list matching the flow type, because a false rejection would block a config that works.
+- `protocolMapper` on clients and client scopes, against the mapper types the server reports for that protocol — which also catches a SAML mapper on an OIDC client.
+
+Suggestions use edit distance, so a genuine typo gets one and a provider that is merely absent does not: `conditional-level-of-authentication` shares a long prefix with `conditional-credential` without being anything like it, and a wrong suggestion is worse than none.
+
+If the server does not report its providers, nothing is rejected on the strength of a question that could not be asked.
+
+Pass `--skip-version-check` to bypass all of this.
 
 ## Connection Retry
 

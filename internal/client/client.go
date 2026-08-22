@@ -1447,3 +1447,29 @@ func (c *Client) GetServerInfo(ctx context.Context) (map[string]any, error) {
 	}
 	return result, nil
 }
+
+// GetAuthenticationProviders returns the providers of one authentication kind
+// the server offers, such as "authenticator-providers" or
+// "form-action-providers". Each entry carries an "id".
+//
+// The lists are server-wide rather than realm-specific, so any existing realm
+// answers for all of them; callers use master, which always exists.
+func (c *Client) GetAuthenticationProviders(ctx context.Context, realm, kind string) ([]map[string]any, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/authentication/" + url.PathEscape(kind)
+
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding %s: %w", kind, err)
+	}
+	return result, nil
+}

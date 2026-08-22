@@ -85,6 +85,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default and unrelated), and `acrLoaMap` needs `STEP_UP_AUTHENTICATION`.
   Step-up has no version floor — it predates the supported range — so a
   requirement can now gate on a feature alone.
+- Provider validation. The check now also asks the server which
+  authenticators and protocol mapper types it offers and refuses config
+  naming anything else, which catches more than a version table can: a
+  provider missing because a feature is disabled, one absent from this
+  release, or a typo. Authenticators are checked against the union of the
+  server's four provider lists; protocol mappers against the types
+  reported for their protocol, which also catches a SAML mapper on an
+  OIDC client. Errors name the config path and, for a likely typo,
+  suggest the closest real name by edit distance — a provider that is
+  merely absent gets no suggestion, since a wrong one is worse than none.
+  Nothing is rejected when the server does not report its providers.
 
 ### Fixed
 
