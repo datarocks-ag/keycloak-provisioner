@@ -35,6 +35,11 @@ type Capabilities struct {
 	Authenticators map[string]bool
 	// ProtocolMappers maps a protocol to the mapper type ids valid for it.
 	ProtocolMappers map[string]map[string]bool
+	// IdentityProviders holds every identity provider type id the server offers.
+	IdentityProviders map[string]bool
+	// IdentityProviderMappers holds every identity provider mapper type id the
+	// server offers.
+	IdentityProviderMappers map[string]bool
 }
 
 // known reports whether the capability lists were populated. An empty list
@@ -48,8 +53,10 @@ func (c Capabilities) known() bool {
 // the server info the caller already read.
 func ReadCapabilities(ctx context.Context, reader ServerReader, info ServerInfo) (Capabilities, error) {
 	caps := Capabilities{
-		Authenticators:  map[string]bool{},
-		ProtocolMappers: info.ProtocolMappers,
+		Authenticators:          map[string]bool{},
+		ProtocolMappers:         info.ProtocolMappers,
+		IdentityProviders:       info.IdentityProviders,
+		IdentityProviderMappers: info.IdentityProviderMappers,
 	}
 
 	for _, kind := range providerKinds {
@@ -77,6 +84,8 @@ func CheckCapabilities(cfg *config.Config, caps Capabilities) []Problem {
 
 	problems = append(problems, checkAuthenticators(cfg, caps)...)
 	problems = append(problems, checkProtocolMappers(cfg, caps)...)
+	problems = append(problems, checkIdentityProviders(cfg, caps)...)
+	problems = append(problems, checkIdentityProviderMappers(cfg, caps)...)
 
 	return problems
 }
@@ -265,4 +274,60 @@ func abs(n int) int {
 	}
 
 	return n
+}
+
+// checkIdentityProviders reports providerId values the server does not offer.
+//
+// The server's list reflects feature state as well as the build — "instagram"
+// is absent unless INSTAGRAM_BROKER is enabled — so a missing entry means this
+// server genuinely cannot create the provider, not merely that the id is
+// unfamiliar.
+func checkIdentityProviders(cfg *config.Config, caps Capabilities) []Problem {
+	if len(caps.IdentityProviders) == 0 {
+		return nil
+	}
+
+	paths := map[string][]string{}
+
+	for i, realm := range cfg.Realms {
+		for j, idp := range realm.IdentityProviders {
+			if idp.ProviderId == "" || caps.IdentityProviders[idp.ProviderId] {
+				continue
+			}
+
+			path := fmt.Sprintf("realms[%d].identityProviders[%d].providerId", i, j)
+			paths[idp.ProviderId] = append(paths[idp.ProviderId], path)
+		}
+	}
+
+	return problemsFor(paths, caps.IdentityProviders, "identity provider type")
+}
+
+// checkIdentityProviderMappers reports identityProviderMapper values the server
+// does not offer.
+//
+// This check earns its place more than most: Keycloak accepts an unknown mapper
+// type with 201 and then never applies it, so without it a typo is silent
+// rather than merely late.
+func checkIdentityProviderMappers(cfg *config.Config, caps Capabilities) []Problem {
+	if len(caps.IdentityProviderMappers) == 0 {
+		return nil
+	}
+
+	paths := map[string][]string{}
+
+	for i, realm := range cfg.Realms {
+		for j, idp := range realm.IdentityProviders {
+			for k, m := range idp.Mappers {
+				if m.IdentityProviderMapper == "" || caps.IdentityProviderMappers[m.IdentityProviderMapper] {
+					continue
+				}
+
+				path := fmt.Sprintf("realms[%d].identityProviders[%d].mappers[%d].identityProviderMapper", i, j, k)
+				paths[m.IdentityProviderMapper] = append(paths[m.IdentityProviderMapper], path)
+			}
+		}
+	}
+
+	return problemsFor(paths, caps.IdentityProviderMappers, "identity provider mapper type")
 }

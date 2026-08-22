@@ -21,6 +21,13 @@ func testCapabilities() Capabilities {
 			"openid-connect": {"oidc-audience-mapper": true, "oidc-acr-mapper": true},
 			"saml":           {"saml-audience-mapper": true},
 		},
+		IdentityProviders: map[string]bool{
+			"oidc": true, "saml": true, "google": true, "github": true,
+		},
+		IdentityProviderMappers: map[string]bool{
+			"oidc-user-attribute-idp-mapper": true,
+			"hardcoded-role-idp-mapper":      true,
+		},
 	}
 }
 
