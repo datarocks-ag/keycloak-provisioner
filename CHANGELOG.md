@@ -7,27 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_No unreleased changes._
+
+## [1.8.1] — 2026-08-22
+
+Fixes organization updates, which have never worked since organizations shipped
+in 1.7.0.
+
+Any second run against a realm whose organizations already exist aborted on the
+first one:
+
+```
+ERROR Provisioning failed error="provisioning realm \"sandbox\": ensuring
+organization \"Acme\": unexpected status 400: {\"errorMessage\":\"Cannot change
+the alias\"}"
+```
+
+Creation was unaffected, and `strategy: create` skips the update entirely, which
+is why it did not show up for everyone.
+
+**No data was lost.** Keycloak rejected the whole request, so nothing was
+applied — including the fields an accepted sparse update would have cleared. The
+practical effect was narrower and quieter than the error suggests: changes to an
+existing organization were never applied at all, and the run failed instead of
+reporting that.
+
 ### Fixed
 
-- Provisioning a realm whose organizations already exist no longer fails. Every
-  second run aborted on the first existing organization with
-  `400 Cannot change the alias`, and creation was unaffected, so this only
-  appeared once a config was applied twice.
+- Organization updates merge over the server's current representation instead of
+  sending a sparse body.
 
-  The message inverts the cause. Keycloak requires `alias` to be **present** on
-  an update and reads its absence as an attempt to set it to null; the
-  provisioner left it out precisely because the alias is immutable. Nothing
-  tried to change it — nothing supplied it.
+  `400 Cannot change the alias` inverts the cause. Keycloak requires `alias` to
+  be **present** on an update and reads its absence as an attempt to set it to
+  null; the provisioner left it out precisely because the alias is immutable.
+  Nothing tried to change it — nothing supplied it.
 
-  Two further defects sat behind that one, invisible while the run could not get
-  past it. Measured against 26.6: omitting `domains` or `redirectUrl` from an
-  update **silently clears them**, and supplying `attributes` **replaces the
-  whole map** rather than merging. Organization updates now merge over the
-  server's current representation, as identity provider updates already did, so
-  a domain, redirect URL or attribute set outside the config survives a run that
-  does not mention it.
+  Two further defects sat behind that one, unreachable while the run could not
+  get past it. Measured against 26.6, omitting a field from an organization
+  update does three different things: `domains` and `redirectUrl` are **silently
+  cleared**, while `attributes` survive being omitted but are **replaced whole**
+  when supplied. Merging is the one shape that satisfies all four, and it is
+  what identity provider updates already do. A domain, redirect URL or attribute
+  set outside the config now survives a run that does not mention it.
 
-  Declaring an alias that differs from the stored one is now rejected before the
+  Declaring an alias that differs from the stored one is rejected before the
   request, naming both values. Keycloak's refusal names neither.
 
 ## [1.8.0] — 2026-08-22
@@ -507,7 +530,8 @@ Initial release.
   (testcontainers-based Keycloak), Trivy scan, GHCR publish, GoReleaser.
 - LICENSE.
 
-[Unreleased]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.8.0...HEAD
+[Unreleased]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.8.1...HEAD
+[1.8.1]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.5.0...v1.6.0
