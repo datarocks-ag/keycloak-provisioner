@@ -2531,3 +2531,34 @@ realms:
 		t.Fatalf("a group without role fields must load: %v", err)
 	}
 }
+
+func TestClientFullScopeAllowedParsing(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    clients:
+      - clientId: "scoped"
+        fullScopeAllowed: false
+      - clientId: "wide"
+        fullScopeAllowed: true
+      - clientId: "unset"
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	clients := cfg.Realms[0].Clients
+	if clients[0].FullScopeAllowed == nil || *clients[0].FullScopeAllowed {
+		t.Errorf("expected scoped client to have fullScopeAllowed=false, got %v", clients[0].FullScopeAllowed)
+	}
+	if clients[1].FullScopeAllowed == nil || !*clients[1].FullScopeAllowed {
+		t.Errorf("expected wide client to have fullScopeAllowed=true, got %v", clients[1].FullScopeAllowed)
+	}
+	// Unset must stay nil so the provisioner omits the key and Keycloak's own
+	// default applies, rather than the provisioner asserting one.
+	if clients[2].FullScopeAllowed != nil {
+		t.Errorf("expected unset fullScopeAllowed to stay nil, got %v", *clients[2].FullScopeAllowed)
+	}
+}

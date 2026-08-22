@@ -2459,3 +2459,63 @@ realms:
 		t.Errorf("expected worker service account to hold ledger.read, got %v", saMappings)
 	}
 }
+
+// TestIntegrationClientFullScopeAllowed proves the flag reaches Keycloak and,
+// more importantly, that a second run which still declares it does not widen
+// the client back to Keycloak's permissive default. It also pins the default
+// itself: a client that never declares the flag comes out true.
+func TestIntegrationClientFullScopeAllowed(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	configYAML := `
+realms:
+  - realm: "fullscope-realm"
+    enabled: true
+    clients:
+      - clientId: "scoped-app"
+        enabled: true
+        publicClient: false
+        fullScopeAllowed: false
+      - clientId: "default-app"
+        enabled: true
+`
+	cfgPath := writeTestConfig(t, configYAML)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("provisioning failed: %v", err)
+	}
+
+	fullScopeOf := func(clientID string) bool {
+		t.Helper()
+		clients, err := kc.GetClients(ctx, "fullscope-realm", clientID)
+		if err != nil || len(clients) == 0 {
+			t.Fatalf("client %q not found: %v", clientID, err)
+		}
+		v, ok := clients[0]["fullScopeAllowed"].(bool)
+		if !ok {
+			t.Fatalf("client %q: fullScopeAllowed missing or not a bool: %v", clientID, clients[0]["fullScopeAllowed"])
+		}
+		return v
+	}
+
+	if fullScopeOf("scoped-app") {
+		t.Error("expected scoped-app to have fullScopeAllowed=false")
+	}
+	if !fullScopeOf("default-app") {
+		t.Error("expected default-app to keep Keycloak's default fullScopeAllowed=true")
+	}
+
+	// Re-run: the update path must not widen the scoped client back.
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("second run failed: %v", err)
+	}
+	if fullScopeOf("scoped-app") {
+		t.Error("expected scoped-app to still have fullScopeAllowed=false after a second run")
+	}
+}

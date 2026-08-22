@@ -277,13 +277,21 @@ type Client struct {
 	ServiceAccountsEnabled    *bool    `yaml:"serviceAccountsEnabled"`
 	// StandardTokenExchangeEnabled toggles OAuth 2.0 Token Exchange (RFC 8693)
 	// for this client. Requires a confidential client. Keycloak 26.2+.
-	StandardTokenExchangeEnabled *bool             `yaml:"standardTokenExchangeEnabled"`
-	BearerOnly                   *bool             `yaml:"bearerOnly"`
-	ConsentRequired              *bool             `yaml:"consentRequired"`
-	FrontchannelLogout           *bool             `yaml:"frontchannelLogout"`
-	DefaultClientScopes          []string          `yaml:"defaultClientScopes"`
-	OptionalClientScopes         []string          `yaml:"optionalClientScopes"`
-	Attributes                   map[string]string `yaml:"attributes"`
+	StandardTokenExchangeEnabled *bool `yaml:"standardTokenExchangeEnabled"`
+	// FullScopeAllowed controls whether the client's tokens carry every role
+	// the subject holds, or only those reachable through its assigned client
+	// scopes. Keycloak defaults it to true on create, which is the permissive
+	// setting; leaving this unset keeps that default rather than tightening it.
+	// Set it to false to scope a client down — it is the main control over how
+	// broad an exchanged token can be, so it matters most alongside
+	// StandardTokenExchangeEnabled.
+	FullScopeAllowed     *bool             `yaml:"fullScopeAllowed"`
+	BearerOnly           *bool             `yaml:"bearerOnly"`
+	ConsentRequired      *bool             `yaml:"consentRequired"`
+	FrontchannelLogout   *bool             `yaml:"frontchannelLogout"`
+	DefaultClientScopes  []string          `yaml:"defaultClientScopes"`
+	OptionalClientScopes []string          `yaml:"optionalClientScopes"`
+	Attributes           map[string]string `yaml:"attributes"`
 	// AcrLoaMap maps ACR values to Levels of Authentication for this client.
 	// It is marshalled into the client's acr.loa.map attribute and wins over an
 	// acr.loa.map entry supplied through Attributes.

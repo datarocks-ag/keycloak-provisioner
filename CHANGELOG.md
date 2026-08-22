@@ -47,6 +47,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Corrected the 1.7.0 note claiming Keycloak exposes no role-mapping endpoint
   for organization groups. It does not on 26.6, but 26.7 exposes one that is
   accepted and inert — which is worse, and now documented as such.
+- `fullScopeAllowed` on a client. Keycloak defaults it to `true`, which puts
+  every role the subject holds into the client's tokens regardless of its
+  assigned scopes; setting it to `false` limits them to roles reachable through
+  `defaultClientScopes` and `optionalClientScopes`. It is the main control over
+  how broad an exchanged token can be, so it pairs with
+  `standardTokenExchangeEnabled`. Omitting it leaves the flag unmanaged.
 
 ## [1.7.0] — 2026-08-22
 

@@ -99,6 +99,9 @@ func buildClientBody(c config.Client, existing map[string]any, flowOverrides map
 	if c.ServiceAccountsEnabled != nil {
 		body["serviceAccountsEnabled"] = *c.ServiceAccountsEnabled
 	}
+	if c.FullScopeAllowed != nil {
+		body["fullScopeAllowed"] = *c.FullScopeAllowed
+	}
 	if c.BearerOnly != nil {
 		body["bearerOnly"] = *c.BearerOnly
 	}

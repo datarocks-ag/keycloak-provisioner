@@ -396,6 +396,33 @@ Under the hood this sets the `standard.token.exchange.enabled` client attribute.
 
 Setting `standardTokenExchangeEnabled: false` explicitly disables the feature — the attribute is written as `false`, correcting drift if it was enabled out-of-band. Omitting the field leaves the attribute unmanaged (existing values in Keycloak are left untouched).
 
+### Narrowing what an exchanged token carries
+
+Enabling exchange says *who* may exchange; `fullScopeAllowed` says *how much* the
+resulting token carries. Keycloak sets it to `true` on every client it creates,
+which means the token carries every role the subject holds — not just the ones
+reachable through the client's assigned scopes. For an exchange client that is
+usually far wider than intended:
+
+```yaml
+clients:
+  - clientId: "exchange-service"
+    publicClient: false
+    secret: "${EXCHANGE_SERVICE_SECRET}"
+    standardTokenExchangeEnabled: true
+    fullScopeAllowed: false          # carry only roles reachable via assigned scopes
+```
+
+With `fullScopeAllowed: false`, roles must be reached through `defaultClientScopes`
+or `optionalClientScopes`, so the client's token scope is what the config says it
+is rather than whatever the subject happens to hold.
+
+Omitting the field leaves it unmanaged. Keycloak's client update is a sparse merge
+for this flag, so a client already set to `false` out-of-band is not widened by a
+run that does not declare it — but a client the provisioner *creates* without the
+field gets Keycloak's permissive `true`. Declare it explicitly on clients where the
+scope matters.
+
 ## Client Scopes
 
 Client scopes are defined per realm under `clientScopes` and provisioned before clients, so a client can reference a scope declared in the same config.
