@@ -211,8 +211,46 @@ realms:
     #     enabled: true
     #     email: "user@example.com"
 
+    # Identity providers (identity brokering). Provisioned after authentication
+    # flows, whose aliases the broker login fields reference, and before
+    # organizations, which link providers by alias.
+    #
+    # Unlike every other resource here, Keycloak REPLACES the whole
+    # representation on update, so the provisioner merges the config over the
+    # server's current one. A stored clientSecret (returned masked as
+    # "**********") and any config key not listed here therefore survive a run.
+    # Mapper config is the exception: it is replaced from this file alone.
+    # identityProviders:
+    #   - alias: "corporate"       # identifies the provider; must not contain "/"
+    #     displayName: "Corporate SSO"
+    #     providerId: "oidc"       # broker type; validated against the server
+    #     enabled: true
+    #     trustEmail: true
+    #     storeToken: false
+    #     addReadTokenRoleOnCreate: false
+    #     linkOnly: false
+    #     hideOnLogin: false
+    #     # Flows must already exist. Keycloak answers a bare 500 for an alias
+    #     # it cannot resolve, so these are checked first and warned about.
+    #     firstBrokerLoginFlowAlias: "first broker login"
+    #     # postBrokerLoginFlowAlias: "post broker login"
+    #     config:
+    #       clientId: "keycloak-broker"
+    #       clientSecret: "${CORPORATE_IDP_SECRET}"
+    #       authorizationUrl: "https://idp.example.com/authorize"
+    #       tokenUrl: "https://idp.example.com/token"
+    #     mappers:
+    #       - name: "email"
+    #         # Validated against the server: Keycloak accepts an unknown mapper
+    #         # type with 201 and then silently never applies it.
+    #         identityProviderMapper: "oidc-user-attribute-idp-mapper"
+    #         config:
+    #           claim: "email"
+    #           user.attribute: "email"
+
     # Organizations are provisioned last, so members resolve to users defined
-    # above. Requires organizationsEnabled: true. Membership is additive.
+    # above and identity provider links resolve to providers defined above.
+    # Requires organizationsEnabled: true. Membership is additive.
     # organizations:
     #   - name: "acme"
     #     alias: "acme"            # optional; Keycloak derives one when omitted
@@ -227,6 +265,10 @@ realms:
     #         - "gold"
     #     members:
     #       - "service-admin"
+    #     # Link identity providers declared above. A provider belongs to at
+    #     # most one organization, and an alias naming no provider fails the run.
+    #     identityProviders:
+    #       - "corporate"
     #     # Organization-scoped groups. These are NOT realm groups: they never
     #     # appear under the realm's groups and cannot be managed through the
     #     # normal group API. They support no role mappings, and members must
