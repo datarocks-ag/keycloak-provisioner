@@ -81,11 +81,6 @@ func (p *Provisioner) ensureUser(ctx context.Context, realm string, user config.
 	return nil
 }
 
-// ensureUserGroups adds the user to any configured group they are not yet a
-// member of. Groups are referenced by path (e.g. "/engineering/backend").
-// Membership is additive — existing memberships are never removed. A group
-// that does not exist is logged as a warning and skipped; it does not abort
-// the run.
 // createUser creates a user and returns its id.
 //
 // A user that declares an id goes through partial import: Keycloak's
@@ -116,6 +111,11 @@ func (p *Provisioner) createUser(ctx context.Context, realm string, user config.
 	return user.ID, nil
 }
 
+// ensureUserGroups adds the user to any configured group they are not yet a
+// member of. Groups are referenced by path (e.g. "/engineering/backend").
+// Membership is additive — existing memberships are never removed. A group
+// that does not exist is logged as a warning and skipped; it does not abort
+// the run.
 func (p *Provisioner) ensureUserGroups(ctx context.Context, realm, userID, username string, groups []string) error {
 	existing, err := p.client.GetUserGroups(ctx, realm, userID)
 	if err != nil {
