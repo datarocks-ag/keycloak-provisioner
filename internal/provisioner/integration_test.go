@@ -1969,7 +1969,7 @@ realms:
 
 	// The copied browser flow keeps its own executions; ours are appended after
 	// them, in the order declared.
-	var subflowIdx, conditionIdx, otpIdx = -1, -1, -1
+	subflowIdx, conditionIdx, otpIdx := -1, -1, -1
 	for i, e := range executions {
 		switch e["displayName"] {
 		case "loa-gold":
