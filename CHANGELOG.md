@@ -45,6 +45,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   since Keycloak exposes no role-mapping endpoint for them, and a member
   must already belong to the organization or it is logged as a warning
   and skipped.
+- Authentication flows: an `authenticationFlows` list on any realm, with
+  nested subflows, per-execution `requirement`, authenticator `config`,
+  and `copyFrom` to seed a flow from an existing one. Executions are
+  created in the order declared. Flows are create-only — a flow whose
+  alias already exists is left untouched whatever the strategy, and the
+  skip is logged at INFO. Declaring a built-in Keycloak flow is rejected
+  with an error pointing at `copyFrom`.
+- `authenticationBindings` on realms, pointing `browserFlow`,
+  `directGrantFlow` and the other realm flow bindings at a flow alias.
+  Applied as a second realm update, after the flows exist.
+- `authenticationFlowBindingOverrides` on clients, given as flow aliases
+  and resolved to the flow IDs Keycloak stores on the client. An alias
+  that does not resolve is an error rather than a silent skip.
 
 ### Fixed
 

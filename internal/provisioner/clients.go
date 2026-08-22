@@ -15,9 +15,14 @@ func (p *Provisioner) ensureClient(ctx context.Context, realm string, c config.C
 		return "", err
 	}
 
+	overrides, err := p.resolveFlowBindingOverrides(ctx, realm, c.ClientID, c.AuthenticationFlowBindingOverrides)
+	if err != nil {
+		return "", err
+	}
+
 	if len(existing) == 0 {
 		slog.Info("Creating client", "realm", realm, "clientId", c.ClientID)
-		uuid, err := p.client.CreateClient(ctx, realm, buildClientBody(c, nil))
+		uuid, err := p.client.CreateClient(ctx, realm, buildClientBody(c, nil, overrides))
 		if err != nil {
 			return "", err
 		}
@@ -36,7 +41,7 @@ func (p *Provisioner) ensureClient(ctx context.Context, realm string, c config.C
 
 	slog.Info("Updating client", "realm", realm, "clientId", c.ClientID, "uuid", uuid)
 
-	body := buildClientBody(c, existing[0])
+	body := buildClientBody(c, existing[0], overrides)
 	body["id"] = uuid
 
 	if err := p.client.UpdateClient(ctx, realm, uuid, body); err != nil {
@@ -48,7 +53,9 @@ func (p *Provisioner) ensureClient(ctx context.Context, realm string, c config.C
 // buildClientBody builds the client representation to send to Keycloak.
 // existing is the client's current representation, or nil when the client is
 // being created; it is only read to merge attributes (see mergeAttributes).
-func buildClientBody(c config.Client, existing map[string]any) map[string]any {
+// flowOverrides holds authentication flow binding overrides already resolved
+// from aliases to flow IDs.
+func buildClientBody(c config.Client, existing map[string]any, flowOverrides map[string]any) map[string]any {
 	body := map[string]any{
 		"clientId": c.ClientID,
 	}
@@ -109,6 +116,9 @@ func buildClientBody(c config.Client, existing map[string]any) map[string]any {
 	}
 	if attrs := buildClientAttributes(c, existing); len(attrs) > 0 {
 		body["attributes"] = attrs
+	}
+	if len(flowOverrides) > 0 {
+		body["authenticationFlowBindingOverrides"] = flowOverrides
 	}
 
 	return body

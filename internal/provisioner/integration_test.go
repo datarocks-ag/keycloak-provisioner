@@ -1819,3 +1819,214 @@ realms:
 		t.Errorf("expected exactly 1 subgroup after two runs, got %d: %v", len(children), children)
 	}
 }
+
+func TestIntegrationAuthenticationFlowStepUp(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	configYAML := `
+realms:
+  - realm: "stepup-realm"
+    enabled: true
+    acrLoaMap:
+      silver: 1
+      gold: 2
+    authenticationFlows:
+      - alias: "browser-step-up"
+        description: "Browser flow with LoA step-up"
+        copyFrom: "browser"
+        executions:
+          - subflow: "loa-gold"
+            requirement: "CONDITIONAL"
+            executions:
+              - provider: "conditional-level-of-authentication"
+                requirement: "REQUIRED"
+                config:
+                  alias: "gold-condition"
+                  loa-condition-level: "2"
+              - provider: "auth-otp-form"
+                requirement: "REQUIRED"
+    authenticationBindings:
+      browserFlow: "browser-step-up"
+    clients:
+      - clientId: "stepup-app"
+        enabled: true
+        acrLoaMap:
+          gold: 2
+        authenticationFlowBindingOverrides:
+          browser: "browser-step-up"
+`
+	cfgPath := writeTestConfig(t, configYAML)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	flows, err := kc.GetAuthenticationFlows(ctx, "stepup-realm")
+	if err != nil {
+		t.Fatalf("getting flows: %v", err)
+	}
+	var flowID string
+	for _, f := range flows {
+		if f["alias"] == "browser-step-up" {
+			flowID, _ = f["id"].(string)
+		}
+	}
+	if flowID == "" {
+		t.Fatal("flow browser-step-up was not created")
+	}
+
+	executions, err := kc.GetAuthenticationFlowExecutions(ctx, "stepup-realm", "browser-step-up")
+	if err != nil {
+		t.Fatalf("getting flow executions: %v", err)
+	}
+
+	// The copied browser flow keeps its own executions; ours are appended after
+	// them, in the order declared.
+	var subflowIdx, conditionIdx, otpIdx = -1, -1, -1
+	for i, e := range executions {
+		switch e["displayName"] {
+		case "loa-gold":
+			subflowIdx = i
+		}
+		switch e["providerId"] {
+		case "conditional-level-of-authentication":
+			conditionIdx = i
+			if e["requirement"] != "REQUIRED" {
+				t.Errorf("condition requirement: expected REQUIRED, got %v", e["requirement"])
+			}
+			if e["authenticationConfig"] == nil {
+				t.Error("conditional-level-of-authentication has no config attached")
+			}
+		case "auth-otp-form":
+			otpIdx = i
+		}
+	}
+
+	if subflowIdx < 0 {
+		t.Fatalf("subflow loa-gold not found: %v", executions)
+	}
+	if conditionIdx < 0 || otpIdx < 0 {
+		t.Fatalf("nested executions not found: %v", executions)
+	}
+	if !(subflowIdx < conditionIdx && conditionIdx < otpIdx) {
+		t.Errorf("executions are out of declared order: subflow=%d condition=%d otp=%d", subflowIdx, conditionIdx, otpIdx)
+	}
+	if executions[subflowIdx]["requirement"] != "CONDITIONAL" {
+		t.Errorf("subflow requirement: expected CONDITIONAL, got %v", executions[subflowIdx]["requirement"])
+	}
+
+	realm, err := kc.GetRealm(ctx, "stepup-realm")
+	if err != nil {
+		t.Fatalf("getting realm: %v", err)
+	}
+	if realm["browserFlow"] != "browser-step-up" {
+		t.Errorf("browserFlow binding: expected browser-step-up, got %v", realm["browserFlow"])
+	}
+	attrs, _ := realm["attributes"].(map[string]any)
+	if got := attrs["acr.loa.map"]; got != `{"gold":2,"silver":1}` {
+		t.Errorf("unexpected realm acr.loa.map: %v", got)
+	}
+
+	clients, err := kc.GetClients(ctx, "stepup-realm", "stepup-app")
+	if err != nil || len(clients) == 0 {
+		t.Fatalf("getting client: %v", err)
+	}
+	overrides, ok := clients[0]["authenticationFlowBindingOverrides"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected flow binding overrides, got %T", clients[0]["authenticationFlowBindingOverrides"])
+	}
+	// The client representation stores flow IDs here, not aliases.
+	if overrides["browser"] != flowID {
+		t.Errorf("expected browser override to be flow id %q, got %v", flowID, overrides["browser"])
+	}
+}
+
+// TestIntegrationAuthenticationFlowNotReconciled pins the create-only contract:
+// an existing flow is left exactly as it is, so a change made outside the config
+// survives a re-run. If flow reconciliation is ever added, this test is the one
+// that should be rewritten deliberately rather than quietly deleted.
+func TestIntegrationAuthenticationFlowNotReconciled(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	configYAML := `
+realms:
+  - realm: "flow-stable-realm"
+    enabled: true
+    authenticationFlows:
+      - alias: "custom-flow"
+        executions:
+          - provider: "auth-cookie"
+            requirement: "ALTERNATIVE"
+`
+	cfgPath := writeTestConfig(t, configYAML)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+
+	// Change the requirement out-of-band.
+	executions, err := kc.GetAuthenticationFlowExecutions(ctx, "flow-stable-realm", "custom-flow")
+	if err != nil || len(executions) == 0 {
+		t.Fatalf("getting executions: %v", err)
+	}
+	execution := executions[0]
+	execution["requirement"] = "DISABLED"
+	if err := kc.UpdateAuthenticationFlowExecution(ctx, "flow-stable-realm", "custom-flow", execution); err != nil {
+		t.Fatalf("changing requirement out-of-band: %v", err)
+	}
+
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+
+	executions, err = kc.GetAuthenticationFlowExecutions(ctx, "flow-stable-realm", "custom-flow")
+	if err != nil {
+		t.Fatalf("getting executions after second run: %v", err)
+	}
+	if len(executions) != 1 {
+		t.Fatalf("expected the flow to still have exactly 1 execution, got %d: %v", len(executions), executions)
+	}
+	if executions[0]["requirement"] != "DISABLED" {
+		t.Errorf("flows are create-only: the out-of-band requirement should survive, got %v", executions[0]["requirement"])
+	}
+}
+
+func TestIntegrationAuthenticationFlowRejectsBuiltIn(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	configYAML := `
+realms:
+  - realm: "builtin-realm"
+    enabled: true
+    authenticationFlows:
+      - alias: "browser"
+        executions:
+          - provider: "auth-cookie"
+`
+	cfgPath := writeTestConfig(t, configYAML)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = provisioner.New(kc, cfg).Run(context.Background())
+	if err == nil {
+		t.Fatal("expected provisioning to fail for a built-in flow")
+	}
+	if !strings.Contains(err.Error(), "copyFrom") {
+		t.Errorf("error should point at copyFrom, got: %v", err)
+	}
+}

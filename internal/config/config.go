@@ -83,7 +83,88 @@ type Realm struct {
 	// Organizations are provisioned last, so members can reference users
 	// defined in the same config. Requires organizationsEnabled: true.
 	Organizations []Organization `yaml:"organizations"`
-	Strategy      string         `yaml:"strategy"`
+	// AuthenticationFlows are created before clients so a client can bind to
+	// a flow defined in the same config. Existing flows are never modified.
+	AuthenticationFlows []AuthenticationFlow `yaml:"authenticationFlows"`
+	// AuthenticationBindings binds realm-level flows by alias.
+	AuthenticationBindings *AuthenticationBindings `yaml:"authenticationBindings"`
+	Strategy               string                  `yaml:"strategy"`
+}
+
+// validFlowProviderIds is the allowlist of authentication flow types.
+var validFlowProviderIds = map[string]bool{
+	"":           true, // defaults to basic-flow
+	"basic-flow": true,
+	"form-flow":  true,
+}
+
+// validFlowBindingOverrides is the allowlist of client-level flow binding
+// override keys. Keycloak accepts any key here and stores it verbatim without
+// complaint, so a typo such as "directGrant" is silently inert — which is why
+// this is validated up front rather than left to the server.
+var validFlowBindingOverrides = map[string]bool{
+	"browser":      true,
+	"direct_grant": true,
+}
+
+// validFlowRequirements is the allowlist of execution requirement values.
+var validFlowRequirements = map[string]bool{
+	"":            true, // leave at Keycloak's default for the authenticator
+	"REQUIRED":    true,
+	"ALTERNATIVE": true,
+	"DISABLED":    true,
+	"CONDITIONAL": true,
+}
+
+// AuthenticationFlow defines a top-level Keycloak authentication flow.
+//
+// Flows are create-only: when a flow with this alias already exists it is left
+// untouched, whatever the strategy. Reconciling an existing flow would mean
+// diffing an ordered tree of executions and deleting the ones not configured,
+// which the provisioner deliberately does not do. To change a flow, delete it
+// in Keycloak or declare it under a new alias.
+type AuthenticationFlow struct {
+	Alias       string `yaml:"alias"`
+	Description string `yaml:"description"`
+	// ProviderId is "basic-flow" (default) or "form-flow".
+	ProviderId string `yaml:"providerId"`
+	// CopyFrom seeds the new flow from an existing one, which is how a
+	// built-in flow such as "browser" should be customised. Keycloak's
+	// built-in flows are never edited in place.
+	CopyFrom   string                    `yaml:"copyFrom"`
+	Executions []AuthenticationExecution `yaml:"executions"`
+}
+
+// AuthenticationExecution is one step of an authentication flow: either an
+// authenticator (Provider) or a nested subflow (Subflow), never both.
+// Executions are created in the order declared.
+type AuthenticationExecution struct {
+	// Provider is the authenticator provider id, e.g. "auth-cookie".
+	Provider string `yaml:"provider"`
+	// Subflow is the alias of a nested flow. Mutually exclusive with Provider.
+	Subflow string `yaml:"subflow"`
+	// ProviderId applies to subflows only: "basic-flow" (default) or "form-flow".
+	ProviderId  string `yaml:"providerId"`
+	Description string `yaml:"description"`
+	// Requirement is REQUIRED, ALTERNATIVE, DISABLED or CONDITIONAL.
+	Requirement string `yaml:"requirement"`
+	// Config is the authenticator configuration. The "alias" key names the
+	// config; when absent, one is derived from the flow and provider.
+	Config map[string]string `yaml:"config"`
+	// Executions nests further steps under a subflow.
+	Executions []AuthenticationExecution `yaml:"executions"`
+}
+
+// AuthenticationBindings binds flows to their realm-level roles. Each value is
+// a flow alias, which may be a built-in flow or one declared in the same config.
+type AuthenticationBindings struct {
+	BrowserFlow              string `yaml:"browserFlow"`
+	DirectGrantFlow          string `yaml:"directGrantFlow"`
+	ResetCredentialsFlow     string `yaml:"resetCredentialsFlow"`
+	RegistrationFlow         string `yaml:"registrationFlow"`
+	ClientAuthenticationFlow string `yaml:"clientAuthenticationFlow"`
+	DockerAuthenticationFlow string `yaml:"dockerAuthenticationFlow"`
+	FirstBrokerLoginFlow     string `yaml:"firstBrokerLoginFlow"`
 }
 
 // Organization defines a Keycloak organization within a realm.
@@ -180,10 +261,14 @@ type Client struct {
 	// AcrLoaMap maps ACR values to Levels of Authentication for this client.
 	// It is marshalled into the client's acr.loa.map attribute and wins over an
 	// acr.loa.map entry supplied through Attributes.
-	AcrLoaMap           map[string]int   `yaml:"acrLoaMap"`
-	ProtocolMappers     []ProtocolMapper `yaml:"protocolMappers"`
-	ClientRoles         []ClientRole     `yaml:"clientRoles"`
-	ServiceAccountRoles *UserRoles       `yaml:"serviceAccountRoles"`
+	AcrLoaMap map[string]int `yaml:"acrLoaMap"`
+	// AuthenticationFlowBindingOverrides overrides realm flow bindings for
+	// this client. Keys are binding names ("browser", "direct_grant") and
+	// values are flow aliases, which the provisioner resolves to flow IDs.
+	AuthenticationFlowBindingOverrides map[string]string `yaml:"authenticationFlowBindingOverrides"`
+	ProtocolMappers                    []ProtocolMapper  `yaml:"protocolMappers"`
+	ClientRoles                        []ClientRole      `yaml:"clientRoles"`
+	ServiceAccountRoles                *UserRoles        `yaml:"serviceAccountRoles"`
 }
 
 // ProtocolMapper defines a protocol mapper for a Keycloak client.
@@ -296,6 +381,35 @@ func expandUsers(users []User) {
 			u.Groups[j] = expandEnvVars(u.Groups[j])
 		}
 	}
+}
+
+// expandAuthenticationExecutions expands env vars in an execution tree.
+func expandAuthenticationExecutions(executions []AuthenticationExecution) {
+	for i := range executions {
+		e := &executions[i]
+		e.Provider = expandEnvVars(e.Provider)
+		e.Subflow = expandEnvVars(e.Subflow)
+		e.ProviderId = expandEnvVars(e.ProviderId)
+		e.Description = expandEnvVars(e.Description)
+		e.Requirement = expandEnvVars(e.Requirement)
+		e.Config = expandStringMap(e.Config)
+		expandAuthenticationExecutions(e.Executions)
+	}
+}
+
+// expandAuthenticationBindings expands env vars in the realm flow bindings.
+func expandAuthenticationBindings(b *AuthenticationBindings) {
+	if b == nil {
+		return
+	}
+
+	b.BrowserFlow = expandEnvVars(b.BrowserFlow)
+	b.DirectGrantFlow = expandEnvVars(b.DirectGrantFlow)
+	b.ResetCredentialsFlow = expandEnvVars(b.ResetCredentialsFlow)
+	b.RegistrationFlow = expandEnvVars(b.RegistrationFlow)
+	b.ClientAuthenticationFlow = expandEnvVars(b.ClientAuthenticationFlow)
+	b.DockerAuthenticationFlow = expandEnvVars(b.DockerAuthenticationFlow)
+	b.FirstBrokerLoginFlow = expandEnvVars(b.FirstBrokerLoginFlow)
 }
 
 // expandOrganization expands env vars in an organization and its domains,
@@ -435,6 +549,7 @@ func expandConfig(cfg *Config) {
 				c.OptionalClientScopes[k] = expandEnvVars(c.OptionalClientScopes[k])
 			}
 			c.Attributes = expandStringMap(c.Attributes)
+			c.AuthenticationFlowBindingOverrides = expandStringMap(c.AuthenticationFlowBindingOverrides)
 			expandProtocolMappers(c.ProtocolMappers)
 			for k := range c.ClientRoles {
 				c.ClientRoles[k].Name = expandEnvVars(c.ClientRoles[k].Name)
@@ -453,6 +568,17 @@ func expandConfig(cfg *Config) {
 		for j := range r.Organizations {
 			expandOrganization(&r.Organizations[j])
 		}
+
+		for j := range r.AuthenticationFlows {
+			f := &r.AuthenticationFlows[j]
+			f.Alias = expandEnvVars(f.Alias)
+			f.Description = expandEnvVars(f.Description)
+			f.ProviderId = expandEnvVars(f.ProviderId)
+			f.CopyFrom = expandEnvVars(f.CopyFrom)
+			expandAuthenticationExecutions(f.Executions)
+		}
+
+		expandAuthenticationBindings(r.AuthenticationBindings)
 
 		for j := range r.Groups {
 			expandGroup(&r.Groups[j])
@@ -663,6 +789,10 @@ func validate(cfg *Config) error {
 		if err := validateOrganizations(i, r); err != nil {
 			return err
 		}
+
+		if err := validateAuthenticationFlows(i, r.AuthenticationFlows); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -701,6 +831,100 @@ func validateClientScopes(realmIdx int, scopes []ClientScope) error {
 		}
 
 		if err := validateProtocolMappers(prefix, cs.ProtocolMappers); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func validateAuthenticationFlows(realmIdx int, flows []AuthenticationFlow) error {
+	// Flow aliases are unique per realm in Keycloak, and subflow aliases share
+	// that namespace, so they are checked together.
+	aliases := make(map[string]bool)
+
+	for i, f := range flows {
+		prefix := fmt.Sprintf("realms[%d].authenticationFlows[%d]", realmIdx, i)
+
+		if f.Alias == "" {
+			return fmt.Errorf("%s.alias: is required", prefix)
+		}
+		if aliases[f.Alias] {
+			return fmt.Errorf("%s.alias: duplicate flow alias %q", prefix, f.Alias)
+		}
+		aliases[f.Alias] = true
+
+		if !validFlowProviderIds[f.ProviderId] {
+			return fmt.Errorf("%s.providerId: invalid value %q (must be \"basic-flow\" or \"form-flow\")", prefix, f.ProviderId)
+		}
+
+		if err := scanNullBytes(map[string]string{
+			prefix + ".alias":       f.Alias,
+			prefix + ".description": f.Description,
+			prefix + ".copyFrom":    f.CopyFrom,
+		}); err != nil {
+			return err
+		}
+
+		if err := validateAuthenticationExecutions(prefix+".executions", f.Executions, aliases); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateAuthenticationExecutions validates an execution tree recursively,
+// following the same shape as validateGroups. aliases carries the realm-wide
+// flow alias namespace so subflows cannot collide with each other or with a
+// top-level flow.
+func validateAuthenticationExecutions(prefix string, executions []AuthenticationExecution, aliases map[string]bool) error {
+	for i, e := range executions {
+		path := fmt.Sprintf("%s[%d]", prefix, i)
+
+		switch {
+		case e.Provider == "" && e.Subflow == "":
+			return fmt.Errorf("%s: either provider or subflow is required", path)
+		case e.Provider != "" && e.Subflow != "":
+			return fmt.Errorf("%s: provider and subflow are mutually exclusive", path)
+		}
+
+		if !validFlowRequirements[e.Requirement] {
+			return fmt.Errorf("%s.requirement: invalid value %q (must be REQUIRED, ALTERNATIVE, DISABLED, or CONDITIONAL)", path, e.Requirement)
+		}
+
+		if err := scanNullBytes(map[string]string{
+			path + ".provider":    e.Provider,
+			path + ".subflow":     e.Subflow,
+			path + ".description": e.Description,
+		}); err != nil {
+			return err
+		}
+
+		if err := validateAttributes(path+".config", e.Config); err != nil {
+			return err
+		}
+
+		if e.Provider != "" {
+			if len(e.Executions) > 0 {
+				return fmt.Errorf("%s: only a subflow can contain executions", path)
+			}
+			if e.ProviderId != "" {
+				return fmt.Errorf("%s.providerId: only valid on a subflow", path)
+			}
+			continue
+		}
+
+		if aliases[e.Subflow] {
+			return fmt.Errorf("%s.subflow: duplicate flow alias %q", path, e.Subflow)
+		}
+		aliases[e.Subflow] = true
+
+		if !validFlowProviderIds[e.ProviderId] {
+			return fmt.Errorf("%s.providerId: invalid value %q (must be \"basic-flow\" or \"form-flow\")", path, e.ProviderId)
+		}
+
+		if err := validateAuthenticationExecutions(path+".executions", e.Executions, aliases); err != nil {
 			return err
 		}
 	}
@@ -965,6 +1189,19 @@ func validateClients(realmIdx int, clients []Client) error {
 
 		if err := validateAcrLoaMap(prefix+".acrLoaMap", c.AcrLoaMap); err != nil {
 			return err
+		}
+
+		for binding, alias := range c.AuthenticationFlowBindingOverrides {
+			path := prefix + ".authenticationFlowBindingOverrides"
+			if !validFlowBindingOverrides[binding] {
+				return fmt.Errorf("%s: invalid binding %q (must be \"browser\" or \"direct_grant\")", path, binding)
+			}
+			if alias == "" {
+				return fmt.Errorf("%s.%s: flow alias is required", path, binding)
+			}
+			if containsNullByte(alias) {
+				return fmt.Errorf("%s.%s: contains null byte", path, binding)
+			}
 		}
 
 		if err := validateProtocolMappers(prefix, c.ProtocolMappers); err != nil {

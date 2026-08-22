@@ -15,6 +15,7 @@ Release notes are maintained in [CHANGELOG.md](CHANGELOG.md).
 - Realm attributes, merged over Keycloak's current values so unmanaged keys are never dropped
 - Client scopes as a first-class resource, with their own protocol mappers and realm-level assignment
 - Organizations with domains and additive membership (Keycloak 26+), including organization-scoped groups (Keycloak 26.6+)
+- Authentication flows with nested subflows and execution config, plus realm and client flow bindings
 - Step-up authentication support via `acrLoaMap` on realms and clients (`acr.loa.map`)
 - User management with password setting, realm/client role assignment, and group membership
 - Service account role mapping for machine-to-machine clients
@@ -94,24 +95,29 @@ In dry-run mode, every mutating call logs a `DRY-RUN:` message and is skipped. R
 1. **Master realm** (if configured) — update `sslRequired`, provision users
 2. For each realm:
    1. **Realm** — created or updated
-   2. **Client scopes** — created or updated (matched by `name`)
+   2. **Authentication flows** — created if missing (matched by `alias`), never modified
+      - **Executions and subflows** — appended in declared order, requirements and config set
+   3. **Realm authentication bindings** — applied as a second realm update, after flows exist
+   4. **Client scopes** — created or updated (matched by `name`)
       - **Protocol mappers** — created or updated (matched by `name`)
       - **Realm-level assignment** — added if `type` is `default` or `optional` (additive)
-   3. **Clients** — created or updated (matched by `clientId`)
+   5. **Clients** — created or updated (matched by `clientId`)
       - **Protocol mappers** — created or updated (matched by `name`)
       - **Client roles** — created or updated
       - **Client scope assignment** — configured default/optional scopes attached (additive)
-   4. **Realm roles** — created or updated
-   5. **Service account roles** — assigned (additive, after roles exist)
-   6. **Groups** — created or updated (matched by `name`)
+   6. **Realm roles** — created or updated
+   7. **Service account roles** — assigned (additive, after roles exist)
+   8. **Groups** — created or updated (matched by `name`)
       - **Attributes** — set from config
       - **Realm/client role assignments** — granted if not already mapped (additive)
       - **Subgroups** — created or updated recursively
-   7. **Users** — created or updated, passwords set, roles assigned, group memberships added (additive)
-   8. **Organizations** — created or updated (matched by `name`), domains set, members added (additive)
+   9. **Users** — created or updated, passwords set, roles assigned, group memberships added (additive)
+   10. **Organizations** — created or updated (matched by `name`), domains set, members added (additive)
 
-Client scopes run before clients so a client can reference a scope defined in
-the same config. Groups run after roles so their realm/client role assignments resolve to
+Authentication flows run before clients so a client can bind to a flow defined
+in the same config, and before the realm bindings that reference them. Client
+scopes run before clients so a client can reference a scope defined in the same
+config. Groups run after roles so their realm/client role assignments resolve to
 roles created earlier in the same run, and before users so group memberships
 resolve to groups defined in the same config. Organizations run last so their
 members resolve to users created in the same run. Role assignments, group
@@ -352,6 +358,49 @@ Both keys and values support `${VAR}` expansion.
 Attributes are **merged**, not replaced. Keycloak's realm update replaces the whole attribute map, and several realm settings live there, so the provisioner reads the realm's current attributes and merges the configured keys over them. Keys you do not declare are preserved; nothing is ever removed. Omitting the `attributes` block entirely leaves realm attributes untouched.
 
 Client `attributes` are merged the same way: Keycloak replaces the whole attribute map on a client update, so the provisioner sends the union of the client's current attributes and the configured ones. A client that declares no `attributes`, `acrLoaMap`, or `standardTokenExchangeEnabled` sends no attributes at all.
+
+## Authentication Flows
+
+Flows are declared per realm and created before clients, so a client can bind to a flow defined in the same config.
+
+```yaml
+realms:
+  - realm: "my-realm"
+    authenticationFlows:
+      - alias: "browser-step-up"
+        description: "Browser flow with LoA step-up"
+        providerId: "basic-flow"   # or "form-flow"; default basic-flow
+        copyFrom: "browser"        # seed from an existing flow
+        executions:
+          - subflow: "loa-gold"
+            requirement: "CONDITIONAL"
+            executions:
+              - provider: "conditional-level-of-authentication"
+                requirement: "REQUIRED"
+                config:
+                  alias: "gold-condition"      # names the config itself
+                  loa-condition-level: "2"
+              - provider: "auth-otp-form"
+                requirement: "REQUIRED"
+
+    authenticationBindings:
+      browserFlow: "browser-step-up"
+
+    clients:
+      - clientId: "web"
+        authenticationFlowBindingOverrides:
+          browser: "browser-step-up"
+```
+
+Each execution is either a `provider` (an authenticator) or a `subflow` (a nested flow), never both. `requirement` is `REQUIRED`, `ALTERNATIVE`, `DISABLED`, or `CONDITIONAL`. Executions are created in the order declared — Keycloak appends each one, so the declared order is the resulting order.
+
+**Flows are create-only.** A flow whose alias already exists is left untouched, whatever the `strategy`, and the skip is logged at INFO so an edit that does not take effect is visible in the log. Reconciling an existing flow would mean diffing an ordered tree whose entries have no stable name and deleting the executions that are not configured — the provisioner does not remove anything anywhere else, and does not start here. To change a flow, delete it in the Keycloak console or declare it under a new alias.
+
+Declaring a built-in Keycloak flow (`browser`, `direct grant`, …) is rejected with an error pointing at `copyFrom`, since editing built-ins in place is how a realm becomes hard to recover. Use `copyFrom` to derive your own flow from one instead.
+
+`authenticationBindings` points the realm's flow bindings at aliases — `browserFlow`, `directGrantFlow`, `resetCredentialsFlow`, `registrationFlow`, `clientAuthenticationFlow`, `dockerAuthenticationFlow`, `firstBrokerLoginFlow`. It is applied as a second realm update, after the flows exist. Unset bindings are left alone.
+
+Clients can override realm bindings with `authenticationFlowBindingOverrides`, keyed by `browser` or `direct_grant`. Values are flow **aliases**; the provisioner resolves them to the flow IDs Keycloak stores on the client. An alias that does not resolve is an error rather than a silent skip, since a client bound to the wrong flow is a security-relevant misconfiguration.
 
 ## Step-Up Authentication (`acr.loa.map`)
 

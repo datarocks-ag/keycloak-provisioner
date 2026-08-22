@@ -1875,3 +1875,357 @@ realms:
 		t.Errorf("subgroup expansion failed: %q", g.SubGroups[0].Name)
 	}
 }
+
+func TestAuthenticationFlows(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    authenticationFlows:
+      - alias: "browser-step-up"
+        description: "Step-up browser flow"
+        copyFrom: "browser"
+        executions:
+          - provider: "auth-cookie"
+            requirement: "ALTERNATIVE"
+          - subflow: "loa-gold"
+            requirement: "CONDITIONAL"
+            providerId: "basic-flow"
+            executions:
+              - provider: "conditional-level-of-authentication"
+                requirement: "REQUIRED"
+                config:
+                  alias: "gold-condition"
+                  loa-condition-level: "2"
+    authenticationBindings:
+      browserFlow: "browser-step-up"
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	flows := cfg.Realms[0].AuthenticationFlows
+	if len(flows) != 1 || flows[0].Alias != "browser-step-up" || flows[0].CopyFrom != "browser" {
+		t.Fatalf("unexpected flows: %+v", flows)
+	}
+	if len(flows[0].Executions) != 2 {
+		t.Fatalf("expected 2 executions, got %d", len(flows[0].Executions))
+	}
+
+	sub := flows[0].Executions[1]
+	if sub.Subflow != "loa-gold" || sub.Requirement != "CONDITIONAL" {
+		t.Errorf("unexpected subflow: %+v", sub)
+	}
+	if len(sub.Executions) != 1 || sub.Executions[0].Config["loa-condition-level"] != "2" {
+		t.Errorf("unexpected nested execution: %+v", sub.Executions)
+	}
+
+	if cfg.Realms[0].AuthenticationBindings == nil ||
+		cfg.Realms[0].AuthenticationBindings.BrowserFlow != "browser-step-up" {
+		t.Errorf("unexpected bindings: %+v", cfg.Realms[0].AuthenticationBindings)
+	}
+}
+
+func TestValidationMissingFlowAlias(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    authenticationFlows:
+      - description: "no alias"
+`
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected validation error for missing flow alias")
+	}
+}
+
+func TestValidationDuplicateFlowAlias(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    authenticationFlows:
+      - alias: "dup"
+      - alias: "dup"
+`
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected validation error for duplicate flow alias")
+	}
+}
+
+func TestValidationSubflowAliasCollidesWithFlow(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    authenticationFlows:
+      - alias: "top"
+        executions:
+          - subflow: "top"
+`
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected validation error for subflow alias colliding with a flow alias")
+	}
+}
+
+func TestValidationExecutionRequiresProviderOrSubflow(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    authenticationFlows:
+      - alias: "f"
+        executions:
+          - requirement: "REQUIRED"
+`
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected validation error for execution without provider or subflow")
+	}
+}
+
+func TestValidationExecutionProviderAndSubflowMutuallyExclusive(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    authenticationFlows:
+      - alias: "f"
+        executions:
+          - provider: "auth-cookie"
+            subflow: "nested"
+`
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected validation error for provider and subflow together")
+	}
+}
+
+func TestValidationInvalidExecutionRequirement(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    authenticationFlows:
+      - alias: "f"
+        executions:
+          - provider: "auth-cookie"
+            requirement: "MAYBE"
+`
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected validation error for invalid requirement")
+	}
+}
+
+func TestValidationInvalidFlowProviderId(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    authenticationFlows:
+      - alias: "f"
+        providerId: "weird-flow"
+`
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected validation error for invalid providerId")
+	}
+}
+
+func TestValidationProviderExecutionCannotNest(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    authenticationFlows:
+      - alias: "f"
+        executions:
+          - provider: "auth-cookie"
+            executions:
+              - provider: "auth-otp-form"
+`
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected validation error for nested executions under a provider")
+	}
+}
+
+func TestEnvVarExpansionInAuthenticationFlows(t *testing.T) {
+	t.Setenv("FLOW_ALIAS", "browser-step-up")
+	t.Setenv("LOA_LEVEL", "3")
+	yaml := `
+realms:
+  - realm: "test"
+    authenticationFlows:
+      - alias: "${FLOW_ALIAS}"
+        executions:
+          - provider: "conditional-level-of-authentication"
+            config:
+              loa-condition-level: "${LOA_LEVEL}"
+    authenticationBindings:
+      browserFlow: "${FLOW_ALIAS}"
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	f := cfg.Realms[0].AuthenticationFlows[0]
+	if f.Alias != "browser-step-up" {
+		t.Errorf("expected expanded alias, got %q", f.Alias)
+	}
+	if got := f.Executions[0].Config["loa-condition-level"]; got != "3" {
+		t.Errorf("expected expanded config value, got %q", got)
+	}
+	if got := cfg.Realms[0].AuthenticationBindings.BrowserFlow; got != "browser-step-up" {
+		t.Errorf("expected expanded binding, got %q", got)
+	}
+}
+
+func TestClientAuthenticationFlowBindingOverrides(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    clients:
+      - clientId: "web"
+        authenticationFlowBindingOverrides:
+          browser: "browser-step-up"
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	got := cfg.Realms[0].Clients[0].AuthenticationFlowBindingOverrides["browser"]
+	if got != "browser-step-up" {
+		t.Errorf("expected browser-step-up, got %q", got)
+	}
+}
+
+func TestValidationMissingClientScopeName(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    clientScopes:
+      - description: "no name"
+`
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected validation error for missing client scope name")
+	}
+}
+
+func TestValidationDuplicateClientScopeName(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    clientScopes:
+      - name: "dup"
+      - name: "dup"
+`
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected validation error for duplicate client scope name")
+	}
+}
+
+func TestValidationInvalidClientScopeType(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    clientScopes:
+      - name: "orders:read"
+        type: "mandatory"
+`
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected validation error for invalid client scope type")
+	}
+}
+
+func TestValidationClientScopeProtocolMapperReused(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    clientScopes:
+      - name: "orders:read"
+        protocolMappers:
+          - name: "no-protocol"
+            protocolMapper: "oidc-audience-mapper"
+`
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected client scope protocol mappers to reuse mapper validation")
+	}
+}
+
+func TestValidationNullByteInClientScopeAttributes(t *testing.T) {
+	yaml := "realms:\n  - realm: \"test\"\n    clientScopes:\n      - name: \"s\"\n        attributes:\n          k: \"v\\x00evil\"\n"
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected validation error for null byte in client scope attribute")
+	}
+}
+
+func TestClientScopeTypeNoneAccepted(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    clientScopes:
+      - name: "orders:read"
+        type: "none"
+`
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err != nil {
+		t.Fatalf("type none should be valid: %v", err)
+	}
+}
+
+func TestValidationInvalidFlowBindingOverrideKey(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    clients:
+      - clientId: "web"
+        authenticationFlowBindingOverrides:
+          directGrant: "my-flow"
+`
+	path := writeTempConfig(t, yaml)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for an invalid binding override key")
+	}
+	if !strings.Contains(err.Error(), "direct_grant") {
+		t.Errorf("error should name the valid keys, got: %v", err)
+	}
+}
+
+func TestValidationEmptyFlowBindingOverrideAlias(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    clients:
+      - clientId: "web"
+        authenticationFlowBindingOverrides:
+          browser: ""
+`
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected validation error for an empty flow alias")
+	}
+}
+
+func TestValidFlowBindingOverrideKeys(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    clients:
+      - clientId: "web"
+        authenticationFlowBindingOverrides:
+          browser: "browser-step-up"
+          direct_grant: "direct-grant-flow"
+`
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err != nil {
+		t.Fatalf("browser and direct_grant must both be accepted: %v", err)
+	}
+}

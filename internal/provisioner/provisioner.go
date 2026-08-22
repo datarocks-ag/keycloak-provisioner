@@ -24,7 +24,7 @@ func New(api KeycloakAPI, cfg *config.Config) *Provisioner {
 }
 
 // Run executes the full provisioning sequence:
-// Master realm (if configured) -> For each realm: Realm -> Client scopes -> Clients (+ protocol mappers + client roles + client scope assignment) -> Realm roles -> Service account roles -> Groups -> Users -> Organizations
+// Master realm (if configured) -> For each realm: Realm -> Authentication flows -> Client scopes -> Clients (+ protocol mappers + client roles + client scope assignment) -> Realm roles -> Service account roles -> Groups -> Users -> Organizations
 func (p *Provisioner) Run(ctx context.Context) error {
 	slog.Info("Starting provisioning")
 
@@ -58,7 +58,22 @@ func (p *Provisioner) provisionRealm(ctx context.Context, realm config.Realm, st
 		return fmt.Errorf("ensuring realm: %w", err)
 	}
 
-	// 2. Client scopes (+ their protocol mappers + realm-level assignment).
+	// 2. Authentication flows (+ executions + execution config). Created
+	// before clients so a client can bind to a flow defined here, and before
+	// the realm bindings below, which reference them by alias.
+	for _, f := range realm.AuthenticationFlows {
+		if err := p.ensureAuthenticationFlow(ctx, realm.Realm, f); err != nil {
+			return fmt.Errorf("ensuring authentication flow %q: %w", f.Alias, err)
+		}
+	}
+
+	// 3. Realm authentication bindings. A second realm update, because the
+	// flows they point at have to exist first.
+	if err := p.ensureAuthenticationBindings(ctx, realm.Realm, realm.AuthenticationBindings); err != nil {
+		return fmt.Errorf("ensuring authentication bindings: %w", err)
+	}
+
+	// 4. Client scopes (+ their protocol mappers + realm-level assignment).
 	// Runs before clients so a client can reference a scope defined here.
 	//
 	// The realm's scopes are listed once and indexed by name: both the scope
@@ -92,7 +107,7 @@ func (p *Provisioner) provisionRealm(ctx context.Context, realm config.Realm, st
 		}
 	}
 
-	// 3. Clients (+ protocol mappers + client roles + client scope assignment)
+	// 5. Clients (+ protocol mappers + client roles + client scope assignment)
 	// Track client UUIDs for service account role assignment later
 	type clientInfo struct {
 		uuid     string
@@ -128,21 +143,21 @@ func (p *Provisioner) provisionRealm(ctx context.Context, realm config.Realm, st
 		}
 	}
 
-	// 4. Realm roles
+	// 6. Realm roles
 	for _, role := range realm.Roles {
 		if err := p.ensureRealmRole(ctx, realm.Realm, role, strategy); err != nil {
 			return fmt.Errorf("ensuring realm role %q: %w", role.Name, err)
 		}
 	}
 
-	// 5. Service account roles (after realm+client roles exist)
+	// 7. Service account roles (after realm+client roles exist)
 	for _, sa := range saClients {
 		if err := p.ensureServiceAccountRoles(ctx, realm.Realm, sa.uuid, sa.clientID, sa.roles); err != nil {
 			return fmt.Errorf("ensuring service account roles for client %q: %w", sa.clientID, err)
 		}
 	}
 
-	// 6. Groups (+ attributes + subgroups + realm/client role assignments).
+	// 8. Groups (+ attributes + subgroups + realm/client role assignments).
 	// Runs after roles so that role assignments resolve to existing roles,
 	// and before users so users can join groups defined in the same config.
 	for _, g := range realm.Groups {
@@ -151,14 +166,14 @@ func (p *Provisioner) provisionRealm(ctx context.Context, realm config.Realm, st
 		}
 	}
 
-	// 7. Users (after all roles and groups exist)
+	// 9. Users (after all roles and groups exist)
 	for _, user := range realm.Users {
 		if err := p.ensureUser(ctx, realm.Realm, user, strategy); err != nil {
 			return fmt.Errorf("ensuring user %q: %w", user.Username, err)
 		}
 	}
 
-	// 8. Organizations (+ domains + members). Last, so members resolve to
+	// 10. Organizations (+ domains + members). Last, so members resolve to
 	// users created in the same run.
 	for _, org := range realm.Organizations {
 		if err := p.ensureOrganization(ctx, realm.Realm, org, strategy); err != nil {
