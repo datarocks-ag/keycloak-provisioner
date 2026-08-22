@@ -16,10 +16,29 @@ type fakeServerInfo struct {
 	// providers maps an authentication kind to the provider ids the server
 	// offers. Nil means the default set used by tests that do not care.
 	providers map[string][]string
+	// requiredActions are the action aliases the server registers. Nil means
+	// the stock set.
+	requiredActions []string
 }
 
 func (f fakeServerInfo) GetServerInfo(context.Context) (map[string]any, error) {
 	return f.doc, f.err
+}
+
+// GetRequiredActions returns the actions a stock realm registers, so tests
+// that do not care about required actions need not enumerate them.
+func (f fakeServerInfo) GetRequiredActions(context.Context, string) ([]map[string]any, error) {
+	aliases := f.requiredActions
+	if aliases == nil {
+		aliases = []string{"CONFIGURE_TOTP", "UPDATE_PASSWORD", "UPDATE_PROFILE", "VERIFY_EMAIL"}
+	}
+
+	out := make([]map[string]any, 0, len(aliases))
+	for _, a := range aliases {
+		out = append(out, map[string]any{"alias": a})
+	}
+
+	return out, nil
 }
 
 func (f fakeServerInfo) GetAuthenticationProviders(_ context.Context, _, kind string) ([]map[string]any, error) {
@@ -409,6 +428,17 @@ func (e errOnProviders) GetServerInfo(context.Context) (map[string]any, error) {
 	return e.doc, nil
 }
 
+// GetRequiredActions is refused the same way: an account that cannot read
+// /authentication/*-providers cannot read /authentication/required-actions
+// either, so the degradation has to cover both.
+func (e errOnProviders) GetRequiredActions(context.Context, string) ([]map[string]any, error) {
+	if e.err != nil {
+		return nil, e.err
+	}
+
+	return nil, statusErr{code: 403}
+}
+
 func (e errOnProviders) GetAuthenticationProviders(context.Context, string, string) ([]map[string]any, error) {
 	if e.err != nil {
 		return nil, e.err
@@ -454,6 +484,14 @@ func TestVerifyStillReportsVersionProblemsWhenProvidersForbidden(t *testing.T) {
 type allFail struct{ err error }
 
 func (a allFail) GetServerInfo(context.Context) (map[string]any, error) {
+	if a.err != nil {
+		return nil, a.err
+	}
+
+	return nil, statusErr{code: 403}
+}
+
+func (a allFail) GetRequiredActions(context.Context, string) ([]map[string]any, error) {
 	if a.err != nil {
 		return nil, a.err
 	}

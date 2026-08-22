@@ -33,6 +33,8 @@ type ServerReader interface {
 	// GetAuthenticationProviders lists the providers of one authentication
 	// kind, such as "authenticator-providers".
 	GetAuthenticationProviders(ctx context.Context, realm, kind string) ([]map[string]any, error)
+	// GetRequiredActions lists the required actions a realm has registered.
+	GetRequiredActions(ctx context.Context, realm string) ([]map[string]any, error)
 }
 
 // ServerInfo is the part of Keycloak's server info this package needs.
@@ -259,7 +261,7 @@ func Verify(ctx context.Context, reader ServerReader, cfg *config.Config) error 
 	case capsErr != nil && !isPermissionDenied(capsErr):
 		return capsErr
 	case capsErr != nil:
-		slog.Warn("Not permitted to read the server's provider lists; skipping provider validation",
+		slog.Warn("Not permitted to read what the server offers; skipping provider and required action validation",
 			"error", capsErr)
 	default:
 		problems = append(problems, CheckCapabilities(cfg, caps)...)

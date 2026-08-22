@@ -4,13 +4,20 @@ package provisioner_test
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha1"
+	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"keycloak-provisioner/internal/client"
 	"keycloak-provisioner/internal/compat"
@@ -38,8 +45,13 @@ const keycloakImage = "keycloak/keycloak:26.6"
 // Startup is lazy so a unit-test-only run under the integration build tag does
 // not pay for a container it never uses; TestMain does the teardown.
 var (
-	sharedOnce      sync.Once
-	sharedClient    *client.Client
+	sharedOnce   sync.Once
+	sharedClient *client.Client
+	// sharedBaseURL is the shared container's auth server URL. A test that
+	// authenticates as an end user needs the token endpoint directly, and the
+	// admin client does not expose it. Only the shared container sets this —
+	// setupKeycloakVersion starts a throwaway one and must not clobber it.
+	sharedBaseURL   string
 	sharedTerminate func()
 	sharedErr       error
 )
@@ -61,7 +73,7 @@ func setupKeycloak(t *testing.T) (*client.Client, func()) {
 	t.Helper()
 
 	sharedOnce.Do(func() {
-		sharedClient, sharedTerminate, sharedErr = startKeycloak(keycloakImage)
+		sharedClient, sharedBaseURL, sharedTerminate, sharedErr = startKeycloak(keycloakImage)
 	})
 
 	if sharedErr != nil {
@@ -77,7 +89,7 @@ func setupKeycloak(t *testing.T) (*client.Client, func()) {
 func setupKeycloakVersion(t *testing.T, image string) (*client.Client, func()) {
 	t.Helper()
 
-	kc, terminate, err := startKeycloak(image)
+	kc, _, terminate, err := startKeycloak(image)
 	if err != nil {
 		t.Fatalf("failed to start keycloak container: %v", err)
 	}
@@ -85,7 +97,7 @@ func setupKeycloakVersion(t *testing.T, image string) (*client.Client, func()) {
 	return kc, terminate
 }
 
-func startKeycloak(image string) (*client.Client, func(), error) {
+func startKeycloak(image string) (*client.Client, string, func(), error) {
 	ctx := context.Background()
 
 	kcContainer, err := keycloak.Run(ctx,
@@ -94,7 +106,7 @@ func startKeycloak(image string) (*client.Client, func(), error) {
 		keycloak.WithAdminPassword("admin"),
 	)
 	if err != nil {
-		return nil, nil, fmt.Errorf("starting keycloak container: %w", err)
+		return nil, "", nil, fmt.Errorf("starting keycloak container: %w", err)
 	}
 
 	// Keycloak defaults master realm sslRequired=EXTERNAL, which blocks
@@ -110,22 +122,22 @@ func startKeycloak(image string) (*client.Client, func(), error) {
 		"--password", "admin",
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("disabling SSL on master realm: %w", err)
+		return nil, "", nil, fmt.Errorf("disabling SSL on master realm: %w", err)
 	}
 	// Exec reports a non-zero status without returning an error, so this is a
 	// separate case: wrapping a nil err with %w would render "%!w(<nil>)".
 	if exitCode != 0 {
-		return nil, nil, fmt.Errorf("disabling SSL on master realm: kcadm exited %d", exitCode)
+		return nil, "", nil, fmt.Errorf("disabling SSL on master realm: kcadm exited %d", exitCode)
 	}
 
 	baseURL, err := kcContainer.GetAuthServerURL(ctx)
 	if err != nil {
-		return nil, nil, fmt.Errorf("getting auth server URL: %w", err)
+		return nil, "", nil, fmt.Errorf("getting auth server URL: %w", err)
 	}
 
 	kc := client.New(baseURL, "admin", "admin")
 	if err := kc.Connect(ctx); err != nil {
-		return nil, nil, fmt.Errorf("connecting to keycloak: %w", err)
+		return nil, "", nil, fmt.Errorf("connecting to keycloak: %w", err)
 	}
 
 	terminate := func() {
@@ -134,7 +146,7 @@ func startKeycloak(image string) (*client.Client, func(), error) {
 		}
 	}
 
-	return kc, terminate, nil
+	return kc, baseURL, terminate, nil
 }
 
 func writeTestConfig(t *testing.T, yaml string) string {
@@ -3016,4 +3028,166 @@ realms:
 	if domains, _ := afterGlobex["domains"].([]any); len(domains) != 1 {
 		t.Errorf("a domain the config does not declare was cleared: got %v", afterGlobex["domains"])
 	}
+}
+
+// totpCode computes a TOTP code the way Keycloak validates one.
+//
+// The subtlety worth stating: Keycloak uses the stored secret's characters
+// directly as the HMAC key. It does not base32-decode them — base32 is only
+// how the secret is presented to an authenticator app. Keying off the decoded
+// bytes produces codes Keycloak rejects, which looks like a seeding failure
+// rather than a client-side mistake.
+func totpCode(secret string) string {
+	counter := uint64(time.Now().Unix() / 30)
+
+	var buf [8]byte
+	binary.BigEndian.PutUint64(buf[:], counter)
+
+	mac := hmac.New(sha1.New, []byte(secret))
+	mac.Write(buf[:])
+	sum := mac.Sum(nil)
+
+	offset := sum[len(sum)-1] & 0x0f
+	value := binary.BigEndian.Uint32(sum[offset:offset+4]) & 0x7fffffff
+
+	return fmt.Sprintf("%06d", value%1000000)
+}
+
+// TestIntegrationUserTOTPCredential proves a seeded TOTP credential is usable,
+// which is the whole point of the feature: without it a realm cannot be rebuilt
+// from config and someone has to make an admin call by hand.
+//
+// The assertion is an actual direct-grant login, not a read-back of the
+// credential list. Keycloak stores a malformed secret happily; only
+// authenticating with it shows the seeding was right.
+func TestIntegrationUserTOTPCredential(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	const secret = "PROVISIONERSEEDEDSECRET1"
+
+	configYAML := `
+realms:
+  - realm: "totp-realm"
+    enabled: true
+    clients:
+      - clientId: "cli"
+        enabled: true
+        publicClient: true
+        standardFlowEnabled: false
+        directAccessGrantsEnabled: true
+    users:
+      - username: "bob"
+        enabled: true
+        password: "pw"
+        # A complete profile: Keycloak's declarative user profile makes
+        # firstName and lastName required, and an incomplete one fails the
+        # login with "Account is not fully set up", which reads like a
+        # credential problem and is not one.
+        email: "bob@totp.test"
+        emailVerified: true
+        firstName: "Bob"
+        lastName: "Example"
+        credentials:
+          - type: "otp"
+            label: "seeded"
+            secret: "` + secret + `"
+`
+	cfgPath := writeTestConfig(t, configYAML)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+
+	users, err := kc.GetUsers(ctx, "totp-realm", "bob")
+	if err != nil || len(users) == 0 {
+		t.Fatalf("bob not found: %v", err)
+	}
+	userID := users[0]["id"].(string)
+
+	creds, err := kc.GetUserCredentials(ctx, "totp-realm", userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := credentialTypes(creds); len(got) != 2 {
+		t.Fatalf("expected a password and an otp credential, got %v", got)
+	}
+
+	// Password alone must now fail. Keycloak reports the missing second factor
+	// as "Invalid user credentials", which is misleading but is what it says.
+	if _, err := directGrant(t, sharedBaseURL, "totp-realm", "bob", "pw", ""); err == nil {
+		t.Error("password alone should not authenticate once a TOTP credential exists")
+	}
+
+	token, err := directGrant(t, sharedBaseURL, "totp-realm", "bob", "pw", totpCode(secret))
+	if err != nil {
+		t.Fatalf("password plus the seeded TOTP code must authenticate: %v", err)
+	}
+	if token == "" {
+		t.Error("expected an access token")
+	}
+
+	// Second run: the credentials array on a user update appends rather than
+	// reconciling, so re-sending a credential the user already holds would
+	// leave two.
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+
+	creds, err = kc.GetUserCredentials(ctx, "totp-realm", userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := credentialTypes(creds); len(got) != 2 {
+		t.Errorf("a second run must not add another credential, got %v", got)
+	}
+}
+
+func credentialTypes(creds []map[string]any) []string {
+	var out []string
+	for _, c := range creds {
+		t, _ := c["type"].(string)
+		out = append(out, t)
+	}
+
+	return out
+}
+
+// directGrant performs a password grant, optionally with a TOTP code.
+func directGrant(t *testing.T, baseURL, realm, username, password, totp string) (string, error) {
+	t.Helper()
+
+	form := url.Values{
+		"client_id":  {"cli"},
+		"grant_type": {"password"},
+		"username":   {username},
+		"password":   {password},
+	}
+	if totp != "" {
+		form.Set("totp", totp)
+	}
+
+	endpoint := baseURL + "/realms/" + realm + "/protocol/openid-connect/token"
+
+	resp, err := http.PostForm(endpoint, form)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return "", err
+	}
+
+	if token, ok := body["access_token"].(string); ok {
+		return token, nil
+	}
+
+	return "", fmt.Errorf("no token: %v", body["error_description"])
 }

@@ -40,6 +40,8 @@ type Capabilities struct {
 	// IdentityProviderMappers holds every identity provider mapper type id the
 	// server offers.
 	IdentityProviderMappers map[string]bool
+	// RequiredActions holds every required action alias the server registers.
+	RequiredActions map[string]bool
 }
 
 // known reports whether the capability lists were populated. An empty list
@@ -57,6 +59,19 @@ func ReadCapabilities(ctx context.Context, reader ServerReader, info ServerInfo)
 		ProtocolMappers:         info.ProtocolMappers,
 		IdentityProviders:       info.IdentityProviders,
 		IdentityProviderMappers: info.IdentityProviderMappers,
+	}
+
+	actions, err := reader.GetRequiredActions(ctx, providerRealm)
+	if err != nil {
+		return Capabilities{}, fmt.Errorf("reading required actions: %w", err)
+	}
+
+	caps.RequiredActions = map[string]bool{}
+
+	for _, a := range actions {
+		if alias, ok := a["alias"].(string); ok {
+			caps.RequiredActions[alias] = true
+		}
 	}
 
 	for _, kind := range providerKinds {
@@ -86,6 +101,7 @@ func CheckCapabilities(cfg *config.Config, caps Capabilities) []Problem {
 	problems = append(problems, checkProtocolMappers(cfg, caps)...)
 	problems = append(problems, checkIdentityProviders(cfg, caps)...)
 	problems = append(problems, checkIdentityProviderMappers(cfg, caps)...)
+	problems = append(problems, checkRequiredActions(cfg, caps)...)
 
 	return problems
 }
@@ -330,4 +346,40 @@ func checkIdentityProviderMappers(cfg *config.Config, caps Capabilities) []Probl
 	}
 
 	return problemsFor(paths, caps.IdentityProviderMappers, "identity provider mapper type")
+}
+
+// checkRequiredActions reports required actions the server does not register.
+//
+// Keycloak accepts an unknown action with 204 and then drops it silently, so
+// the config would appear to have taken effect while the user is never asked
+// to do anything. Nothing downstream would report it.
+func checkRequiredActions(cfg *config.Config, caps Capabilities) []Problem {
+	if len(caps.RequiredActions) == 0 {
+		return nil
+	}
+
+	paths := map[string][]string{}
+
+	collect := func(prefix string, users []config.User) {
+		for i, u := range users {
+			for j, a := range u.RequiredActions {
+				if a == "" || caps.RequiredActions[a] {
+					continue
+				}
+
+				path := fmt.Sprintf("%s.users[%d].requiredActions[%d]", prefix, i, j)
+				paths[a] = append(paths[a], path)
+			}
+		}
+	}
+
+	if cfg.MasterRealm != nil {
+		collect("masterRealm", cfg.MasterRealm.Users)
+	}
+
+	for i, realm := range cfg.Realms {
+		collect(fmt.Sprintf("realms[%d]", i), realm.Users)
+	}
+
+	return problemsFor(paths, caps.RequiredActions, "required action")
 }

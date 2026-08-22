@@ -86,6 +86,9 @@ type ClientScopeAssignmentAPI interface {
 
 // UserAPI covers users and their credentials.
 type UserAPI interface {
+	// GetUserCredentials returns the user's credentials without their secrets,
+	// which is enough to tell whether one of a given type already exists.
+	GetUserCredentials(ctx context.Context, realm, userID string) ([]map[string]any, error)
 	GetUsers(ctx context.Context, realm, username string) ([]map[string]any, error)
 	CreateUser(ctx context.Context, realm string, body map[string]any) (string, error)
 	UpdateUser(ctx context.Context, realm, userID string, body map[string]any) error

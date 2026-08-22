@@ -409,6 +409,44 @@ type User struct {
 	// slash is optional). Membership is additive — the provisioner never
 	// removes a user from a group.
 	Groups []string `yaml:"groups"`
+	// RequiredActions are the actions Keycloak makes the user complete at
+	// their next login, such as CONFIGURE_TOTP. Declaring the field replaces
+	// whatever the user has; omitting it leaves them alone. An empty list is
+	// therefore how to clear them.
+	//
+	// Keycloak accepts an unknown action with 204 and then silently drops it,
+	// so the names are checked against the server before anything is written.
+	RequiredActions []string `yaml:"requiredActions"`
+	// Credentials seeds credentials the user cannot otherwise get from config,
+	// so a realm rebuilds without a manual admin call. Adding is additive: a
+	// credential of the same type is never replaced or removed.
+	Credentials []Credential `yaml:"credentials"`
+}
+
+// Credential is a credential seeded on a user.
+//
+// Only TOTP is supported. Passwords already have their own fields, and the
+// remaining Keycloak credential types are either device-bound (WebAuthn) or
+// generated for one-time display (recovery codes), so neither belongs in a
+// config file.
+type Credential struct {
+	// Type is the Keycloak credential type. Only "otp" is supported.
+	Type string `yaml:"type"`
+	// Secret is the shared secret, and its handling is the one thing worth
+	// reading twice. Keycloak uses these characters directly as the HMAC key;
+	// it does not base32-decode them. An authenticator app must therefore be
+	// given base32(secret), which is exactly what Keycloak's own QR code shows
+	// once the credential exists. Supply it through ${VAR}, never inline.
+	Secret string `yaml:"secret"`
+	// Label is shown against the credential in the account console. It also
+	// distinguishes two credentials of the same type, which Keycloak allows.
+	Label string `yaml:"label"`
+	// Digits, Period and Algorithm default to Keycloak's own values: 6 digits,
+	// a 30-second period and HmacSHA1. Change them only to match an existing
+	// authenticator.
+	Digits    int    `yaml:"digits"`
+	Period    int    `yaml:"period"`
+	Algorithm string `yaml:"algorithm"`
 }
 
 // UserRoles defines realm and client role assignments for a user or service account.
@@ -477,6 +515,16 @@ func expandUsers(users []User) {
 		expandUserRoles(u.Roles)
 		for j := range u.Groups {
 			u.Groups[j] = expandEnvVars(u.Groups[j])
+		}
+		for j := range u.RequiredActions {
+			u.RequiredActions[j] = expandEnvVars(u.RequiredActions[j])
+		}
+		for j := range u.Credentials {
+			c := &u.Credentials[j]
+			c.Type = expandEnvVars(c.Type)
+			c.Secret = expandEnvVars(c.Secret)
+			c.Label = expandEnvVars(c.Label)
+			c.Algorithm = expandEnvVars(c.Algorithm)
 		}
 	}
 }
@@ -1339,6 +1387,14 @@ func validateUsers(prefix string, users []User) error {
 			return fmt.Errorf("%s: password and initialPassword are mutually exclusive", p)
 		}
 
+		if err := validateRequiredActions(p, u.RequiredActions); err != nil {
+			return err
+		}
+
+		if err := validateCredentials(p, u.Credentials); err != nil {
+			return err
+		}
+
 		if err := scanNullBytes(map[string]string{
 			p + ".password":        u.Password,
 			p + ".initialPassword": u.InitialPassword,
@@ -1634,6 +1690,86 @@ func validateGroups(prefix string, groups []Group) error {
 
 		if err := validateGroups(path+".subGroups", g.SubGroups); err != nil {
 			return err
+		}
+	}
+
+	return nil
+}
+
+// credentialTypeOTP is the only credential type the provisioner seeds.
+const credentialTypeOTP = "otp"
+
+// validOTPAlgorithms are the HMAC algorithms Keycloak accepts for a TOTP
+// credential, in the spelling it stores.
+var validOTPAlgorithms = map[string]bool{
+	"HmacSHA1":   true,
+	"HmacSHA256": true,
+	"HmacSHA512": true,
+}
+
+func validateRequiredActions(prefix string, actions []string) error {
+	seen := make(map[string]bool, len(actions))
+
+	for i, a := range actions {
+		path := fmt.Sprintf("%s.requiredActions[%d]", prefix, i)
+
+		if a == "" {
+			return fmt.Errorf("%s: is empty", path)
+		}
+		if containsNullByte(a) {
+			return fmt.Errorf("%s: contains null byte", path)
+		}
+		if seen[a] {
+			return fmt.Errorf("%s: duplicate required action %q", path, a)
+		}
+
+		seen[a] = true
+	}
+
+	return nil
+}
+
+func validateCredentials(prefix string, creds []Credential) error {
+	types := make(map[string]bool, len(creds))
+
+	for i, c := range creds {
+		path := fmt.Sprintf("%s.credentials[%d]", prefix, i)
+
+		if c.Type == "" {
+			return fmt.Errorf("%s.type: is required", path)
+		}
+		if c.Type != credentialTypeOTP {
+			return fmt.Errorf("%s.type: %q is not supported; only %q is", path, c.Type, credentialTypeOTP)
+		}
+
+		// Two credentials of one type are only distinguishable by label, and
+		// the reconciler matches on the pair to decide what already exists.
+		key := c.Type + "\x00" + c.Label
+		if types[key] {
+			return fmt.Errorf("%s: duplicate credential of type %q with label %q", path, c.Type, c.Label)
+		}
+
+		types[key] = true
+
+		if c.Secret == "" {
+			return fmt.Errorf("%s.secret: is required", path)
+		}
+
+		if err := scanNullBytes(map[string]string{
+			path + ".secret": c.Secret,
+			path + ".label":  c.Label,
+		}); err != nil {
+			return err
+		}
+
+		if c.Digits < 0 {
+			return fmt.Errorf("%s.digits: must not be negative", path)
+		}
+		if c.Period < 0 {
+			return fmt.Errorf("%s.period: must not be negative", path)
+		}
+		if c.Algorithm != "" && !validOTPAlgorithms[c.Algorithm] {
+			return fmt.Errorf("%s.algorithm: %q is not one of HmacSHA1, HmacSHA256, HmacSHA512", path, c.Algorithm)
 		}
 	}
 

@@ -297,9 +297,39 @@ func (d *dryRunAPI) PartialImportUsers(_ context.Context, realm string, users []
 	return nil
 }
 
+// UpdateUser reports a credential-only update as what it is. Seeding a
+// credential goes through the user update, and "would update user" would tell
+// a reader nothing about the one thing that is actually changing.
 func (d *dryRunAPI) UpdateUser(_ context.Context, realm, userID string, body map[string]any) error {
+	if creds, ok := body["credentials"].([]map[string]any); ok && len(body) == 1 {
+		slog.Info("DRY-RUN: would seed user credentials",
+			"realm", realm, "userID", userID, "credentials", credentialLabels(creds))
+
+		return nil
+	}
+
 	slog.Info("DRY-RUN: would update user", "realm", realm, "userID", userID, "username", body["username"])
+
 	return nil
+}
+
+// credentialLabels names the credentials in a seeding update, preferring the
+// label since a user may hold more than one of a type.
+func credentialLabels(creds []map[string]any) []string {
+	out := make([]string, 0, len(creds))
+
+	for _, c := range creds {
+		credType, _ := c["type"].(string)
+
+		if label, ok := c["userLabel"].(string); ok && label != "" {
+			out = append(out, credType+"/"+label)
+			continue
+		}
+
+		out = append(out, credType)
+	}
+
+	return out
 }
 
 func (d *dryRunAPI) ResetUserPassword(_ context.Context, realm, userID string, _ string, temporary bool) error {
@@ -308,6 +338,16 @@ func (d *dryRunAPI) ResetUserPassword(_ context.Context, realm, userID string, _
 }
 
 // Group memberships.
+
+// GetUserCredentials short-circuits for a user that does not exist yet: there
+// are no credentials to compare against, so every configured one is reported
+// as a create.
+func (d *dryRunAPI) GetUserCredentials(ctx context.Context, realm, userID string) ([]map[string]any, error) {
+	if isSyntheticID(userID) || d.realmIsSynthetic(realm) {
+		return nil, nil
+	}
+	return d.inner.GetUserCredentials(ctx, realm, userID)
+}
 
 func (d *dryRunAPI) GetUserGroups(ctx context.Context, realm, userID string) ([]map[string]any, error) {
 	if isSyntheticID(userID) || d.realmIsSynthetic(realm) {

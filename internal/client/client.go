@@ -610,6 +610,57 @@ func (c *Client) ResetUserPassword(ctx context.Context, realm, userID, password 
 }
 
 // GetUserGroups returns the groups the user is a direct member of.
+// GetUserCredentials returns the credentials a user holds.
+//
+// Secrets are not included — Keycloak returns the type, id, label and public
+// metadata only, which is enough to tell whether a credential of a given kind
+// already exists.
+// GetRequiredActions returns the required actions registered in a realm.
+//
+// The set is server-wide in practice — realms are seeded from the same
+// providers — so callers validating config can read it from any realm.
+func (c *Client) GetRequiredActions(ctx context.Context, realm string) ([]map[string]any, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/authentication/required-actions"
+
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding required actions: %w", err)
+	}
+
+	return result, nil
+}
+
+func (c *Client) GetUserCredentials(ctx context.Context, realm, userID string) ([]map[string]any, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/users/" + url.PathEscape(userID) + "/credentials"
+
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding user credentials: %w", err)
+	}
+
+	return result, nil
+}
+
 func (c *Client) GetUserGroups(ctx context.Context, realm, userID string) ([]map[string]any, error) {
 	path := "/admin/realms/" + url.PathEscape(realm) + "/users/" + url.PathEscape(userID) + "/groups"
 	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)

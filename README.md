@@ -18,7 +18,7 @@ Release notes are maintained in [CHANGELOG.md](CHANGELOG.md).
 - Authentication flows with nested subflows and execution config, plus realm and client flow bindings
 - Identity providers (identity brokering) with mappers, merged over the server's representation so secrets and unmanaged config keys survive, and linkable to organizations
 - Step-up authentication support via `acrLoaMap` on realms and clients (`acr.loa.map`)
-- User management with password setting, realm/client role assignment, and group membership
+- User management with password setting, realm/client role assignment, group membership, required actions, and seeded TOTP credentials
 - Service account role mapping for machine-to-machine clients
 - YAML config with `${VAR}` environment variable expansion (and `$${VAR}` escape for literals)
 - Configurable strategy: `update` (default) or `create` (skip existing)
@@ -306,6 +306,68 @@ Users can be provisioned in any realm (including master via `masterRealm.users`)
 | `emailVerified` | bool | Whether the email is marked as verified |
 | `roles` | object | Role assignments (see below) |
 | `groups` | list | Group memberships by path (see below) |
+| `requiredActions` | list | Actions Keycloak makes the user complete at next login (see below) |
+| `credentials` | list | Credentials to seed, currently TOTP only (see below) |
+
+### Required Actions
+
+```yaml
+users:
+  - username: "bob"
+    requiredActions:
+      - "CONFIGURE_TOTP"
+```
+
+Declaring the field **replaces** whatever the user has; omitting it leaves them
+alone, and an empty list is how to clear them.
+
+Action names are checked against the server before anything is written. Keycloak
+accepts an unknown action with `204` and then silently drops it, so a typo would
+otherwise look applied while the user is never asked to do anything.
+
+### Seeding a TOTP Credential
+
+`requiredActions: [CONFIGURE_TOTP]` makes the *user* enrol. The alternative is to
+seed a known secret, so the realm rebuilds from config with no manual step and an
+automated test can compute valid codes:
+
+```yaml
+users:
+  - username: "bob"
+    credentials:
+      - type: "otp"
+        label: "seeded"
+        secret: "${BOB_TOTP_SECRET}"
+```
+
+`type` must be `otp` — it is the only credential a config can usefully carry.
+Passwords have their own fields, while WebAuthn is device-bound and recovery
+codes are generated for one-time display.
+
+**The secret is not base32.** This is the part worth reading twice. Keycloak uses
+the characters of `secret` *directly* as the HMAC key; it does not base32-decode
+them. An authenticator app must therefore be given `base32(secret)` — which is
+exactly what Keycloak's own QR code shows once the credential exists. Computing
+codes from the base32-decoded bytes produces codes Keycloak rejects, and the
+failure looks like bad seeding rather than a bad client.
+
+`digits`, `period` and `algorithm` default to Keycloak's own `6`, `30` and
+`HmacSHA1`. Change them only to match an existing authenticator; `algorithm`
+accepts `HmacSHA1`, `HmacSHA256` or `HmacSHA512`.
+
+**Seeding is additive and never rotates.** Keycloak's user update *appends* the
+credentials it is given rather than reconciling them, so a credential of the same
+type and label is left alone — otherwise every run would add another. Replacing a
+seeded secret means deleting the credential first, which the provisioner does not
+do: it removes nothing, anywhere.
+
+Two errors are worth recognising, because neither says what is wrong:
+
+- **`Invalid user credentials`** on a password-only login once a TOTP credential
+  exists. The password is correct; a factor is missing.
+- **`Account is not fully set up`**. Usually nothing to do with credentials —
+  Keycloak's declarative user profile requires `firstName` and `lastName`, and a
+  user missing them cannot complete a login.
 
 ### Predictable User IDs
 

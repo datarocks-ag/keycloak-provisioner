@@ -2,10 +2,18 @@ package provisioner
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 
 	"keycloak-provisioner/internal/config"
+)
+
+// Keycloak's own defaults for a TOTP credential.
+const (
+	defaultOTPDigits    = 6
+	defaultOTPPeriod    = 30
+	defaultOTPAlgorithm = "HmacSHA1"
 )
 
 func (p *Provisioner) ensureUser(ctx context.Context, realm string, user config.User, strategy string) error {
@@ -78,7 +86,106 @@ func (p *Provisioner) ensureUser(ctx context.Context, realm string, user config.
 		}
 	}
 
+	if err := p.ensureUserCredentials(ctx, realm, userID, user); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+// ensureUserCredentials seeds the credentials a user does not already hold.
+//
+// Adding is additive and never rotates: Keycloak's user update *appends* what
+// the credentials array carries rather than reconciling it, so sending a
+// credential the user already has produces a second one, and every run would
+// add another. A credential of the same type and label is therefore left
+// alone. Replacing a seeded secret means deleting the credential first, which
+// the provisioner does not do — it removes nothing, anywhere.
+func (p *Provisioner) ensureUserCredentials(ctx context.Context, realm, userID string, user config.User) error {
+	if len(user.Credentials) == 0 {
+		return nil
+	}
+
+	existing, err := p.client.GetUserCredentials(ctx, realm, userID)
+	if err != nil {
+		return fmt.Errorf("getting credentials for user %q: %w", user.Username, err)
+	}
+
+	held := make(map[string]bool, len(existing))
+
+	for _, c := range existing {
+		credType, _ := c["type"].(string)
+		label, _ := c["userLabel"].(string)
+		held[credType+"\x00"+label] = true
+	}
+
+	var toAdd []map[string]any
+
+	for _, c := range user.Credentials {
+		if held[c.Type+"\x00"+c.Label] {
+			slog.Debug("Credential already present",
+				"realm", realm, "username", user.Username, "type", c.Type, "label", c.Label)
+
+			continue
+		}
+
+		slog.Info("Seeding user credential",
+			"realm", realm, "username", user.Username, "type", c.Type, "label", c.Label)
+
+		toAdd = append(toAdd, buildCredentialBody(c))
+	}
+
+	if len(toAdd) == 0 {
+		return nil
+	}
+
+	// A user update carrying only credentials leaves the rest of the
+	// representation alone, unlike an organization update.
+	if err := p.client.UpdateUser(ctx, realm, userID, map[string]any{"credentials": toAdd}); err != nil {
+		return fmt.Errorf("seeding credentials for user %q: %w", user.Username, err)
+	}
+
+	return nil
+}
+
+// buildCredentialBody renders a credential the way Keycloak stores one: the
+// secret and the parameters go in two JSON strings rather than as fields.
+func buildCredentialBody(c config.Credential) map[string]any {
+	digits := c.Digits
+	if digits == 0 {
+		digits = defaultOTPDigits
+	}
+
+	period := c.Period
+	if period == 0 {
+		period = defaultOTPPeriod
+	}
+
+	algorithm := c.Algorithm
+	if algorithm == "" {
+		algorithm = defaultOTPAlgorithm
+	}
+
+	credentialData, _ := json.Marshal(map[string]any{
+		"subType":   "totp",
+		"digits":    digits,
+		"counter":   0,
+		"period":    period,
+		"algorithm": algorithm,
+	})
+	secretData, _ := json.Marshal(map[string]any{"value": c.Secret})
+
+	body := map[string]any{
+		"type":           c.Type,
+		"secretData":     string(secretData),
+		"credentialData": string(credentialData),
+	}
+
+	if c.Label != "" {
+		body["userLabel"] = c.Label
+	}
+
+	return body
 }
 
 // createUser creates a user and returns its id.
@@ -176,6 +283,12 @@ func buildUserBody(user config.User) map[string]any {
 	}
 	if user.EmailVerified != nil {
 		body["emailVerified"] = *user.EmailVerified
+	}
+	// Sent only when declared. Keycloak replaces the list with whatever the
+	// body carries and leaves it alone when the key is absent, so an omitted
+	// block preserves what the user has and an empty one clears it.
+	if user.RequiredActions != nil {
+		body["requiredActions"] = user.RequiredActions
 	}
 
 	return body
