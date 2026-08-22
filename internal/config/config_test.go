@@ -2229,3 +2229,88 @@ realms:
 		t.Fatalf("browser and direct_grant must both be accepted: %v", err)
 	}
 }
+
+func TestUserWithFixedID(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    users:
+      - username: "alice"
+        id: "11111111-2222-3333-4444-555555555555"
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if got := cfg.Realms[0].Users[0].ID; got != "11111111-2222-3333-4444-555555555555" {
+		t.Errorf("unexpected id: %q", got)
+	}
+}
+
+func TestValidationUserIDMustBeUUID(t *testing.T) {
+	for _, id := range []string{"not-a-uuid", "1111", "11111111-2222-3333-4444-5555555555", "zzzzzzzz-2222-3333-4444-555555555555"} {
+		yaml := `
+realms:
+  - realm: "test"
+    users:
+      - username: "alice"
+        id: "` + id + `"
+`
+		path := writeTempConfig(t, yaml)
+		if _, err := Load(path); err == nil {
+			t.Errorf("expected %q to be rejected as a user id", id)
+		}
+	}
+}
+
+func TestUserIDAcceptsUppercaseUUID(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    users:
+      - username: "alice"
+        id: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
+`
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err != nil {
+		t.Fatalf("an uppercase UUID should be accepted: %v", err)
+	}
+}
+
+func TestUserIDOptional(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    users:
+      - username: "alice"
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Realms[0].Users[0].ID != "" {
+		t.Error("id should default to empty")
+	}
+}
+
+func TestEnvVarExpansionInUserID(t *testing.T) {
+	t.Setenv("ALICE_ID", "11111111-2222-3333-4444-555555555555")
+	yaml := `
+realms:
+  - realm: "test"
+    users:
+      - username: "alice"
+        id: "${ALICE_ID}"
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Realms[0].Users[0].ID; got != "11111111-2222-3333-4444-555555555555" {
+		t.Errorf("expected the expanded id, got %q", got)
+	}
+}

@@ -7,7 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No unreleased changes._
+### Added
+
+- `id` on a user, fixing its UUID so it is the same in every
+  environment and can be referenced without a lookup. It applies only
+  when the user is created: Keycloak does not allow an id to change
+  afterwards, so a username that already exists under a different id
+  fails the run and names both rather than provisioning against a
+  different identity.
+
+  Such a user is created through Keycloak's partial import rather than
+  the usual create call. The create-user endpoint accepts an `id` in the
+  representation and silently discards it, generating its own — verified
+  against 26.6. Import honours it, and is configured to skip an existing
+  username so re-runs stay idempotent. Everything after creation —
+  password, roles, group memberships — is unchanged.
 
 ## [1.7.0] — 2026-08-22
 

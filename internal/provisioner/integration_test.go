@@ -2297,3 +2297,88 @@ func TestIntegrationCapabilitiesMatchServer(t *testing.T) {
 		t.Error("expected SAML mapper types to be reported too")
 	}
 }
+
+// TestIntegrationPredictableUserID proves against a real server that a
+// configured id is the id the user ends up with.
+//
+// This matters because Keycloak's create-user endpoint accepts an id in the
+// representation and silently discards it — the reason the provisioner creates
+// such a user through partial import instead.
+func TestIntegrationPredictableUserID(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	const wantID = "11111111-2222-3333-4444-555555555555"
+
+	configYAML := `
+realms:
+  - realm: "uid-realm"
+    enabled: true
+    roles:
+      - name: "app-admin"
+    users:
+      - username: "alice"
+        id: "` + wantID + `"
+        password: "alice-pw"
+        enabled: true
+        email: "alice@example.com"
+        roles:
+          realm:
+            - "app-admin"
+`
+	cfg, err := config.Load(writeTestConfig(t, configYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+
+	users, err := kc.GetUsers(ctx, "uid-realm", "alice")
+	if err != nil || len(users) == 0 {
+		t.Fatalf("getting user: %v", err)
+	}
+
+	gotID, _ := users[0]["id"].(string)
+	if gotID != wantID {
+		t.Fatalf("expected the configured id %s, got %s", wantID, gotID)
+	}
+
+	// The rest of the reconcile must still have happened: import creates the
+	// user, everything after it goes down the normal path.
+	if users[0]["email"] != "alice@example.com" {
+		t.Errorf("email not applied: %v", users[0]["email"])
+	}
+
+	roles, err := kc.GetUserRealmRoleMappings(ctx, "uid-realm", gotID)
+	if err != nil {
+		t.Fatalf("getting role mappings: %v", err)
+	}
+	if !containsRoleNamed(roles, "app-admin") {
+		t.Errorf("realm role not assigned: %v", roles)
+	}
+
+	// Re-running must neither fail nor change the id.
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+
+	users, err = kc.GetUsers(ctx, "uid-realm", "alice")
+	if err != nil || len(users) == 0 {
+		t.Fatalf("getting user after second run: %v", err)
+	}
+	if users[0]["id"] != wantID {
+		t.Errorf("id changed on re-run: %v", users[0]["id"])
+	}
+}
+
+func containsRoleNamed(roles []map[string]any, name string) bool {
+	for _, r := range roles {
+		if r["name"] == name {
+			return true
+		}
+	}
+	return false
+}

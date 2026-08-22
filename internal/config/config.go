@@ -301,7 +301,15 @@ type ClientRole struct {
 
 // User defines a Keycloak user to provision within a realm.
 type User struct {
-	Username        string     `yaml:"username"`
+	Username string `yaml:"username"`
+	// ID fixes the user's UUID so it is the same in every environment and can
+	// be referenced without a lookup. It applies only when the user is created
+	// and cannot be changed afterwards.
+	//
+	// Keycloak's create-user endpoint accepts an id and silently ignores it, so
+	// a user declaring one is created through partial import instead, which
+	// honours it. See ensureUser.
+	ID              string     `yaml:"id"`
 	Password        string     `yaml:"password"`
 	InitialPassword string     `yaml:"initialPassword"`
 	Enabled         *bool      `yaml:"enabled"`
@@ -378,6 +386,7 @@ func expandUsers(users []User) {
 	for i := range users {
 		u := &users[i]
 		u.Username = expandEnvVars(u.Username)
+		u.ID = expandEnvVars(u.ID)
 		u.Password = expandEnvVars(u.Password)
 		u.InitialPassword = expandEnvVars(u.InitialPassword)
 		u.Email = expandEnvVars(u.Email)
@@ -713,6 +722,11 @@ func validateAcrLoaMap(path string, m map[string]int) error {
 
 	return nil
 }
+
+// uuidPattern matches the canonical 8-4-4-4-12 hexadecimal form Keycloak uses
+// for resource ids. A format check does not warrant promoting
+// github.com/google/uuid from an indirect dependency to a direct one.
+var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 // validateStrategy returns an error if the strategy value is invalid.
 func validateStrategy(path, value string) error {
@@ -1091,6 +1105,9 @@ func validateUsers(prefix string, users []User) error {
 		}
 		if containsNullByte(u.Username) {
 			return fmt.Errorf("%s.username: contains null byte", p)
+		}
+		if u.ID != "" && !uuidPattern.MatchString(u.ID) {
+			return fmt.Errorf("%s.id: %q is not a UUID; Keycloak ids are 8-4-4-4-12 hexadecimal", p, u.ID)
 		}
 		if names[u.Username] {
 			return fmt.Errorf("%s.username: duplicate username %q", p, u.Username)

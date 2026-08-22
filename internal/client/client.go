@@ -1350,3 +1350,33 @@ func (c *Client) GetAuthenticationProviders(ctx context.Context, realm, kind str
 	}
 	return result, nil
 }
+
+// PartialImportUsers creates users through Keycloak's partial import, which is
+// the only way to give a user a chosen id.
+//
+// The create-user endpoint accepts an "id" in the representation and silently
+// discards it, generating its own — verified against 26.6. Partial import
+// honours it.
+//
+// ifResourceExists is SKIP, so a username that already exists is left exactly
+// as it is and the call stays idempotent. Import is therefore only useful for
+// creating; everything afterwards goes through the normal endpoints.
+func (c *Client) PartialImportUsers(ctx context.Context, realm string, users []map[string]any) error {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/partialImport"
+
+	body := map[string]any{
+		"ifResourceExists": "SKIP",
+		"users":            users,
+	}
+
+	resp, err := c.doRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return readError(resp)
+	}
+	return nil
+}

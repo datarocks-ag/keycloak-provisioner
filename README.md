@@ -282,6 +282,7 @@ Users can be provisioned in any realm (including master via `masterRealm.users`)
 | Field | Type | Description |
 |---|---|---|
 | `username` | string | **Required.** Username |
+| `id` | string | Fix the user's UUID so it is the same in every environment (see below) |
 | `password` | string | Permanent password (set on every run via reset-password API). Mutually exclusive with `initialPassword`. |
 | `initialPassword` | string | Temporary password — only set when the user is first created. The user must change it on first login. Ignored on subsequent runs if the user already exists. Mutually exclusive with `password`. |
 | `enabled` | bool | Whether the user is enabled |
@@ -291,6 +292,35 @@ Users can be provisioned in any realm (including master via `masterRealm.users`)
 | `emailVerified` | bool | Whether the email is marked as verified |
 | `roles` | object | Role assignments (see below) |
 | `groups` | list | Group memberships by path (see below) |
+
+### Predictable User IDs
+
+Setting `id` gives a user the same UUID in every environment, so other systems can
+reference it without a lookup:
+
+```yaml
+users:
+  - username: "alice"
+    id: "11111111-2222-3333-4444-555555555555"
+```
+
+Generate them deterministically rather than by hand — a UUIDv5 over a fixed namespace plus
+the username gives the same id for `alice` everywhere, with no table to maintain.
+
+Two things to know:
+
+- **It applies only when the user is created.** Keycloak does not allow an id to change
+  afterwards. If a user with that username already exists under a different id, the run
+  fails and names both, rather than provisioning against an identity other systems may
+  already reference differently.
+- **Such a user is created through Keycloak's partial import**, not the usual create call.
+  Keycloak's create-user endpoint accepts an `id` in the representation and silently
+  discards it, generating its own; import honours it. Everything after creation — password,
+  roles, group memberships — goes down the normal path either way, and the import is
+  configured to skip a username that already exists, so re-runs stay idempotent.
+
+Users are still matched by `username`, so adding an `id` to an existing config changes
+nothing for users that already exist.
 
 ### User Role Assignment
 
