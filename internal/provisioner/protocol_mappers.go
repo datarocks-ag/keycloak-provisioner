@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"log/slog"
 
+	"keycloak-provisioner/internal/client"
 	"keycloak-provisioner/internal/config"
 )
 
 func (p *Provisioner) ensureProtocolMapper(ctx context.Context, realm, clientUUID string, pm config.ProtocolMapper, strategy string) error {
-	existing, err := p.client.GetProtocolMappers(ctx, realm, clientUUID)
+	existing, err := p.client.GetProtocolMappers(ctx, realm, client.MapperContainerClients, clientUUID)
 	if err != nil {
 		return err
 	}
@@ -29,12 +30,12 @@ func (p *Provisioner) ensureProtocolMapper(ctx context.Context, realm, clientUUI
 			}
 			slog.Info("Updating protocol mapper", "realm", realm, "clientUUID", clientUUID, "mapper", pm.Name)
 			body["id"] = id
-			return p.client.UpdateProtocolMapper(ctx, realm, clientUUID, id, body)
+			return p.client.UpdateProtocolMapper(ctx, realm, client.MapperContainerClients, clientUUID, id, body)
 		}
 	}
 
 	slog.Info("Creating protocol mapper", "realm", realm, "clientUUID", clientUUID, "mapper", pm.Name)
-	return p.client.CreateProtocolMapper(ctx, realm, clientUUID, body)
+	return p.client.CreateProtocolMapper(ctx, realm, client.MapperContainerClients, clientUUID, body)
 }
 
 func buildProtocolMapperBody(pm config.ProtocolMapper) map[string]any {

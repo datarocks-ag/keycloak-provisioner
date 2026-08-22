@@ -58,11 +58,13 @@ type ClientRoleAPI interface {
 	UpdateClientRole(ctx context.Context, realm, clientUUID, name string, body map[string]any) error
 }
 
-// ProtocolMapperAPI covers the protocol mappers attached to a client.
+// ProtocolMapperAPI covers protocol mappers. They hang off either a client or a
+// client scope, which container selects; both expose the identical
+// /protocol-mappers/models sub-resource.
 type ProtocolMapperAPI interface {
-	GetProtocolMappers(ctx context.Context, realm, clientUUID string) ([]map[string]any, error)
-	CreateProtocolMapper(ctx context.Context, realm, clientUUID string, body map[string]any) error
-	UpdateProtocolMapper(ctx context.Context, realm, clientUUID, mapperID string, body map[string]any) error
+	GetProtocolMappers(ctx context.Context, realm, container, containerID string) ([]map[string]any, error)
+	CreateProtocolMapper(ctx context.Context, realm, container, containerID string, body map[string]any) error
+	UpdateProtocolMapper(ctx context.Context, realm, container, containerID, mapperID string, body map[string]any) error
 }
 
 // ClientScopeAPI covers client scopes and their protocol mappers.
@@ -70,9 +72,6 @@ type ClientScopeAPI interface {
 	GetClientScopes(ctx context.Context, realm string) ([]map[string]any, error)
 	CreateClientScope(ctx context.Context, realm string, body map[string]any) (string, error)
 	UpdateClientScope(ctx context.Context, realm, scopeID string, body map[string]any) error
-	GetClientScopeProtocolMappers(ctx context.Context, realm, scopeID string) ([]map[string]any, error)
-	CreateClientScopeProtocolMapper(ctx context.Context, realm, scopeID string, body map[string]any) error
-	UpdateClientScopeProtocolMapper(ctx context.Context, realm, scopeID, mapperID string, body map[string]any) error
 }
 
 // ClientScopeAssignmentAPI covers attaching client scopes, both as realm

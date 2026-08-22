@@ -202,20 +202,25 @@ func (d *dryRunAPI) UpdateClientRole(_ context.Context, realm, clientUUID, name 
 
 // Protocol mappers.
 
-func (d *dryRunAPI) GetProtocolMappers(ctx context.Context, realm, clientUUID string) ([]map[string]any, error) {
-	if isSyntheticID(clientUUID) || d.realmIsSynthetic(realm) {
+func (d *dryRunAPI) GetProtocolMappers(ctx context.Context, realm, container, containerID string) ([]map[string]any, error) {
+	if d.realmIsSynthetic(realm) || isSyntheticID(containerID) {
 		return nil, nil
 	}
-	return d.inner.GetProtocolMappers(ctx, realm, clientUUID)
+
+	return d.inner.GetProtocolMappers(ctx, realm, container, containerID)
 }
 
-func (d *dryRunAPI) CreateProtocolMapper(_ context.Context, realm, clientUUID string, body map[string]any) error {
-	slog.Info("DRY-RUN: would create protocol mapper", "realm", realm, "clientUUID", clientUUID, "mapper", body["name"])
+func (d *dryRunAPI) CreateProtocolMapper(_ context.Context, realm, container, containerID string, body map[string]any) error {
+	slog.Info("DRY-RUN: would create protocol mapper",
+		"realm", realm, "container", container, "containerID", containerID, "mapper", body["name"])
+
 	return nil
 }
 
-func (d *dryRunAPI) UpdateProtocolMapper(_ context.Context, realm, clientUUID, mapperID string, body map[string]any) error {
-	slog.Info("DRY-RUN: would update protocol mapper", "realm", realm, "clientUUID", clientUUID, "mapperId", mapperID, "mapper", body["name"])
+func (d *dryRunAPI) UpdateProtocolMapper(_ context.Context, realm, container, containerID, mapperID string, body map[string]any) error {
+	slog.Info("DRY-RUN: would update protocol mapper",
+		"realm", realm, "container", container, "containerID", containerID, "mapper", body["name"], "uuid", mapperID)
+
 	return nil
 }
 
@@ -474,25 +479,6 @@ func (d *dryRunAPI) CreateClientScope(_ context.Context, realm string, body map[
 func (d *dryRunAPI) UpdateClientScope(_ context.Context, realm, scopeID string, body map[string]any) error {
 	name, _ := body["name"].(string)
 	slog.Info("DRY-RUN: would update client scope", "realm", realm, "clientScope", name, "uuid", scopeID)
-	return nil
-}
-
-func (d *dryRunAPI) GetClientScopeProtocolMappers(ctx context.Context, realm, scopeID string) ([]map[string]any, error) {
-	if d.realmIsSynthetic(realm) || isSyntheticID(scopeID) {
-		return nil, nil
-	}
-	return d.inner.GetClientScopeProtocolMappers(ctx, realm, scopeID)
-}
-
-func (d *dryRunAPI) CreateClientScopeProtocolMapper(_ context.Context, realm, scopeID string, body map[string]any) error {
-	name, _ := body["name"].(string)
-	slog.Info("DRY-RUN: would create client scope protocol mapper", "realm", realm, "scopeUUID", scopeID, "mapper", name)
-	return nil
-}
-
-func (d *dryRunAPI) UpdateClientScopeProtocolMapper(_ context.Context, realm, scopeID, mapperID string, body map[string]any) error {
-	name, _ := body["name"].(string)
-	slog.Info("DRY-RUN: would update client scope protocol mapper", "realm", realm, "scopeUUID", scopeID, "mapper", name, "uuid", mapperID)
 	return nil
 }
 

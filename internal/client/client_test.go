@@ -675,7 +675,7 @@ func TestGetProtocolMappers(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	result, err := c.GetProtocolMappers(context.Background(), "test", "uuid-1")
+	result, err := c.GetProtocolMappers(context.Background(), "test", MapperContainerClients, "uuid-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -694,7 +694,7 @@ func TestGetProtocolMappers_Error(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	_, err := c.GetProtocolMappers(context.Background(), "test", "uuid-1")
+	_, err := c.GetProtocolMappers(context.Background(), "test", MapperContainerClients, "uuid-1")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -709,7 +709,7 @@ func TestCreateProtocolMapper_Success(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	err := c.CreateProtocolMapper(context.Background(), "test", "uuid-1", map[string]any{"name": "mapper"})
+	err := c.CreateProtocolMapper(context.Background(), "test", MapperContainerClients, "uuid-1", map[string]any{"name": "mapper"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -725,7 +725,7 @@ func TestCreateProtocolMapper_Error(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	err := c.CreateProtocolMapper(context.Background(), "test", "uuid-1", map[string]any{"name": "dup"})
+	err := c.CreateProtocolMapper(context.Background(), "test", MapperContainerClients, "uuid-1", map[string]any{"name": "dup"})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -740,7 +740,7 @@ func TestUpdateProtocolMapper_Success(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	err := c.UpdateProtocolMapper(context.Background(), "test", "uuid-1", "pm-1", map[string]any{"name": "mapper"})
+	err := c.UpdateProtocolMapper(context.Background(), "test", MapperContainerClients, "uuid-1", "pm-1", map[string]any{"name": "mapper"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -756,7 +756,7 @@ func TestUpdateProtocolMapper_Error(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	err := c.UpdateProtocolMapper(context.Background(), "test", "uuid-1", "pm-1", map[string]any{})
+	err := c.UpdateProtocolMapper(context.Background(), "test", MapperContainerClients, "uuid-1", "pm-1", map[string]any{})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -1769,14 +1769,14 @@ func TestClientScopeProtocolMappers(t *testing.T) {
 	c := connectClient(t, server.URL)
 	ctx := context.Background()
 
-	mappers, err := c.GetClientScopeProtocolMappers(ctx, "test", "cs-1")
+	mappers, err := c.GetProtocolMappers(ctx, "test", MapperContainerClientScopes, "cs-1")
 	if err != nil || len(mappers) != 1 {
 		t.Fatalf("get: %v %v", mappers, err)
 	}
-	if err := c.CreateClientScopeProtocolMapper(ctx, "test", "cs-1", map[string]any{"name": "audience"}); err != nil {
+	if err := c.CreateProtocolMapper(ctx, "test", MapperContainerClientScopes, "cs-1", map[string]any{"name": "audience"}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if err := c.UpdateClientScopeProtocolMapper(ctx, "test", "cs-1", "m-1", map[string]any{"name": "audience"}); err != nil {
+	if err := c.UpdateProtocolMapper(ctx, "test", MapperContainerClientScopes, "cs-1", "m-1", map[string]any{"name": "audience"}); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 }

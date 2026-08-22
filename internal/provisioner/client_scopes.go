@@ -123,7 +123,7 @@ func buildClientScopeBody(cs config.ClientScope) map[string]any {
 // client scope. It mirrors ensureProtocolMapper, which does the same for the
 // mappers attached directly to a client.
 func (p *Provisioner) ensureClientScopeProtocolMapper(ctx context.Context, realm, scopeID, scopeName string, pm config.ProtocolMapper, strategy string) error {
-	existing, err := p.client.GetClientScopeProtocolMappers(ctx, realm, scopeID)
+	existing, err := p.client.GetProtocolMappers(ctx, realm, client.MapperContainerClientScopes, scopeID)
 	if err != nil {
 		return err
 	}
@@ -149,12 +149,12 @@ func (p *Provisioner) ensureClientScopeProtocolMapper(ctx context.Context, realm
 		slog.Info("Updating client scope protocol mapper", "realm", realm, "clientScope", scopeName, "mapper", pm.Name)
 		body["id"] = id
 
-		return p.client.UpdateClientScopeProtocolMapper(ctx, realm, scopeID, id, body)
+		return p.client.UpdateProtocolMapper(ctx, realm, client.MapperContainerClientScopes, scopeID, id, body)
 	}
 
 	slog.Info("Creating client scope protocol mapper", "realm", realm, "clientScope", scopeName, "mapper", pm.Name)
 
-	return p.client.CreateClientScopeProtocolMapper(ctx, realm, scopeID, body)
+	return p.client.CreateProtocolMapper(ctx, realm, client.MapperContainerClientScopes, scopeID, body)
 }
 
 // ensureRealmClientScopeType assigns a scope to the realm's default or optional

@@ -461,10 +461,23 @@ func (c *Client) UpdateClientRole(ctx context.Context, realm, clientUUID, name s
 	return nil
 }
 
-// GetProtocolMappers returns all protocol mappers for a client.
-func (c *Client) GetProtocolMappers(ctx context.Context, realm, clientUUID string) ([]map[string]any, error) {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/clients/" + url.PathEscape(clientUUID) + "/protocol-mappers/models"
-	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+// Protocol mapper containers. Mappers hang off a client or a client scope, and
+// both expose the identical /protocol-mappers/models sub-resource; only the
+// parent segment of the URL differs.
+const (
+	MapperContainerClients      = "clients"
+	MapperContainerClientScopes = "client-scopes"
+)
+
+func protocolMapperPath(realm, container, containerID string) string {
+	return "/admin/realms/" + url.PathEscape(realm) + "/" + url.PathEscape(container) +
+		"/" + url.PathEscape(containerID) + "/protocol-mappers/models"
+}
+
+// GetProtocolMappers returns the protocol mappers of a client or client scope.
+// container is MapperContainerClients or MapperContainerClientScopes.
+func (c *Client) GetProtocolMappers(ctx context.Context, realm, container, containerID string) ([]map[string]any, error) {
+	resp, err := c.doRequest(ctx, http.MethodGet, protocolMapperPath(realm, container, containerID), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -481,10 +494,9 @@ func (c *Client) GetProtocolMappers(ctx context.Context, realm, clientUUID strin
 	return result, nil
 }
 
-// CreateProtocolMapper creates a new protocol mapper for a client.
-func (c *Client) CreateProtocolMapper(ctx context.Context, realm, clientUUID string, body map[string]any) error {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/clients/" + url.PathEscape(clientUUID) + "/protocol-mappers/models"
-	resp, err := c.doRequest(ctx, http.MethodPost, path, body)
+// CreateProtocolMapper creates a protocol mapper on a client or client scope.
+func (c *Client) CreateProtocolMapper(ctx context.Context, realm, container, containerID string, body map[string]any) error {
+	resp, err := c.doRequest(ctx, http.MethodPost, protocolMapperPath(realm, container, containerID), body)
 	if err != nil {
 		return err
 	}
@@ -497,8 +509,9 @@ func (c *Client) CreateProtocolMapper(ctx context.Context, realm, clientUUID str
 }
 
 // UpdateProtocolMapper updates a protocol mapper by ID.
-func (c *Client) UpdateProtocolMapper(ctx context.Context, realm, clientUUID, mapperID string, body map[string]any) error {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/clients/" + url.PathEscape(clientUUID) + "/protocol-mappers/models/" + url.PathEscape(mapperID)
+func (c *Client) UpdateProtocolMapper(ctx context.Context, realm, container, containerID, mapperID string, body map[string]any) error {
+	path := protocolMapperPath(realm, container, containerID) + "/" + url.PathEscape(mapperID)
+
 	resp, err := c.doRequest(ctx, http.MethodPut, path, body)
 	if err != nil {
 		return err
@@ -934,56 +947,6 @@ func (c *Client) CreateClientScope(ctx context.Context, realm string, body map[s
 // UpdateClientScope updates a client scope by ID.
 func (c *Client) UpdateClientScope(ctx context.Context, realm, scopeID string, body map[string]any) error {
 	path := "/admin/realms/" + url.PathEscape(realm) + "/client-scopes/" + url.PathEscape(scopeID)
-	resp, err := c.doRequest(ctx, http.MethodPut, path, body)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNoContent {
-		return readError(resp)
-	}
-	return nil
-}
-
-// GetClientScopeProtocolMappers returns the protocol mappers of a client scope.
-func (c *Client) GetClientScopeProtocolMappers(ctx context.Context, realm, scopeID string) ([]map[string]any, error) {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/client-scopes/" + url.PathEscape(scopeID) + "/protocol-mappers/models"
-	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, readError(resp)
-	}
-
-	var result []map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decoding client scope protocol mappers: %w", err)
-	}
-	return result, nil
-}
-
-// CreateClientScopeProtocolMapper creates a protocol mapper on a client scope.
-func (c *Client) CreateClientScopeProtocolMapper(ctx context.Context, realm, scopeID string, body map[string]any) error {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/client-scopes/" + url.PathEscape(scopeID) + "/protocol-mappers/models"
-	resp, err := c.doRequest(ctx, http.MethodPost, path, body)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusCreated {
-		return readError(resp)
-	}
-	return nil
-}
-
-// UpdateClientScopeProtocolMapper updates a protocol mapper on a client scope by ID.
-func (c *Client) UpdateClientScopeProtocolMapper(ctx context.Context, realm, scopeID, mapperID string, body map[string]any) error {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/client-scopes/" + url.PathEscape(scopeID) + "/protocol-mappers/models/" + url.PathEscape(mapperID)
 	resp, err := c.doRequest(ctx, http.MethodPut, path, body)
 	if err != nil {
 		return err

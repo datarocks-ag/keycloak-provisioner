@@ -257,7 +257,7 @@ realms:
 	}
 
 	// Verify protocol mappers
-	mappers, err := kc.GetProtocolMappers(ctx, "test-realm", clientUUID)
+	mappers, err := kc.GetProtocolMappers(ctx, "test-realm", client.MapperContainerClients, clientUUID)
 	if err != nil {
 		t.Fatalf("getting protocol mappers: %v", err)
 	}
@@ -596,7 +596,7 @@ realms:
 	}
 
 	// Verify protocol mapper was updated
-	mappers, err := kc.GetProtocolMappers(ctx, "update-realm", clientUUID)
+	mappers, err := kc.GetProtocolMappers(ctx, "update-realm", client.MapperContainerClients, clientUUID)
 	if err != nil {
 		t.Fatalf("getting protocol mappers: %v", err)
 	}
@@ -793,7 +793,7 @@ realms:
 		t.Fatal("expected client 'id' to be a string")
 	}
 
-	mappers, err := kc.GetProtocolMappers(ctx, "multi-client-realm", backendUUID)
+	mappers, err := kc.GetProtocolMappers(ctx, "multi-client-realm", client.MapperContainerClients, backendUUID)
 	if err != nil {
 		t.Fatalf("getting protocol mappers: %v", err)
 	}
@@ -1561,7 +1561,7 @@ realms:
 		t.Fatal("client scope orders:read was not created")
 	}
 
-	mappers, err := kc.GetClientScopeProtocolMappers(ctx, "scope-realm", scopeID)
+	mappers, err := kc.GetProtocolMappers(ctx, "scope-realm", client.MapperContainerClientScopes, scopeID)
 	if err != nil {
 		t.Fatalf("getting scope protocol mappers: %v", err)
 	}
