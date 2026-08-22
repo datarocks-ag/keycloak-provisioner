@@ -1,3 +1,8 @@
+// Package config loads, expands and validates the YAML configuration.
+//
+// Unknown fields are rejected at load time so a typo surfaces immediately,
+// ${VAR} references are expanded from the environment, and every resource
+// kind is validated before a single request reaches Keycloak.
 package config
 
 import (
@@ -144,7 +149,9 @@ type AuthenticationExecution struct {
 	// Subflow is the alias of a nested flow. Mutually exclusive with Provider.
 	Subflow string `yaml:"subflow"`
 	// ProviderId applies to subflows only: "basic-flow" (default) or "form-flow".
-	ProviderId  string `yaml:"providerId"`
+	ProviderId string `yaml:"providerId"`
+	// Description is shown against the execution in the Keycloak console. It
+	// applies to subflows; Keycloak ignores it on a plain authenticator.
 	Description string `yaml:"description"`
 	// Requirement is REQUIRED, ALTERNATIVE, DISABLED or CONDITIONAL.
 	Requirement string `yaml:"requirement"`

@@ -207,6 +207,55 @@ realms:
           - name: "backend"
 ```
 
+## Realm Fields
+
+Every field is optional except `realm`. A field left out is not sent, so Keycloak keeps its current value.
+
+| Field | Type | Description |
+|---|---|---|
+| `realm` | string | **Required.** Realm name. `master` is rejected here — use `masterRealm`. |
+| `displayName` | string | Human-readable name shown in the console |
+| `enabled` | bool | Whether the realm is enabled |
+| `sslRequired` | string | `external`, `all`, or `none` (see below) |
+| `loginTheme` | string | Login theme name |
+| `registrationAllowed` | bool | Whether self-registration is open |
+| `resetPasswordAllowed` | bool | Whether users may reset their own password |
+| `organizationsEnabled` | bool | Enable Keycloak Organizations (26+) |
+| `attributes` | map | Realm attributes, merged over the current ones |
+| `acrLoaMap` | map | ACR value to Level of Authentication (see Step-Up Authentication) |
+| `strategy` | string | `update` or `create`, overriding the global setting for this realm |
+
+## Client Fields
+
+| Field | Type | Description |
+|---|---|---|
+| `clientId` | string | **Required.** Client identifier |
+| `secret` | string | Client secret for a confidential client |
+| `name` | string | Human-readable name |
+| `enabled` | bool | Whether the client is enabled |
+| `publicClient` | bool | Public rather than confidential |
+| `protocol` | string | `openid-connect` or `saml` |
+| `rootUrl` | string | Root URL that relative URLs below are resolved against |
+| `baseUrl` | string | Default URL to redirect to after login |
+| `adminUrl` | string | URL Keycloak calls for backchannel requests such as logout |
+| `redirectUris` | list | Valid redirect URIs |
+| `webOrigins` | list | Allowed CORS origins |
+| `standardFlowEnabled` | bool | Authorization Code flow |
+| `directAccessGrantsEnabled` | bool | Resource Owner Password Credentials grant |
+| `serviceAccountsEnabled` | bool | Client Credentials grant, required for `serviceAccountRoles` |
+| `standardTokenExchangeEnabled` | bool | Standard Token Exchange, RFC 8693 (see below) |
+| `bearerOnly` | bool | Client only validates tokens and never initiates login |
+| `consentRequired` | bool | Require user consent |
+| `frontchannelLogout` | bool | Use front-channel rather than back-channel logout |
+| `defaultClientScopes` | list | Scopes always applied (see Client Scopes) |
+| `optionalClientScopes` | list | Scopes requestable via the `scope` parameter |
+| `attributes` | map | Client attributes, merged over the current ones |
+| `acrLoaMap` | map | ACR value to Level of Authentication for this client |
+| `authenticationFlowBindingOverrides` | map | Override realm flow bindings (see Authentication Flows) |
+| `protocolMappers` | list | Protocol mappers on this client |
+| `clientRoles` | list | Roles defined on this client |
+| `serviceAccountRoles` | object | Roles granted to the service account |
+
 ## Master Realm
 
 The `masterRealm` section configures the built-in master realm. Since the master realm always exists, it is update-only — the provisioner will never attempt to create it. This section is deliberately separate from the `realms` list to prevent accidentally applying full provisioning to master.
@@ -376,6 +425,8 @@ realms:
         executions:
           - subflow: "loa-gold"
             requirement: "CONDITIONAL"
+            providerId: "basic-flow"           # subflow type; default basic-flow
+            description: "Require gold LoA"    # shown against the subflow
             executions:
               - provider: "conditional-level-of-authentication"
                 requirement: "REQUIRED"
@@ -395,6 +446,8 @@ realms:
 ```
 
 Each execution is either a `provider` (an authenticator) or a `subflow` (a nested flow), never both. `requirement` is `REQUIRED`, `ALTERNATIVE`, `DISABLED`, or `CONDITIONAL`. Executions are created in the order declared — Keycloak appends each one, so the declared order is the resulting order.
+
+Two fields apply to subflows only. `providerId` is the subflow's own type, `basic-flow` (the default) or `form-flow` — distinct from the `providerId` on the flow itself. `description` is shown against the subflow in the console; Keycloak ignores it on a plain authenticator.
 
 **Flows are create-only.** A flow whose alias already exists is left untouched, whatever the `strategy`, and the skip is logged at INFO so an edit that does not take effect is visible in the log. Reconciling an existing flow would mean diffing an ordered tree whose entries have no stable name and deleting the executions that are not configured — the provisioner does not remove anything anywhere else, and does not start here. To change a flow, delete it in the Keycloak console or declare it under a new alias.
 
@@ -566,9 +619,13 @@ On startup, the tool retries connecting to Keycloak with exponential backoff (1s
 make build            # Build binary
 make test             # Run unit tests
 make test-integration # Run integration tests (requires Docker)
+make cover            # Run unit tests with a coverage report
 make lint             # Run golangci-lint
 make vet              # Run go vet
+make fmt              # Format with gofumpt and goimports
+make mod-tidy         # Tidy go.mod and go.sum
 make docker           # Build Docker image
+make clean            # Remove build artifacts
 ```
 
 ## Docker Compose Usage

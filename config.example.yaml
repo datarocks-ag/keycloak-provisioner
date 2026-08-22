@@ -26,6 +26,9 @@ realms:
     registrationAllowed: false
     resetPasswordAllowed: true
 
+    # Override the global strategy for this realm only.
+    # strategy: "update"
+
     # Enable Keycloak Organizations for this realm (Keycloak 26+).
     # Omit to leave the realm's current setting untouched. Required before
     # the organizations block below can be used.
@@ -57,6 +60,8 @@ realms:
     #     executions:                # created in the order declared
     #       - subflow: "loa-gold"
     #         requirement: "CONDITIONAL"
+    #         providerId: "basic-flow"        # subflow type; default basic-flow
+    #         description: "Require gold LoA" # subflows only
     #         executions:
     #           - provider: "conditional-level-of-authentication"
     #             requirement: "REQUIRED"
@@ -70,6 +75,12 @@ realms:
     # Unset bindings are left alone.
     # authenticationBindings:
     #   browserFlow: "browser-step-up"
+    #   directGrantFlow: "direct grant"
+    #   resetCredentialsFlow: "reset credentials"
+    #   registrationFlow: "registration"
+    #   clientAuthenticationFlow: "clients"
+    #   dockerAuthenticationFlow: "docker auth"
+    #   firstBrokerLoginFlow: "first broker login"
 
     # Client scopes are provisioned before clients, so a client below can
     # reference a scope defined here. Matched by name.
