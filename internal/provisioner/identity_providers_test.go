@@ -271,16 +271,14 @@ func TestEnsureOrganizationIdentityProvidersUnknownAliasFails(t *testing.T) {
 		"GET /admin/realms/{realm}/organizations/{id}/identity-providers": func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode([]map[string]any{})
 		},
-		"GET /admin/realms/{realm}/identity-provider/instances": func(w http.ResponseWriter, r *http.Request) {
-			json.NewEncoder(w).Encode([]map[string]any{{"alias": "other", "providerId": "oidc"}})
-		},
 	})
 	defer server.Close()
 
 	p := New(newTestClient(t, server.URL), &config.Config{})
 	o := config.Organization{Name: "acme", IdentityProviders: []string{"missing"}}
+	known := identityProviderIndex{"other": {"alias": "other", "providerId": "oidc"}}
 
-	err := p.ensureOrganizationIdentityProviders(context.Background(), "test-realm", "org-1", o)
+	err := p.ensureOrganizationIdentityProviders(context.Background(), "test-realm", "org-1", o, known)
 	if err == nil {
 		t.Fatal("expected an unknown alias to fail rather than warn and skip")
 	}
@@ -289,16 +287,18 @@ func TestEnsureOrganizationIdentityProvidersUnknownAliasFails(t *testing.T) {
 	}
 }
 
-func TestEnsureOrganizationIdentityProvidersSkipsAlreadyLinked(t *testing.T) {
+// TestEnsureOrganizationIdentityProvidersRejectsForeignProvider covers the
+// case config validation cannot: the provider is already linked to an
+// organization this config does not describe. Keycloak answers a bare 400
+// naming neither side, but the listing carries organizationId, so the check
+// happens locally.
+func TestEnsureOrganizationIdentityProvidersRejectsForeignProvider(t *testing.T) {
 	var mu sync.Mutex
 	links := 0
 
 	server := testServer(t, map[string]http.HandlerFunc{
 		"GET /admin/realms/{realm}/organizations/{id}/identity-providers": func(w http.ResponseWriter, r *http.Request) {
-			json.NewEncoder(w).Encode([]map[string]any{{"alias": "corp"}})
-		},
-		"GET /admin/realms/{realm}/identity-provider/instances": func(w http.ResponseWriter, r *http.Request) {
-			json.NewEncoder(w).Encode([]map[string]any{{"alias": "corp", "providerId": "oidc"}})
+			json.NewEncoder(w).Encode([]map[string]any{})
 		},
 		"POST /admin/realms/{realm}/organizations/{id}/identity-providers": func(w http.ResponseWriter, r *http.Request) {
 			mu.Lock()
@@ -311,8 +311,49 @@ func TestEnsureOrganizationIdentityProvidersSkipsAlreadyLinked(t *testing.T) {
 
 	p := New(newTestClient(t, server.URL), &config.Config{})
 	o := config.Organization{Name: "acme", IdentityProviders: []string{"corp"}}
+	known := identityProviderIndex{"corp": {
+		"alias":          "corp",
+		"providerId":     "oidc",
+		"organizationId": "some-other-org",
+	}}
 
-	if err := p.ensureOrganizationIdentityProviders(context.Background(), "test-realm", "org-1", o); err != nil {
+	err := p.ensureOrganizationIdentityProviders(context.Background(), "test-realm", "org-1", o, known)
+	if err == nil {
+		t.Fatal("expected a provider owned by another organization to fail")
+	}
+	if !strings.Contains(err.Error(), "some-other-org") {
+		t.Errorf("error should name the owning organization, got: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if links != 0 {
+		t.Errorf("the failing request should not be sent at all, got %d", links)
+	}
+}
+
+func TestEnsureOrganizationIdentityProvidersSkipsAlreadyLinked(t *testing.T) {
+	var mu sync.Mutex
+	links := 0
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/organizations/{id}/identity-providers": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{{"alias": "corp"}})
+		},
+		"POST /admin/realms/{realm}/organizations/{id}/identity-providers": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			links++
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	p := New(newTestClient(t, server.URL), &config.Config{})
+	o := config.Organization{Name: "acme", IdentityProviders: []string{"corp"}}
+	known := identityProviderIndex{"corp": {"alias": "corp", "providerId": "oidc"}}
+
+	if err := p.ensureOrganizationIdentityProviders(context.Background(), "test-realm", "org-1", o, known); err != nil {
 		t.Fatalf("ensureOrganizationIdentityProviders: %v", err)
 	}
 
@@ -320,5 +361,70 @@ func TestEnsureOrganizationIdentityProvidersSkipsAlreadyLinked(t *testing.T) {
 	defer mu.Unlock()
 	if links != 0 {
 		t.Errorf("an already-linked provider must not be re-linked, got %d calls", links)
+	}
+}
+
+// TestOrganizationsShareOneIdentityProviderListing pins the fix for an N+1: the
+// realm's providers are listed once and shared, not re-listed per organization.
+// With three organizations the old shape issued four listings.
+func TestOrganizationsShareOneIdentityProviderListing(t *testing.T) {
+	var mu sync.Mutex
+	listings := 0
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]any{"realm": "test-realm"})
+		},
+		"PUT /admin/realms/{realm}": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		},
+		"GET /admin/realms/{realm}/identity-provider/instances": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			listings++
+			mu.Unlock()
+			json.NewEncoder(w).Encode([]map[string]any{{"alias": "corp", "providerId": "oidc"}})
+		},
+		"GET /admin/realms/{realm}/organizations": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"id": "org-" + r.URL.Query().Get("search"), "name": r.URL.Query().Get("search")},
+			})
+		},
+		"PUT /admin/realms/{realm}/organizations/{id}": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		},
+		"GET /admin/realms/{realm}/organizations/{id}/identity-providers": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{})
+		},
+		"POST /admin/realms/{realm}/organizations/{id}/identity-providers": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	org := func(name string) config.Organization {
+		return config.Organization{
+			Name:              name,
+			Domains:           []config.OrganizationDomain{{Name: name + ".test"}},
+			IdentityProviders: []string{"corp"},
+		}
+	}
+
+	orgsEnabled := true
+
+	cfg := &config.Config{Realms: []config.Realm{{
+		Realm:                "test-realm",
+		OrganizationsEnabled: &orgsEnabled,
+		Organizations:        []config.Organization{org("a"), org("b"), org("c")},
+	}}}
+
+	if err := New(newTestClient(t, server.URL), cfg).Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if listings != 1 {
+		t.Errorf("expected one identity provider listing for the realm, got %d", listings)
 	}
 }

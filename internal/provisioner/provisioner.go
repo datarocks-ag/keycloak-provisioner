@@ -194,8 +194,23 @@ func (p *Provisioner) provisionRealm(ctx context.Context, realm config.Realm, st
 	// 11. Organizations (+ domains + members + identity provider links). Last,
 	// so members resolve to users created in the same run and links resolve to
 	// providers created above.
+	//
+	// The realm's identity providers are listed once here, after step 10 so the
+	// listing includes anything just created, and shared across every
+	// organization rather than re-read per organization.
+	var idps identityProviderIndex
+
+	if realmNeedsIdentityProviderIndex(realm) {
+		var err error
+
+		idps, err = p.loadIdentityProviderIndex(ctx, realm.Realm)
+		if err != nil {
+			return fmt.Errorf("listing identity providers: %w", err)
+		}
+	}
+
 	for _, org := range realm.Organizations {
-		if err := p.ensureOrganization(ctx, realm.Realm, org, strategy); err != nil {
+		if err := p.ensureOrganization(ctx, realm.Realm, org, strategy, idps); err != nil {
 			return fmt.Errorf("ensuring organization %q: %w", org.Name, err)
 		}
 	}

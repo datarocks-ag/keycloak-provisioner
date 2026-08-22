@@ -46,10 +46,18 @@ func (p *Provisioner) ensureIdentityProviders(ctx context.Context, realm config.
 	return nil
 }
 
+// identityProviderIndex maps an identity provider alias to its full server
+// representation for one realm.
+//
+// The admin API offers no lookup by alias that is cheaper than the listing, and
+// the listing already carries everything — config, flags, and the organization
+// a provider belongs to — so it is read once per realm and shared.
+type identityProviderIndex map[string]map[string]any
+
 // indexIdentityProvidersByAlias indexes a provider listing by alias. Entries
 // without an alias are skipped rather than producing an unusable mapping.
-func indexIdentityProvidersByAlias(providers []map[string]any) map[string]map[string]any {
-	index := make(map[string]map[string]any, len(providers))
+func indexIdentityProvidersByAlias(providers []map[string]any) identityProviderIndex {
+	index := make(identityProviderIndex, len(providers))
 
 	for _, p := range providers {
 		if alias, ok := p["alias"].(string); ok {
@@ -282,4 +290,31 @@ func buildIdentityProviderMapperBody(alias string, m config.IdentityProviderMapp
 	}
 
 	return body
+}
+
+// loadIdentityProviderIndex lists the realm's identity providers once and
+// indexes them by alias.
+//
+// Organizations resolve their configured aliases against this rather than
+// listing per organization, which would be one full listing per organization in
+// a realm that has many.
+func (p *Provisioner) loadIdentityProviderIndex(ctx context.Context, realm string) (identityProviderIndex, error) {
+	providers, err := p.client.GetIdentityProviders(ctx, realm)
+	if err != nil {
+		return nil, err
+	}
+
+	return indexIdentityProvidersByAlias(providers), nil
+}
+
+// realmNeedsIdentityProviderIndex reports whether any organization in the realm
+// links a provider by alias, so the listing is skipped for realms that do not.
+func realmNeedsIdentityProviderIndex(realm config.Realm) bool {
+	for _, o := range realm.Organizations {
+		if len(o.IdentityProviders) > 0 {
+			return true
+		}
+	}
+
+	return false
 }

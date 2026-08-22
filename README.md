@@ -711,9 +711,17 @@ warning names the flow the error would not.
 
 Linking is additive and a provider belongs to at most one organization, so two
 organizations claiming the same alias is rejected at config load rather than
-failing partway through a run. Unlike a missing member, which is warned about
-and skipped, an alias naming no provider in the realm **fails**: a missing user
-is plausible drift, a missing alias is a config error.
+failing partway through a run. A provider already linked to an organization the
+config does not describe is caught too, before the request is sent: the realm's
+provider listing carries the owning organization, where Keycloak's own answer is
+a bare 400 naming neither side.
+
+Unlike a missing member, which is warned about and skipped, an alias naming no
+provider in the realm **fails**: a missing user is plausible drift, a missing
+alias is a config error.
+
+The realm's providers are listed once and shared across every organization, so
+a realm with many organizations costs one listing, not one per organization.
 
 ### Not supported
 
