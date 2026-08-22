@@ -44,6 +44,7 @@ func NewDryRunAdapter(inner KeycloakAPI) KeycloakAPI {
 		createdFlows:       make(map[flowKey]string),
 		createdUsers:       make(map[userKey]string),
 		createdOrgMembers:  make(map[orgMemberKey]bool),
+		createdIdPs:        make(map[idpKey]map[string]any),
 	}
 }
 
@@ -57,6 +58,7 @@ type (
 	flowKey        struct{ realm, alias string }
 	userKey        struct{ realm, username string }
 	orgMemberKey   struct{ realm, orgID, userID string }
+	idpKey         struct{ realm, alias string }
 )
 
 type dryRunAPI struct {
@@ -74,6 +76,7 @@ type dryRunAPI struct {
 	createdFlows       map[flowKey]string        // -> synthetic authentication flow id
 	createdUsers       map[userKey]string        // -> synthetic user id
 	createdOrgMembers  map[orgMemberKey]bool     // organization memberships added this run
+	createdIdPs        map[idpKey]map[string]any // -> the representation that would have been created
 }
 
 func (d *dryRunAPI) realmIsSynthetic(realm string) bool {
@@ -771,5 +774,115 @@ func (d *dryRunAPI) CreateAuthenticationSubflow(_ context.Context, realm, flowAl
 func (d *dryRunAPI) CreateAuthenticationExecutionConfig(_ context.Context, realm, executionID string, body map[string]any) error {
 	alias, _ := body["alias"].(string)
 	slog.Info("DRY-RUN: would set authentication execution config", "realm", realm, "executionID", executionID, "configAlias", alias)
+	return nil
+}
+
+// Identity providers.
+//
+// An identity provider is keyed by its alias rather than a generated id, so
+// there is no synthetic id to hand back. What the bookkeeping has to preserve
+// instead is visibility: a provider created in this run must still show up in
+// the realm's listing, because both the mapper step and the organization link
+// resolve an alias against it.
+
+// GetIdentityProviders reports the realm's real providers plus any that would
+// have been created earlier in this run, so a provider and the organization
+// that links it can be declared in the same config.
+func (d *dryRunAPI) GetIdentityProviders(ctx context.Context, realm string) ([]map[string]any, error) {
+	var providers []map[string]any
+
+	if !d.realmIsSynthetic(realm) {
+		var err error
+
+		providers, err = d.inner.GetIdentityProviders(ctx, realm)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return append(providers, d.syntheticIdentityProviders(realm)...), nil
+}
+
+// syntheticIdentityProviders returns the providers created in this run for one
+// realm, in alias order so the reported sequence does not depend on map
+// iteration.
+func (d *dryRunAPI) syntheticIdentityProviders(realm string) []map[string]any {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	aliases := make([]string, 0, len(d.createdIdPs))
+
+	for k := range d.createdIdPs {
+		if k.realm == realm {
+			aliases = append(aliases, k.alias)
+		}
+	}
+
+	sort.Strings(aliases)
+
+	providers := make([]map[string]any, 0, len(aliases))
+	for _, alias := range aliases {
+		providers = append(providers, d.createdIdPs[idpKey{realm, alias}])
+	}
+
+	return providers
+}
+
+func (d *dryRunAPI) CreateIdentityProvider(_ context.Context, realm string, body map[string]any) error {
+	alias, _ := body["alias"].(string)
+	providerID, _ := body["providerId"].(string)
+	slog.Info("DRY-RUN: would create identity provider", "realm", realm, "identityProvider", alias, "providerId", providerID)
+
+	d.mu.Lock()
+	d.createdIdPs[idpKey{realm, alias}] = body
+	d.mu.Unlock()
+
+	return nil
+}
+
+func (d *dryRunAPI) UpdateIdentityProvider(_ context.Context, realm, alias string, body map[string]any) error {
+	providerID, _ := body["providerId"].(string)
+	slog.Info("DRY-RUN: would update identity provider", "realm", realm, "identityProvider", alias, "providerId", providerID)
+	return nil
+}
+
+// GetIdentityProviderMappers short-circuits for a provider that does not exist
+// yet, so its mappers are reported as creates rather than failing the read.
+func (d *dryRunAPI) GetIdentityProviderMappers(ctx context.Context, realm, alias string) ([]map[string]any, error) {
+	if d.realmIsSynthetic(realm) || d.identityProviderIsSynthetic(realm, alias) {
+		return nil, nil
+	}
+	return d.inner.GetIdentityProviderMappers(ctx, realm, alias)
+}
+
+func (d *dryRunAPI) identityProviderIsSynthetic(realm, alias string) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	_, ok := d.createdIdPs[idpKey{realm, alias}]
+
+	return ok
+}
+
+func (d *dryRunAPI) CreateIdentityProviderMapper(_ context.Context, realm, alias string, body map[string]any) error {
+	name, _ := body["name"].(string)
+	slog.Info("DRY-RUN: would create identity provider mapper", "realm", realm, "identityProvider", alias, "mapper", name)
+	return nil
+}
+
+func (d *dryRunAPI) UpdateIdentityProviderMapper(_ context.Context, realm, alias, mapperID string, body map[string]any) error {
+	name, _ := body["name"].(string)
+	slog.Info("DRY-RUN: would update identity provider mapper", "realm", realm, "identityProvider", alias, "mapper", name, "uuid", mapperID)
+	return nil
+}
+
+func (d *dryRunAPI) GetOrganizationIdentityProviders(ctx context.Context, realm, orgID string) ([]map[string]any, error) {
+	if d.realmIsSynthetic(realm) || isSyntheticID(orgID) {
+		return nil, nil
+	}
+	return d.inner.GetOrganizationIdentityProviders(ctx, realm, orgID)
+}
+
+func (d *dryRunAPI) AddOrganizationIdentityProvider(_ context.Context, realm, orgID, alias string) error {
+	slog.Info("DRY-RUN: would link identity provider to organization", "realm", realm, "organizationUuid", orgID, "identityProvider", alias)
 	return nil
 }

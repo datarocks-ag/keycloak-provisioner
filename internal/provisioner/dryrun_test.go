@@ -520,3 +520,83 @@ func TestDryRunImportedUserIsDiscoverable(t *testing.T) {
 		t.Errorf("expected the configured id %s, got %v", id, users[0]["id"])
 	}
 }
+
+// TestDryRunIdentityProviderVisibleAfterCreate covers the bookkeeping that lets
+// a provider and the organization linking it be declared in the same config: a
+// provider created in this run must still appear in the realm's listing, since
+// that is what the link step resolves the alias against.
+func TestDryRunIdentityProviderVisibleAfterCreate(t *testing.T) {
+	d := NewDryRunAdapter(newFakeAPI())
+	ctx := context.Background()
+
+	if err := d.CreateRealm(ctx, map[string]any{"realm": "new-realm"}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := map[string]any{"alias": "corp", "providerId": "oidc"}
+	if err := d.CreateIdentityProvider(ctx, "new-realm", body); err != nil {
+		t.Fatal(err)
+	}
+
+	providers, err := d.GetIdentityProviders(ctx, "new-realm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(providers) != 1 || providers[0]["alias"] != "corp" {
+		t.Errorf("a provider created in this run must be visible, got %v", providers)
+	}
+}
+
+// TestDryRunIdentityProviderMappersShortCircuit proves the mapper read is
+// skipped for a provider that does not exist yet, so its mappers are reported
+// as creates rather than failing the read.
+func TestDryRunIdentityProviderMappersShortCircuit(t *testing.T) {
+	d := NewDryRunAdapter(newFakeAPI())
+	ctx := context.Background()
+
+	if err := d.CreateIdentityProvider(ctx, "existing-realm", map[string]any{"alias": "corp"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// fakeAPI's embedded KeycloakAPI is nil, so a forwarded read would panic
+	// and name itself. Returning cleanly is the assertion.
+	mappers, err := d.GetIdentityProviderMappers(ctx, "existing-realm", "corp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mappers) != 0 {
+		t.Errorf("expected no mappers for a would-be-created provider, got %v", mappers)
+	}
+}
+
+func TestDryRunIdentityProvidersSortedByAlias(t *testing.T) {
+	d := NewDryRunAdapter(newFakeAPI())
+	ctx := context.Background()
+
+	if err := d.CreateRealm(ctx, map[string]any{"realm": "r"}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, alias := range []string{"zeta", "alpha", "mid"} {
+		if err := d.CreateIdentityProvider(ctx, "r", map[string]any{"alias": alias}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	providers, err := d.GetIdentityProviders(ctx, "r")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got []string
+	for _, p := range providers {
+		got = append(got, p["alias"].(string))
+	}
+
+	want := []string{"alpha", "mid", "zeta"}
+	for i := range want {
+		if i >= len(got) || got[i] != want[i] {
+			t.Fatalf("expected alias order %v, got %v", want, got)
+		}
+	}
+}

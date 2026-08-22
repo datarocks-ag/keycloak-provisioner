@@ -46,6 +46,15 @@ type ServerInfo struct {
 	Features map[string]bool
 	// ProtocolMappers maps a protocol to the mapper type ids valid for it.
 	ProtocolMappers map[string]map[string]bool
+	// IdentityProviders holds every identity provider type id the server
+	// offers. The list reflects feature state, not just the build: "instagram"
+	// is absent unless INSTAGRAM_BROKER is enabled.
+	IdentityProviders map[string]bool
+	// IdentityProviderMappers holds every identity provider mapper type id the
+	// server offers. Keycloak accepts an unknown mapper type with 201 and then
+	// silently never applies it, so checking up front is the only thing that
+	// catches a typo here.
+	IdentityProviderMappers map[string]bool
 }
 
 // Problem is one thing the server cannot satisfy: a capability whose version
@@ -77,8 +86,10 @@ func ReadServerInfo(ctx context.Context, reader ServerInfoReader) (ServerInfo, e
 	}
 
 	info := ServerInfo{
-		Features:        map[string]bool{},
-		ProtocolMappers: map[string]map[string]bool{},
+		Features:                map[string]bool{},
+		ProtocolMappers:         map[string]map[string]bool{},
+		IdentityProviders:       idsFromList(raw["identityProviders"]),
+		IdentityProviderMappers: idsFromSPI(raw, "identity-provider-mapper"),
 	}
 
 	if system, ok := raw["systemInfo"].(map[string]any); ok {
@@ -271,4 +282,55 @@ func Verify(ctx context.Context, reader ServerReader, cfg *config.Config) error 
 	}
 
 	return fmt.Errorf("config is not supported by this Keycloak server:\n  %s", strings.Join(messages, "\n  "))
+}
+
+// idsFromList collects the "id" of each entry in a server info list such as
+// identityProviders, which is a list of {id, name, groupName} objects.
+func idsFromList(raw any) map[string]bool {
+	ids := map[string]bool{}
+
+	entries, ok := raw.([]any)
+	if !ok {
+		return ids
+	}
+
+	for _, entry := range entries {
+		e, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		if id, ok := e["id"].(string); ok {
+			ids[id] = true
+		}
+	}
+
+	return ids
+}
+
+// idsFromSPI collects the provider ids registered under one SPI name, which
+// server info nests as providers.<spi>.providers.<id>.
+func idsFromSPI(raw map[string]any, spi string) map[string]bool {
+	ids := map[string]bool{}
+
+	providers, ok := raw["providers"].(map[string]any)
+	if !ok {
+		return ids
+	}
+
+	entry, ok := providers[spi].(map[string]any)
+	if !ok {
+		return ids
+	}
+
+	inner, ok := entry["providers"].(map[string]any)
+	if !ok {
+		return ids
+	}
+
+	for id := range inner {
+		ids[id] = true
+	}
+
+	return ids
 }

@@ -70,7 +70,7 @@ func TestEnsureOrganizationCreatesWhenMissing(t *testing.T) {
 	p := New(newTestClient(t, server.URL), &config.Config{})
 	o := config.Organization{Name: "acme", Domains: []config.OrganizationDomain{{Name: "acme.com"}}}
 
-	if err := p.ensureOrganization(context.Background(), "test", o, "update"); err != nil {
+	if err := p.ensureOrganization(context.Background(), "test", o, "update", nil); err != nil {
 		t.Fatalf("ensureOrganization: %v", err)
 	}
 
@@ -96,7 +96,7 @@ func TestEnsureOrganizationCreateStrategySkipsExisting(t *testing.T) {
 	p := New(newTestClient(t, server.URL), &config.Config{})
 	o := config.Organization{Name: "acme"}
 
-	if err := p.ensureOrganization(context.Background(), "test", o, "create"); err != nil {
+	if err := p.ensureOrganization(context.Background(), "test", o, "create", nil); err != nil {
 		t.Fatalf("ensureOrganization: %v", err)
 	}
 }
@@ -138,7 +138,7 @@ func TestEnsureOrganizationMembersAddsMissing(t *testing.T) {
 	p := New(newTestClient(t, server.URL), &config.Config{})
 	o := config.Organization{Name: "acme", Members: []string{"alice", "bob"}}
 
-	if err := p.ensureOrganization(context.Background(), "test", o, "update"); err != nil {
+	if err := p.ensureOrganization(context.Background(), "test", o, "update", nil); err != nil {
 		t.Fatalf("ensureOrganization: %v", err)
 	}
 
@@ -177,7 +177,7 @@ func TestEnsureOrganizationMembersWarnsOnMissingUser(t *testing.T) {
 	p := New(newTestClient(t, server.URL), &config.Config{})
 	o := config.Organization{Name: "acme", Members: []string{"ghost"}}
 
-	if err := p.ensureOrganization(context.Background(), "test", o, "update"); err != nil {
+	if err := p.ensureOrganization(context.Background(), "test", o, "update", nil); err != nil {
 		t.Fatalf("missing user should be skipped, got error: %v", err)
 	}
 }
@@ -240,7 +240,7 @@ func TestEnsureOrganizationGroupCreatesTreeInOrder(t *testing.T) {
 		}},
 	}
 
-	if err := p.ensureOrganization(context.Background(), "test", o, "update"); err != nil {
+	if err := p.ensureOrganization(context.Background(), "test", o, "update", nil); err != nil {
 		t.Fatalf("ensureOrganization: %v", err)
 	}
 
@@ -288,7 +288,7 @@ func TestEnsureOrganizationGroupUpdatesExistingWithAttributes(t *testing.T) {
 		}},
 	}
 
-	if err := p.ensureOrganization(context.Background(), "test", o, "update"); err != nil {
+	if err := p.ensureOrganization(context.Background(), "test", o, "update", nil); err != nil {
 		t.Fatalf("ensureOrganization: %v", err)
 	}
 
@@ -351,7 +351,7 @@ func TestEnsureOrganizationGroupSkipsNonOrgMember(t *testing.T) {
 		}},
 	}
 
-	if err := p.ensureOrganization(context.Background(), "test", o, "update"); err != nil {
+	if err := p.ensureOrganization(context.Background(), "test", o, "update", nil); err != nil {
 		t.Fatalf("ensureOrganization: %v", err)
 	}
 
@@ -395,7 +395,7 @@ func TestEnsureOrganizationGroupSkipsExistingMembership(t *testing.T) {
 		Groups: []config.OrganizationGroup{{Name: "engineering", Members: []string{"alice"}}},
 	}
 
-	if err := p.ensureOrganization(context.Background(), "test", o, "update"); err != nil {
+	if err := p.ensureOrganization(context.Background(), "test", o, "update", nil); err != nil {
 		t.Fatalf("ensureOrganization: %v", err)
 	}
 }
@@ -475,7 +475,7 @@ func TestEnsureOrganizationGroupsFetchMembersOnce(t *testing.T) {
 		}},
 	}
 
-	if err := p.ensureOrganization(context.Background(), "test", o, "update"); err != nil {
+	if err := p.ensureOrganization(context.Background(), "test", o, "update", nil); err != nil {
 		t.Fatalf("ensureOrganization: %v", err)
 	}
 
@@ -519,7 +519,7 @@ func TestEnsureOrganizationGroupsSkipMemberReadWhenNoneAssigned(t *testing.T) {
 	p := New(newTestClient(t, server.URL), &config.Config{})
 	o := config.Organization{Name: "acme", Groups: []config.OrganizationGroup{{Name: "engineering"}}}
 
-	if err := p.ensureOrganization(context.Background(), "test", o, "update"); err != nil {
+	if err := p.ensureOrganization(context.Background(), "test", o, "update", nil); err != nil {
 		t.Fatalf("ensureOrganization: %v", err)
 	}
 

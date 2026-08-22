@@ -2519,3 +2519,225 @@ realms:
 		t.Error("expected scoped-app to still have fullScopeAllowed=false after a second run")
 	}
 }
+
+// TestIntegrationIdentityProviders covers the whole identity provider path
+// against a live server, and in particular the one thing unit tests cannot
+// prove: that a second run does not destroy state it never declared.
+//
+// Keycloak's identity provider update is a full replace, so the reconciler
+// merges over the server's representation. This sets a config key out of band
+// between two runs and asserts it survives, along with the stored client
+// secret, which reads back masked and would be deleted if the key were omitted.
+func TestIntegrationIdentityProviders(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	configYAML := `
+realms:
+  - realm: "idp-realm"
+    enabled: true
+    organizationsEnabled: true
+    identityProviders:
+      - alias: "corp"
+        displayName: "Corporate SSO"
+        providerId: "oidc"
+        enabled: true
+        trustEmail: true
+        config:
+          clientId: "kc-broker"
+          clientSecret: "broker-secret"
+          authorizationUrl: "https://idp.example.com/authorize"
+          tokenUrl: "https://idp.example.com/token"
+        mappers:
+          - name: "email-mapper"
+            identityProviderMapper: "oidc-user-attribute-idp-mapper"
+            config:
+              claim: "email"
+              user.attribute: "email"
+      # This one never declares clientSecret. Its secret is set out of band
+      # below, and must survive a re-run: Keycloak reads it back masked, so the
+      # only way to keep it is to carry the mask forward.
+      - alias: "corp-nosecret"
+        providerId: "oidc"
+        config:
+          clientId: "kc-broker-2"
+          authorizationUrl: "https://idp2.example.com/authorize"
+          tokenUrl: "https://idp2.example.com/token"
+    organizations:
+      - name: "acme"
+        domains:
+          - name: "acme.test"
+        identityProviders:
+          - "corp"
+`
+	cfgPath := writeTestConfig(t, configYAML)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("provisioning failed: %v", err)
+	}
+
+	find := func(alias string) map[string]any {
+		t.Helper()
+
+		providers, err := kc.GetIdentityProviders(ctx, "idp-realm")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, p := range providers {
+			if p["alias"] == alias {
+				return p
+			}
+		}
+
+		t.Fatalf("identity provider %q not found", alias)
+
+		return nil
+	}
+
+	idp := find("corp")
+	if idp["displayName"] != "Corporate SSO" {
+		t.Errorf("displayName: got %v", idp["displayName"])
+	}
+	if idp["trustEmail"] != true {
+		t.Errorf("trustEmail: got %v", idp["trustEmail"])
+	}
+
+	idpConfig, _ := idp["config"].(map[string]any)
+	if idpConfig["clientId"] != "kc-broker" {
+		t.Errorf("clientId: got %v", idpConfig["clientId"])
+	}
+
+	// Mappers landed.
+	mappers, err := kc.GetIdentityProviderMappers(ctx, "idp-realm", "corp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mappers) != 1 || mappers[0]["name"] != "email-mapper" {
+		t.Fatalf("unexpected mappers: %v", mappers)
+	}
+
+	// The organization link landed.
+	orgs, err := kc.GetOrganizations(ctx, "idp-realm", "acme")
+	if err != nil || len(orgs) == 0 {
+		t.Fatalf("organization acme not found: %v", err)
+	}
+	orgID := orgs[0]["id"].(string)
+
+	linked, err := kc.GetOrganizationIdentityProviders(ctx, "idp-realm", orgID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(linked) != 1 || linked[0]["alias"] != "corp" {
+		t.Errorf("expected corp linked to acme, got %v", linked)
+	}
+
+	// Set state out of band, the way an operator or another tool would: an
+	// extra config key on corp, and a client secret on the provider whose
+	// config never mentions one.
+	setOutOfBand := func(alias string, extra map[string]string) {
+		t.Helper()
+
+		current := find(alias)
+
+		cfg, _ := current["config"].(map[string]any)
+
+		merged := make(map[string]any, len(cfg)+len(extra))
+		for k, v := range cfg {
+			merged[k] = v
+		}
+
+		for k, v := range extra {
+			merged[k] = v
+		}
+
+		body := make(map[string]any, len(current))
+		for k, v := range current {
+			body[k] = v
+		}
+
+		body["config"] = merged
+		delete(body, "internalId")
+		delete(body, "organizationId")
+		delete(body, "types")
+
+		if err := kc.UpdateIdentityProvider(ctx, "idp-realm", alias, body); err != nil {
+			t.Fatalf("out-of-band update of %q: %v", alias, err)
+		}
+	}
+
+	setOutOfBand("corp", map[string]string{"defaultScope": "openid email profile"})
+	setOutOfBand("corp-nosecret", map[string]string{"clientSecret": "set-out-of-band"})
+
+	// Re-run. The config never mentions defaultScope, and mentions
+	// clientSecret only as the literal it first set.
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("second run failed: %v", err)
+	}
+
+	after, _ := find("corp")["config"].(map[string]any)
+
+	if after["defaultScope"] != "openid email profile" {
+		t.Errorf("an unmanaged config key must survive a re-run, got %v", after["defaultScope"])
+	}
+	if after["clientId"] != "kc-broker" {
+		t.Errorf("clientId after re-run: got %v", after["clientId"])
+	}
+
+	// The real masked-secret case: this provider's config never declares a
+	// secret, so the only thing keeping it alive is the merge carrying the
+	// mask forward. Keycloak reads it back masked, so presence is the
+	// assertion — omitting the key deletes the stored secret outright.
+	noSecret, _ := find("corp-nosecret")["config"].(map[string]any)
+	if _, present := noSecret["clientSecret"]; !present {
+		t.Error("a clientSecret set out of band was deleted by the re-run — the body must carry the mask forward")
+	}
+
+	// Re-running must not duplicate the mapper.
+	mappers, err = kc.GetIdentityProviderMappers(ctx, "idp-realm", "corp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mappers) != 1 {
+		t.Errorf("expected the mapper to be updated, not duplicated, got %d", len(mappers))
+	}
+}
+
+// TestIntegrationIdentityProviderUnknownOrganizationAliasFails pins the
+// deliberate difference from a missing member, which is warned about and
+// skipped: an alias naming no provider is a config error and fails the run.
+func TestIntegrationIdentityProviderUnknownOrganizationAliasFails(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	configYAML := `
+realms:
+  - realm: "idp-missing-realm"
+    enabled: true
+    organizationsEnabled: true
+    organizations:
+      - name: "acme"
+        domains:
+          - name: "acme.test"
+        identityProviders:
+          - "does-not-exist"
+`
+	cfgPath := writeTestConfig(t, configYAML)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = provisioner.New(kc, cfg).Run(context.Background())
+	if err == nil {
+		t.Fatal("expected an unknown identity provider alias to fail the run")
+	}
+	if !strings.Contains(err.Error(), "does-not-exist") {
+		t.Errorf("error should name the alias, got: %v", err)
+	}
+}

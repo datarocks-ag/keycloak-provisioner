@@ -24,6 +24,7 @@ type KeycloakAPI interface {
 	AuthenticationFlowAPI
 	OrganizationAPI
 	OrganizationGroupAPI
+	IdentityProviderAPI
 }
 
 // dryRunAPI must satisfy the port. Asserting it here fails the build in the
@@ -157,4 +158,26 @@ type OrganizationGroupAPI interface {
 	UpdateOrganizationGroup(ctx context.Context, realm, orgID, groupID string, body map[string]any) error
 	GetOrganizationGroupMembers(ctx context.Context, realm, orgID, groupID string) ([]map[string]any, error)
 	AddOrganizationGroupMember(ctx context.Context, realm, orgID, groupID, userID string) error
+}
+
+// IdentityProviderAPI covers identity provider instances and their mappers.
+//
+// Unlike most resources here, UpdateIdentityProvider is a full replace: a field
+// or config key absent from the body is removed. The reconciler therefore reads
+// the current representation and merges over it, rather than sending the sparse
+// body used elsewhere.
+type IdentityProviderAPI interface {
+	// GetIdentityProviders returns full representations, so the reconciler does
+	// not re-read per alias.
+	GetIdentityProviders(ctx context.Context, realm string) ([]map[string]any, error)
+	CreateIdentityProvider(ctx context.Context, realm string, body map[string]any) error
+	UpdateIdentityProvider(ctx context.Context, realm, alias string, body map[string]any) error
+	GetIdentityProviderMappers(ctx context.Context, realm, alias string) ([]map[string]any, error)
+	CreateIdentityProviderMapper(ctx context.Context, realm, alias string, body map[string]any) error
+	UpdateIdentityProviderMapper(ctx context.Context, realm, alias, mapperID string, body map[string]any) error
+	// GetOrganizationIdentityProviders and AddOrganizationIdentityProvider link
+	// an existing provider to an organization. A provider belongs to at most
+	// one organization.
+	GetOrganizationIdentityProviders(ctx context.Context, realm, orgID string) ([]map[string]any, error)
+	AddOrganizationIdentityProvider(ctx context.Context, realm, orgID, alias string) error
 }

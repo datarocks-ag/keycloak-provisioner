@@ -22,6 +22,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   against 26.6. Import honours it, and is configured to skip an existing
   username so re-runs stay idempotent. Everything after creation —
   password, roles, group memberships — is unchanged.
+- Identity providers: an `identityProviders` list on any realm, with the usual
+  flags, broker login flow aliases, provider `config`, and `mappers`. Secrets
+  come through `${VAR}` in `config`.
+- `identityProviders` on an organization, linking providers by alias. Linking is
+  additive, and a provider belongs to at most one organization — two
+  organizations claiming the same alias is rejected at config load rather than
+  failing partway through a run.
+- Server-driven validation of `providerId` and `identityProviderMapper`, taken
+  from the server info the compatibility check already reads, so it costs no
+  extra request. Keycloak accepts an unknown mapper type with 201 and then never
+  applies it, so this turns a silent misconfiguration into a pre-flight error.
+  The provider list reflects feature state: `instagram` is absent unless
+  `INSTAGRAM_BROKER` is enabled.
+- `fullScopeAllowed` on a client. Keycloak defaults it to `true`, which puts
+  every role the subject holds into the client's tokens regardless of its
+  assigned scopes; setting it to `false` limits them to roles reachable through
+  `defaultClientScopes` and `optionalClientScopes`. It is the main control over
+  how broad an exchanged token can be, so it pairs with
+  `standardTokenExchangeEnabled`. Omitting it leaves the flag unmanaged.
 
 ### Changed
 
@@ -31,6 +50,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   back, but the mapping never reaches a member's effective roles or any token
   claim. An unknown-field error reads as "not implemented yet", which invites
   wiring the endpoint up by hand; naming the trap does not.
+- Identity provider updates merge over the server's current representation
+  rather than sending a sparse body. Keycloak replaces the whole representation
+  for this resource, so a stored client secret — returned masked as
+  `**********` — and any config key the schema does not model would otherwise be
+  deleted. Mapper config is deliberately the opposite: replaced from the config
+  alone, since a mapper has neither a masked secret nor unmodelled fields.
+- `mergeAttributes` is now a thin wrapper over `mergeStringMapField`, which
+  takes the field name, so the identity provider config merge reuses it instead
+  of duplicating its coercion loop.
 
 ### Fixed
 
@@ -47,12 +75,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Corrected the 1.7.0 note claiming Keycloak exposes no role-mapping endpoint
   for organization groups. It does not on 26.6, but 26.7 exposes one that is
   accepted and inert — which is worse, and now documented as such.
-- `fullScopeAllowed` on a client. Keycloak defaults it to `true`, which puts
-  every role the subject holds into the client's tokens regardless of its
-  assigned scopes; setting it to `false` limits them to roles reachable through
-  `defaultClientScopes` and `optionalClientScopes`. It is the main control over
-  how broad an exchanged token can be, so it pairs with
-  `standardTokenExchangeEnabled`. Omitting it leaves the flag unmanaged.
 
 ## [1.7.0] — 2026-08-22
 

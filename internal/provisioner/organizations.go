@@ -12,7 +12,13 @@ import (
 // its membership. Organizations are looked up by name; the alias Keycloak
 // derives from the name is immutable once the organization exists, so it is
 // only sent on create.
-func (p *Provisioner) ensureOrganization(ctx context.Context, realm string, o config.Organization, strategy string) error {
+func (p *Provisioner) ensureOrganization(
+	ctx context.Context,
+	realm string,
+	o config.Organization,
+	strategy string,
+	idps identityProviderIndex,
+) error {
 	existing, err := p.client.GetOrganizations(ctx, realm, o.Name)
 	if err != nil {
 		return err
@@ -48,6 +54,10 @@ func (p *Provisioner) ensureOrganization(ctx context.Context, realm string, o co
 	}
 
 	if err := p.ensureOrganizationMembers(ctx, realm, orgID, o); err != nil {
+		return err
+	}
+
+	if err := p.ensureOrganizationIdentityProviders(ctx, realm, orgID, o, idps); err != nil {
 		return err
 	}
 
@@ -388,6 +398,80 @@ func (p *Provisioner) ensureOrganizationMembers(ctx context.Context, realm, orgI
 		if err := p.client.AddOrganizationMember(ctx, realm, orgID, userID); err != nil {
 			return err
 		}
+	}
+
+	return nil
+}
+
+// ensureOrganizationIdentityProviders links the organization's configured
+// identity providers. Linking is additive: a provider already linked is left
+// alone and none is ever unlinked.
+//
+// Unlike a missing member, which is warned about and skipped, an alias that
+// names no provider in the realm fails the run. A user absent from Keycloak is
+// plausible drift in an environment the provisioner does not fully own; an
+// alias that resolves to nothing is a config error, and Keycloak's own answer
+// for it — a 400 naming neither the alias nor the organization — is not worth
+// surfacing.
+func (p *Provisioner) ensureOrganizationIdentityProviders(
+	ctx context.Context,
+	realm, orgID string,
+	o config.Organization,
+	known identityProviderIndex,
+) error {
+	if len(o.IdentityProviders) == 0 {
+		return nil
+	}
+
+	linked, err := p.client.GetOrganizationIdentityProviders(ctx, realm, orgID)
+	if err != nil {
+		return err
+	}
+
+	current := make(map[string]bool, len(linked))
+
+	for _, idp := range linked {
+		if alias, ok := idp["alias"].(string); ok {
+			current[alias] = true
+		}
+	}
+
+	for _, alias := range o.IdentityProviders {
+		if current[alias] {
+			slog.Debug("Identity provider already linked to organization",
+				"realm", realm, "organization", o.Name, "identityProvider", alias)
+
+			continue
+		}
+
+		provider, ok := known[alias]
+		if !ok {
+			return fmt.Errorf("organization %q: identity provider %q does not exist in realm %q",
+				o.Name, alias, realm)
+		}
+
+		// The listing carries the owning organization, so a provider claimed
+		// elsewhere can be named here. Keycloak's own answer is a bare 400 that
+		// mentions neither the provider nor either organization.
+		//
+		// Config validation already rejects two organizations in one config
+		// claiming the same alias; this is the other case, where the provider
+		// was linked to an organization the config does not describe.
+		if owner, _ := provider["organizationId"].(string); owner != "" && owner != orgID {
+			return fmt.Errorf(
+				"organization %q: identity provider %q is already linked to organization %s; "+
+					"Keycloak allows a provider to belong to at most one",
+				o.Name, alias, owner)
+		}
+
+		slog.Info("Linking identity provider to organization",
+			"realm", realm, "organization", o.Name, "identityProvider", alias)
+
+		if err := p.client.AddOrganizationIdentityProvider(ctx, realm, orgID, alias); err != nil {
+			return fmt.Errorf("linking identity provider %q to organization %q: %w", alias, o.Name, err)
+		}
+
+		current[alias] = true
 	}
 
 	return nil

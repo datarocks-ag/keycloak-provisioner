@@ -18,9 +18,23 @@ const acrLoaMapAttr = "acr.loa.map"
 // union rather than only the keys they manage. Configured values win over
 // current ones; keys absent from the config are preserved, never removed.
 func mergeAttributes(existing map[string]any, configured map[string]string) map[string]string {
+	return mergeStringMapField(existing, "attributes", configured)
+}
+
+// mergeStringMapField merges configured values over a named string-map field of
+// an existing Keycloak representation, returning a fresh map.
+//
+// Several Keycloak resources replace a whole map on update rather than patching
+// it — a realm's and a client's "attributes", an identity provider's "config" —
+// so the field name is a parameter rather than each caller repeating the
+// coercion below. An identity provider in particular returns its client secret
+// masked as "**********", which Keycloak reads back as "keep the stored value";
+// carrying the current map forward is what makes that work, and what stops an
+// unmanaged key from being deleted.
+func mergeStringMapField(existing map[string]any, field string, configured map[string]string) map[string]string {
 	merged := make(map[string]string, len(configured))
 
-	if current, ok := existing["attributes"].(map[string]any); ok {
+	if current, ok := existing[field].(map[string]any); ok {
 		for k, v := range current {
 			if v == nil {
 				continue

@@ -133,12 +133,26 @@ realms:
             - "app-admin"
         groups:
           - "/engineering"
+    identityProviders:
+      - alias: "corp"
+        providerId: "oidc"
+        firstBrokerLoginFlowAlias: "browser-step-up"
+        config:
+          clientId: "kc"
+          clientSecret: "secret"
+        mappers:
+          - name: "email"
+            identityProviderMapper: "oidc-user-attribute-idp-mapper"
+            config:
+              claim: "email"
     organizations:
       - name: "acme"
         domains:
           - name: "acme.com"
         members:
           - "alice"
+        identityProviders:
+          - "corp"
         groups:
           - name: "org-eng"
             members:
@@ -186,8 +200,11 @@ func TestDryRunGoldenLog(t *testing.T) {
 		"would reset user password",
 		"would assign realm roles",
 		"would add user to group",
+		"would create identity provider",
+		"would create identity provider mapper",
 		"would create organization",
 		"would add user to organization",
+		"would link identity provider to organization",
 		"would create organization group",
 		"would add user to organization group",
 	}

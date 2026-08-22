@@ -16,6 +16,7 @@ Release notes are maintained in [CHANGELOG.md](CHANGELOG.md).
 - Client scopes as a first-class resource, with their own protocol mappers and realm-level assignment
 - Organizations with domains and additive membership (Keycloak 26+), including organization-scoped groups (Keycloak 26.6+)
 - Authentication flows with nested subflows and execution config, plus realm and client flow bindings
+- Identity providers (identity brokering) with mappers, merged over the server's representation so secrets and unmanaged config keys survive, and linkable to organizations
 - Step-up authentication support via `acrLoaMap` on realms and clients (`acr.loa.map`)
 - User management with password setting, realm/client role assignment, and group membership
 - Service account role mapping for machine-to-machine clients
@@ -122,15 +123,20 @@ In dry-run mode, every mutating call logs a `DRY-RUN:` message and is skipped. R
       - **Realm/client role assignments** — granted if not already mapped (additive)
       - **Subgroups** — created or updated recursively
    9. **Users** — created or updated, passwords set, roles assigned, group memberships added (additive)
-   10. **Organizations** — created or updated (matched by `name`), domains set, members added (additive)
+   10. **Identity providers** — created or updated (matched by `alias`), merged over the server's representation
+       - **Mappers** — created or updated (matched by `name`); their config is replaced, not merged
+   11. **Organizations** — created or updated (matched by `name`), domains set, members added, identity providers linked (all additive)
 
 Authentication flows run before clients so a client can bind to a flow defined
 in the same config, and before the realm bindings that reference them. Client
 scopes run before clients so a client can reference a scope defined in the same
 config. Groups run after roles so their realm/client role assignments resolve to
 roles created earlier in the same run, and before users so group memberships
-resolve to groups defined in the same config. Organizations run last so their
-members resolve to users created in the same run. Role assignments, group
+resolve to groups defined in the same config. Identity providers run after
+authentication flows, whose aliases their broker login fields reference, and
+after roles and groups, which a hardcoded-role or hardcoded-group mapper names.
+Organizations run last so their members resolve to users created in the same run
+and their identity provider links resolve to providers created just above. Role assignments, group
 memberships and organization memberships are additive: the provisioner grants any configured role or
 membership that is not yet present, and never removes existing ones.
 
@@ -612,7 +618,118 @@ Group names must be unique among siblings but may repeat at different levels, ma
 
 `alias` is only sent when the organization is created, since Keycloak treats it as immutable afterwards. Omitting it does not mean the provisioner copies `name` — the field is left out of the request entirely and Keycloak derives its own value.
 
-Linking identity providers to organizations is not supported: the provisioner has no identity provider support to link.
+Organizations can link identity providers by alias — see
+[Identity Providers](#identity-providers) below. A provider must already exist,
+either declared in the same config or already present in the realm, and belongs
+to at most one organization.
+
+## Identity Providers
+
+Identity providers (identity brokering) are declared per realm under
+`identityProviders` and provisioned before organizations, so an organization can
+link a provider declared in the same config.
+
+```yaml
+realms:
+  - realm: "my-realm"
+    identityProviders:
+      - alias: "corporate"
+        displayName: "Corporate SSO"
+        providerId: "oidc"
+        enabled: true
+        trustEmail: true
+        firstBrokerLoginFlowAlias: "first broker login"
+        config:
+          clientId: "keycloak-broker"
+          clientSecret: "${CORPORATE_IDP_SECRET}"
+          authorizationUrl: "https://idp.example.com/authorize"
+          tokenUrl: "https://idp.example.com/token"
+        mappers:
+          - name: "email"
+            identityProviderMapper: "oidc-user-attribute-idp-mapper"
+            config:
+              claim: "email"
+              user.attribute: "email"
+```
+
+`alias` identifies the provider and is a URL path segment, so it must not
+contain `/`. `providerId` is the broker type (`oidc`, `saml`, `google`, …) and
+is validated against the types the server actually offers. Secrets belong in
+`config` via `${VAR}`; nothing is ever written to the config file.
+
+### Updates are a merge, because Keycloak's are a replace
+
+This is the one resource where Keycloak replaces the **whole** representation on
+update: a field or config key left out of the request is deleted, not left
+alone. The provisioner therefore reads the current representation and merges the
+config over it, rather than sending the sparse body it uses everywhere else.
+
+Two consequences worth knowing:
+
+- **A stored client secret survives.** Keycloak returns it masked as
+  `**********` and reads that mask back as "keep what you have", so a provider
+  whose secret was set out of band keeps it across runs. Omitting the key would
+  delete it.
+- **Config keys the schema does not model survive.** Anything set out of band —
+  by an operator, or by a Keycloak version that knows a key this provisioner
+  does not — is carried forward.
+
+The server-derived `internalId`, `organizationId` and `types` are dropped rather
+than echoed back.
+
+Mapper `config`, by contrast, is **replaced** from the config alone. A mapper has
+neither a masked secret nor unmodelled server fields, so removing a key from the
+config removes it from Keycloak — which is not true one level up. The asymmetry
+is deliberate.
+
+### Validation
+
+`providerId` and `identityProviderMapper` are checked against the server before
+anything is written, using the server info the compatibility check already
+reads — so this costs no extra request. The check is worth more than most:
+Keycloak accepts an **unknown mapper type with 201** and then silently never
+applies it, so a typo here is invisible rather than merely late. The provider
+list also reflects feature state, not just the build: `instagram` is absent
+unless `INSTAGRAM_BROKER` is enabled.
+
+`firstBrokerLoginFlowAlias` and `postBrokerLoginFlowAlias` are checked against
+the realm's flow listing and **warn** rather than fail — the listing can
+legitimately be incomplete, such as in a dry run against a realm that does not
+exist yet. Keycloak answers a bare 500 for an alias it cannot resolve, so the
+warning names the flow the error would not.
+
+### Linking to an organization
+
+```yaml
+    organizations:
+      - name: "acme"
+        domains:
+          - name: "acme.test"
+        identityProviders:
+          - "corporate"
+```
+
+Linking is additive and a provider belongs to at most one organization, so two
+organizations claiming the same alias is rejected at config load rather than
+failing partway through a run. A provider already linked to an organization the
+config does not describe is caught too, before the request is sent: the realm's
+provider listing carries the owning organization, where Keycloak's own answer is
+a bare 400 naming neither side.
+
+Unlike a missing member, which is warned about and skipped, an alias naming no
+provider in the realm **fails**: a missing user is plausible drift, a missing
+alias is a config error.
+
+The realm's providers are listed once and shared across every organization, so
+a realm with many organizations costs one listing, not one per organization.
+
+### Not supported
+
+Deleting, unlinking or renaming anything, consistent with the rest of the
+provisioner. Per-provider config-key validation is not possible —
+`GET /identity-provider/providers/oidc` returns an empty `configProperties` — and
+per-type mapper validation needs the instance to exist, so it cannot run
+pre-flight.
 
 ## Keycloak Compatibility
 
