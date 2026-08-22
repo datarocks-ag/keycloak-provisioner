@@ -44,6 +44,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Eight dry-run log messages were removed when the port methods were
+  consolidated. Each case now shares the message of its counterpart, with the
+  distinction moved out of the message text and into a structured attribute, so
+  anything matching on the old strings needs updating. No information was lost.
+
+  | was | now | discriminator |
+  | --- | --- | --- |
+  | `would assign realm roles to group` | `would assign realm roles` | `subject=groups` |
+  | `would assign client roles to group` | `would assign client roles` | `subject=groups` |
+  | `would assign default client scope` | `would assign client scope` | `type=default` |
+  | `would assign optional client scope` | `would assign client scope` | `type=optional` |
+  | `would assign client scope to realm defaults` | `would assign client scope to realm` | `type=default` |
+  | `would assign client scope to realm optionals` | `would assign client scope to realm` | `type=optional` |
+  | `would create client scope protocol mapper` | `would create protocol mapper` | `container=client-scopes` |
+  | `would update client scope protocol mapper` | `would update protocol mapper` | `container=client-scopes` |
+
+  The provisioner's non-dry-run log messages are unchanged.
 - `realmRoles` and `clientRoles` on an organization group are now rejected at
   config load with an explanation, instead of being rejected as unknown fields.
   Keycloak 26.7 accepts the corresponding role-mapping call and reads the role
