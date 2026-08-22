@@ -227,11 +227,15 @@ func TestBuildClientBodyAllFields(t *testing.T) {
 	if _, ok := body["webOrigins"]; !ok {
 		t.Error("missing webOrigins")
 	}
-	if _, ok := body["defaultClientScopes"]; !ok {
-		t.Error("missing defaultClientScopes")
+	// The scope lists must NOT be in the body: Keycloak reads them on create as
+	// the client's complete scope list and detaches its own defaults, "roles"
+	// included, so the client's tokens would carry no roles. They are attached
+	// separately by ensureClientScopeAssignments.
+	if _, ok := body["defaultClientScopes"]; ok {
+		t.Error("defaultClientScopes must not be sent in the client body")
 	}
-	if _, ok := body["optionalClientScopes"]; !ok {
-		t.Error("missing optionalClientScopes")
+	if _, ok := body["optionalClientScopes"]; ok {
+		t.Error("optionalClientScopes must not be sent in the client body")
 	}
 	if _, ok := body["attributes"]; !ok {
 		t.Error("missing attributes")

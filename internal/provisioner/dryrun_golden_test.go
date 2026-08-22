@@ -99,6 +99,9 @@ realms:
     clientScopes:
       - name: "orders:read"
         type: "optional"
+        scopeMappings:
+          realm:
+            - "app-admin"
         protocolMappers:
           - name: "orders-audience"
             protocol: "openid-connect"
@@ -117,6 +120,10 @@ realms:
         serviceAccountRoles:
           realm:
             - "app-admin"
+        scopeMappings:
+          clients:
+            web:
+              - "web-admin"
     roles:
       - name: "app-admin"
     groups:
@@ -199,6 +206,8 @@ func TestDryRunGoldenLog(t *testing.T) {
 		"would assign client scope",
 		"would create realm role",
 		"would assign realm roles",
+		"would add realm roles to scope",
+		"would add client roles to scope",
 		"would create group",
 		"would assign realm roles",
 		"would create subgroup",

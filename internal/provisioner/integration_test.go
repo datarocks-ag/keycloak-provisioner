@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha1"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -3278,4 +3280,376 @@ realms:
 	}
 
 	t.Logf("Keycloak's message, which names neither the value nor the alternatives: %v", err)
+}
+
+// TestIntegrationClientScopeMappings proves the whole point of the field
+// against a live server: with fullScopeAllowed false, a client's scope mappings
+// decide both which roles its tokens carry and which audiences it may request,
+// and nothing else becomes reachable.
+//
+// Measured on 26.6, an exchange asks for an audience the requesting client has
+// no scope on and is refused with "Requested audience not available". That is
+// what a narrowed client without scope mappings hits on every downstream call,
+// so the declared mapping is the only thing standing between fullScopeAllowed:
+// false and a client that can reach nothing.
+func TestIntegrationClientScopeMappings(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	const realm = "scope-mappings-realm"
+
+	configYAML := `
+realms:
+  - realm: "scope-mappings-realm"
+    enabled: true
+    clients:
+      - clientId: "bff"
+        enabled: true
+        publicClient: false
+        secret: "bff-secret"
+        directAccessGrantsEnabled: true
+        standardTokenExchangeEnabled: true
+        fullScopeAllowed: false
+        scopeMappings:
+          clients:
+            sandbox-ledger:
+              - "reader"
+      - clientId: "sandbox-ledger"
+        enabled: true
+        clientRoles:
+          - name: "reader"
+      - clientId: "sandbox-document"
+        enabled: true
+        clientRoles:
+          - name: "reader"
+    users:
+      - username: "alice"
+        enabled: true
+        password: "alice-pw"
+        email: "alice@scope.test"
+        emailVerified: true
+        firstName: "Alice"
+        lastName: "Example"
+        roles:
+          clients:
+            sandbox-ledger:
+              - "reader"
+            sandbox-document:
+              - "reader"
+`
+	cfgPath := writeTestConfig(t, configYAML)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("provisioning failed: %v", err)
+	}
+
+	subject := confidentialPasswordGrant(t, realm, "bff", "bff-secret", "alice", "alice-pw")
+
+	// The declared audience is reachable, and the exchanged token carries the
+	// role: an audience without roles behind it authorises nothing downstream.
+	exchanged, err := tokenExchange(t, realm, "bff", "bff-secret", subject, "sandbox-ledger")
+	if err != nil {
+		t.Fatalf("exchange for the declared audience must succeed: %v", err)
+	}
+	if aud := jwtClaim(t, exchanged, "aud"); aud != "sandbox-ledger" {
+		t.Errorf("aud = %v, want sandbox-ledger", aud)
+	}
+	if roles := ledgerRoles(t, exchanged); len(roles) != 1 || roles[0] != "reader" {
+		t.Errorf("resource_access for sandbox-ledger = %v, want [reader]", roles)
+	}
+
+	// Alice holds sandbox-document's reader too, so only the missing scope
+	// mapping keeps it out. This is the narrowing the field exists for.
+	if _, err := tokenExchange(t, realm, "bff", "bff-secret", subject, "sandbox-document"); err == nil {
+		t.Error("an audience the client has no scope on must stay unreachable")
+	}
+
+	// Second run: additive means an already-mapped role is not re-posted, and
+	// nothing about the scope changes.
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("second run failed: %v", err)
+	}
+
+	bffUUID := clientUUID(t, kc, realm, "bff")
+	ledgerUUID := clientUUID(t, kc, realm, "sandbox-ledger")
+
+	mapped, err := kc.GetClientScopeMappings(ctx, realm, client.ScopeOwnerClients, bffUUID, ledgerUUID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mapped) != 1 || mapped[0]["name"] != "reader" {
+		t.Errorf("scope mappings after two runs = %v, want exactly one reader", mapped)
+	}
+}
+
+// TestIntegrationClientScopeScopeMappings covers the other owner: the roles are
+// declared once on a client scope, and every client the scope is attached to
+// gets them. Keycloak treats a role reached this way exactly like one mapped on
+// the client itself — verified on 26.6 — which is what makes the client scope
+// the reusable unit for a per-audience grant.
+func TestIntegrationClientScopeScopeMappings(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	const realm = "scope-scope-mappings-realm"
+
+	configYAML := `
+realms:
+  - realm: "scope-scope-mappings-realm"
+    enabled: true
+    clientScopes:
+      - name: "ledger-access"
+        scopeMappings:
+          clients:
+            sandbox-ledger:
+              - "reader"
+    clients:
+      - clientId: "bff"
+        enabled: true
+        publicClient: false
+        secret: "bff-secret"
+        directAccessGrantsEnabled: true
+        standardTokenExchangeEnabled: true
+        fullScopeAllowed: false
+        defaultClientScopes:
+          - "ledger-access"
+      - clientId: "sandbox-ledger"
+        enabled: true
+        clientRoles:
+          - name: "reader"
+    users:
+      - username: "alice"
+        enabled: true
+        password: "alice-pw"
+        email: "alice@scope.test"
+        emailVerified: true
+        firstName: "Alice"
+        lastName: "Example"
+        roles:
+          clients:
+            sandbox-ledger:
+              - "reader"
+`
+	cfgPath := writeTestConfig(t, configYAML)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("provisioning failed: %v", err)
+	}
+
+	subject := confidentialPasswordGrant(t, realm, "bff", "bff-secret", "alice", "alice-pw")
+
+	exchanged, err := tokenExchange(t, realm, "bff", "bff-secret", subject, "sandbox-ledger")
+	if err != nil {
+		t.Fatalf("a role reached through the client scope must make the audience reachable: %v", err)
+	}
+	if roles := ledgerRoles(t, exchanged); len(roles) != 1 || roles[0] != "reader" {
+		t.Errorf("resource_access for sandbox-ledger = %v, want [reader]", roles)
+	}
+}
+
+// confidentialPasswordGrant authenticates a user at a confidential client,
+// which directGrant cannot do: it uses a public client and sends no secret.
+func confidentialPasswordGrant(t *testing.T, realm, clientID, secret, username, password string) string {
+	t.Helper()
+
+	form := url.Values{
+		"client_id":     {clientID},
+		"client_secret": {secret},
+		"grant_type":    {"password"},
+		"username":      {username},
+		"password":      {password},
+		"scope":         {"openid"},
+	}
+
+	token, err := postTokenEndpoint(t, realm, form)
+	if err != nil {
+		t.Fatalf("password grant for %q at %q: %v", username, clientID, err)
+	}
+
+	return token
+}
+
+// tokenExchange performs an RFC 8693 exchange of subjectToken for a token
+// addressed to audience.
+func tokenExchange(t *testing.T, realm, clientID, secret, subjectToken, audience string) (string, error) {
+	t.Helper()
+
+	return postTokenEndpoint(t, realm, url.Values{
+		"client_id":          {clientID},
+		"client_secret":      {secret},
+		"grant_type":         {"urn:ietf:params:oauth:grant-type:token-exchange"},
+		"subject_token":      {subjectToken},
+		"subject_token_type": {"urn:ietf:params:oauth:token-type:access_token"},
+		"audience":           {audience},
+	})
+}
+
+func postTokenEndpoint(t *testing.T, realm string, form url.Values) (string, error) {
+	t.Helper()
+
+	resp, err := http.PostForm(sharedBaseURL+"/realms/"+realm+"/protocol/openid-connect/token", form)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return "", err
+	}
+
+	if token, ok := body["access_token"].(string); ok {
+		return token, nil
+	}
+
+	return "", fmt.Errorf("%v: %v", body["error"], body["error_description"])
+}
+
+// jwtClaim returns one claim of an access token. The signature is not checked:
+// the test asks what Keycloak put in the token, not whether it is valid.
+func jwtClaim(t *testing.T, token, claim string) any {
+	t.Helper()
+
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		t.Fatalf("not a JWT: %q", token)
+	}
+
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		t.Fatalf("decoding JWT payload: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("unmarshalling JWT payload: %v", err)
+	}
+
+	return payload[claim]
+}
+
+// ledgerRoles returns the roles the token carries for sandbox-ledger. An
+// audience with no roles behind it authorises nothing, so the tests assert on
+// the roles rather than on the aud claim alone.
+func ledgerRoles(t *testing.T, token string) []string {
+	t.Helper()
+
+	access, ok := jwtClaim(t, token, "resource_access").(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	entry, ok := access["sandbox-ledger"].(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	raw, _ := entry["roles"].([]any)
+
+	roles := make([]string, 0, len(raw))
+	for _, r := range raw {
+		roles = append(roles, fmt.Sprint(r))
+	}
+
+	return roles
+}
+
+func clientUUID(t *testing.T, kc *client.Client, realm, clientID string) string {
+	t.Helper()
+
+	clients, err := kc.GetClients(context.Background(), realm, clientID)
+	if err != nil || len(clients) == 0 {
+		t.Fatalf("client %q not found: %v", clientID, err)
+	}
+
+	return clients[0]["id"].(string)
+}
+
+// TestIntegrationDeclaredScopesKeepBuiltIns pins the create path against the
+// trap that made client scope role mappings look broken: Keycloak reads
+// defaultClientScopes in a client representation as the complete list and
+// attaches nothing else, so a client naming one scope used to lose the realm's
+// defaults — "roles" among them, the scope that emits resource_access. The
+// client's tokens then carried no roles at all, whatever its scope mappings
+// said.
+//
+// The provisioner therefore leaves both lists out of the client body and
+// attaches them afterwards, additively. This asserts the built-in scopes are
+// still there alongside the declared one.
+func TestIntegrationDeclaredScopesKeepBuiltIns(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	const realm = "declared-scopes-realm"
+
+	configYAML := `
+realms:
+  - realm: "declared-scopes-realm"
+    enabled: true
+    clientScopes:
+      - name: "ledger-access"
+    clients:
+      - clientId: "bff"
+        enabled: true
+        defaultClientScopes:
+          - "ledger-access"
+`
+	cfg, err := config.Load(writeTestConfig(t, configYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("provisioning failed: %v", err)
+	}
+
+	assigned, err := kc.GetClientScopeAssignments(ctx, realm, clientUUID(t, kc, realm, "bff"), client.ClientScopeDefault)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	names := nameSetOf(assigned)
+	if !names["ledger-access"] {
+		t.Error("the declared scope must be attached")
+	}
+	// "roles" is the one that matters — without it a token has no
+	// resource_access — but a client losing "basic" or "profile" is just as
+	// silent, so all three are pinned.
+	for _, builtIn := range []string{"roles", "basic", "profile"} {
+		if !names[builtIn] {
+			t.Errorf("built-in default scope %q must survive declaring a scope, got %v", builtIn, sortedNames(names))
+		}
+	}
+}
+
+func nameSetOf(items []map[string]any) map[string]bool {
+	out := make(map[string]bool, len(items))
+	for _, item := range items {
+		if name, ok := item["name"].(string); ok {
+			out[name] = true
+		}
+	}
+
+	return out
+}
+
+func sortedNames(set map[string]bool) []string {
+	out := make([]string, 0, len(set))
+	for name := range set {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+
+	return out
 }

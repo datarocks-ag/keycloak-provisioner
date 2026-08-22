@@ -97,6 +97,12 @@ realms:
     #         protocolMapper: "oidc-audience-mapper"
     #         config:
     #           "included.client.audience": "orders-api"
+    #     # Roles this scope carries into the token of every client it is
+    #     # attached to — the reusable form of a client's scopeMappings.
+    #     scopeMappings:
+    #       clients:
+    #         orders-api:
+    #           - "reader"
 
     clients:
       - clientId: "my-app"
@@ -129,6 +135,18 @@ realms:
         bearerOnly: false
         consentRequired: false
         frontchannelLogout: false
+        # Roles this client's tokens may carry once fullScopeAllowed is false.
+        # A role reaches the token only if the subject holds it and it is in
+        # scope, so this narrows and never grants. It is also what makes an
+        # audience reachable for token exchange: without it, a narrowed client
+        # can request none. Additive — a mapping not named here is left alone.
+        # scopeMappings:
+        #   realm:
+        #     - "app-admin"
+        #   clients:
+        #     sandbox-ledger:
+        #       - "reader"
+        # Attaching a scope never detaches Keycloak's own defaults.
         defaultClientScopes:
           - "web-origins"
           - "profile"

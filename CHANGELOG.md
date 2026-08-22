@@ -7,7 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No unreleased changes._
+### Added
+
+- `scopeMappings` on a client and on a client scope: the roles that are in that
+  client's — or that scope's — scope. It is the other half of
+  `fullScopeAllowed: false`, which until now could be declared but not used.
+  Setting the flag alone narrows a client to nothing, and measured against 26.6
+  that is total: Keycloak derives the audiences a client may request from the
+  roles in its scope, so an exchange fails with `Requested audience not
+  available` for every downstream client. Naming a client's roles here, and no
+  others, is what scopes an exchange to exactly the audiences it should reach.
+
+  A role reaches the token only if the subject holds it *and* it is in scope, so
+  this narrows and never grants. Assignment is additive, like every other role
+  assignment: a mapping present on the server but absent from the config is left
+  alone, so this cannot take back a scope widened out of band. A role named here
+  that does not exist fails the run.
+
+  Declared on a client scope, the roles apply to every client the scope is
+  attached to; Keycloak treats a role reached that way exactly like one mapped
+  on the client itself.
+
+### Fixed
+
+- A client declaring `defaultClientScopes` or `optionalClientScopes` no longer
+  loses Keycloak's own default scopes.
+
+  Keycloak reads either list in a client representation as the client's
+  *complete* scope list, so a client naming one scope was created with only that
+  one — without `roles`, the scope that emits `resource_access`, and without
+  `basic`, `profile`, `email`, `web-origins` and `acr`. Its tokens then carried
+  no roles at all, whatever else was configured, which reads as a role or scope
+  mapping problem and is neither.
+
+  The provisioner now leaves both lists out of the client body and attaches them
+  through the same additive assignment the update path already used, matching
+  what the README documented all along: scopes are added, and nothing is ever
+  detached. A client provisioned before this fix keeps its narrowed set — the
+  reconciler adds, so re-running restores nothing. Attach the missing built-ins
+  by naming them in `defaultClientScopes`, or recreate the client.
 
 ## [1.9.0] — 2026-08-22
 

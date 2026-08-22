@@ -312,6 +312,13 @@ type ClientScope struct {
 	Type            string            `yaml:"type"`
 	Attributes      map[string]string `yaml:"attributes"`
 	ProtocolMappers []ProtocolMapper  `yaml:"protocolMappers"`
+	// ScopeMappings are the roles this scope carries into the token of any
+	// client it is assigned to. It is the reusable half of the same mechanism
+	// Client.ScopeMappings applies to one client: declare the roles once here
+	// and attach the scope through defaultClientScopes or optionalClientScopes.
+	//
+	// Assignment is additive; see Client.ScopeMappings.
+	ScopeMappings *UserRoles `yaml:"scopeMappings"`
 }
 
 // Client defines a Keycloak client to provision within a realm.
@@ -373,6 +380,20 @@ type Client struct {
 	ProtocolMappers                    []ProtocolMapper  `yaml:"protocolMappers"`
 	ClientRoles                        []ClientRole      `yaml:"clientRoles"`
 	ServiceAccountRoles                *UserRoles        `yaml:"serviceAccountRoles"`
+	// ScopeMappings are the roles this client's tokens may carry once
+	// FullScopeAllowed is false. Without it, false leaves the client with scope
+	// on nothing: a subject's roles are dropped from its tokens, and — for
+	// token exchange — no audience is reachable, because Keycloak derives the
+	// audiences a client may request from the roles in its scope.
+	//
+	// A role reaches the token only if the subject holds it *and* it is in
+	// scope, so this narrows, never grants. Granting is what a user's or
+	// group's roles do.
+	//
+	// Assignment is additive, like every other role assignment here: a mapping
+	// present on the server but absent from the config is left alone, so this
+	// cannot take back a scope widened out of band.
+	ScopeMappings *UserRoles `yaml:"scopeMappings"`
 }
 
 // ProtocolMapper defines a protocol mapper for a Keycloak client.
@@ -715,6 +736,7 @@ func expandConfig(cfg *Config) {
 			cs.Protocol = expandEnvVars(cs.Protocol)
 			cs.Attributes = expandStringMap(cs.Attributes)
 			expandProtocolMappers(cs.ProtocolMappers)
+			expandUserRoles(cs.ScopeMappings)
 		}
 
 		for j := range r.Clients {
@@ -749,6 +771,7 @@ func expandConfig(cfg *Config) {
 				c.ClientRoles[k].Description = expandEnvVars(c.ClientRoles[k].Description)
 			}
 			expandUserRoles(c.ServiceAccountRoles)
+			expandUserRoles(c.ScopeMappings)
 		}
 
 		for j := range r.Roles {
@@ -1014,6 +1037,10 @@ func validateClientScopes(realmIdx int, scopes []ClientScope) error {
 		}
 
 		if err := validateProtocolMappers(prefix, cs.ProtocolMappers); err != nil {
+			return err
+		}
+
+		if err := validateRoleSet(prefix+".scopeMappings", cs.ScopeMappings); err != nil {
 			return err
 		}
 	}
@@ -1439,18 +1466,28 @@ func validateUsers(prefix string, users []User) error {
 }
 
 func validateUserRoles(prefix string, roles *UserRoles) error {
+	return validateRoleSet(prefix+".roles", roles)
+}
+
+// validateRoleSet checks a UserRoles wherever it appears. path is where it sits
+// in the config — "….roles" under a user, "….scopeMappings" on a client — so
+// the message points at the key the reader wrote.
+func validateRoleSet(path string, roles *UserRoles) error {
+	if roles == nil {
+		return nil
+	}
 	for i, r := range roles.Realm {
 		if containsNullByte(r) {
-			return fmt.Errorf("%s.roles.realm[%d]: contains null byte", prefix, i)
+			return fmt.Errorf("%s.realm[%d]: contains null byte", path, i)
 		}
 	}
 	for clientID, clientRoles := range roles.Clients {
 		if containsNullByte(clientID) {
-			return fmt.Errorf("%s.roles.clients: client ID contains null byte", prefix)
+			return fmt.Errorf("%s.clients: client ID contains null byte", path)
 		}
 		for i, r := range clientRoles {
 			if containsNullByte(r) {
-				return fmt.Errorf("%s.roles.clients.%s[%d]: contains null byte", prefix, clientID, i)
+				return fmt.Errorf("%s.clients.%s[%d]: contains null byte", path, clientID, i)
 			}
 		}
 	}
@@ -1528,6 +1565,10 @@ func validateClients(realmIdx int, clients []Client, realmAcrLoaMap map[string]i
 		}
 
 		if err := validateClientRoles(prefix, c.ClientRoles); err != nil {
+			return err
+		}
+
+		if err := validateRoleSet(prefix+".scopeMappings", c.ScopeMappings); err != nil {
 			return err
 		}
 

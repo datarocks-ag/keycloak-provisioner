@@ -111,12 +111,13 @@ func buildClientBody(c config.Client, existing map[string]any, flowOverrides map
 	if c.FrontchannelLogout != nil {
 		body["frontchannelLogout"] = *c.FrontchannelLogout
 	}
-	if len(c.DefaultClientScopes) > 0 {
-		body["defaultClientScopes"] = c.DefaultClientScopes
-	}
-	if len(c.OptionalClientScopes) > 0 {
-		body["optionalClientScopes"] = c.OptionalClientScopes
-	}
+	// defaultClientScopes and optionalClientScopes are deliberately absent.
+	// Keycloak reads them on create as the client's *complete* scope list, so
+	// sending them detaches the realm's own defaults — "roles" among them,
+	// which is what emits resource_access. A client that named one scope would
+	// silently issue tokens carrying no roles at all. They are attached
+	// afterwards by ensureClientScopeAssignments, which is additive on both the
+	// create and the update path.
 	if attrs := buildClientAttributes(c, existing); len(attrs) > 0 {
 		body["attributes"] = attrs
 	}

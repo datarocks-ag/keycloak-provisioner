@@ -91,6 +91,10 @@ func (p *Provisioner) provisionRealm(ctx context.Context, realm config.Realm, st
 	// index, so neither re-lists per scope or per client.
 	var clientScopes clientScopeIndex
 
+	// Scope mappings are collected here and applied at step 7. They name roles
+	// on any client in the realm, and realm roles, neither of which exists yet.
+	var scopeMappings []deferredScopeMapping
+
 	if realmNeedsClientScopeIndex(realm) {
 		var err error
 
@@ -114,6 +118,13 @@ func (p *Provisioner) provisionRealm(ctx context.Context, realm config.Realm, st
 
 		if err := p.ensureRealmClientScopeType(ctx, realm.Realm, scopeID, cs); err != nil {
 			return fmt.Errorf("assigning client scope %q to realm: %w", cs.Name, err)
+		}
+
+		if cs.ScopeMappings != nil {
+			scopeMappings = append(scopeMappings, deferredScopeMapping{
+				owner: clientScopeScopeOwner(scopeID, cs.Name),
+				roles: cs.ScopeMappings,
+			})
 		}
 	}
 
@@ -151,6 +162,13 @@ func (p *Provisioner) provisionRealm(ctx context.Context, realm config.Realm, st
 		if c.ServiceAccountRoles != nil {
 			saClients = append(saClients, clientInfo{uuid: clientUUID, clientID: c.ClientID, roles: c.ServiceAccountRoles})
 		}
+
+		if c.ScopeMappings != nil {
+			scopeMappings = append(scopeMappings, deferredScopeMapping{
+				owner: clientScopeOwner(clientUUID, c.ClientID),
+				roles: c.ScopeMappings,
+			})
+		}
 	}
 
 	// 6. Realm roles
@@ -160,10 +178,16 @@ func (p *Provisioner) provisionRealm(ctx context.Context, realm config.Realm, st
 		}
 	}
 
-	// 7. Service account roles (after realm+client roles exist)
+	// 7. Service account roles and scope mappings (after realm+client roles exist)
 	for _, sa := range saClients {
 		if err := p.ensureServiceAccountRoles(ctx, realm.Realm, sa.uuid, sa.clientID, sa.roles); err != nil {
 			return fmt.Errorf("ensuring service account roles for client %q: %w", sa.clientID, err)
+		}
+	}
+
+	for _, sm := range scopeMappings {
+		if err := p.ensureScopeMappings(ctx, realm.Realm, sm.owner, sm.roles); err != nil {
+			return fmt.Errorf("ensuring scope mappings for %s %q: %w", sm.owner.kind, sm.owner.name, err)
 		}
 	}
 

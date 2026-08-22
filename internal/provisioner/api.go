@@ -18,6 +18,7 @@ type KeycloakAPI interface {
 	ClientScopeAssignmentAPI
 	UserAPI
 	RoleMappingAPI
+	ScopeMappingAPI
 	GroupMembershipAPI
 	ServiceAccountAPI
 	GroupAPI
@@ -108,6 +109,21 @@ type RoleMappingAPI interface {
 	AddRealmRoleMappings(ctx context.Context, realm, subject, subjectID string, roles []map[string]any) error
 	GetClientRoleMappings(ctx context.Context, realm, subject, subjectID, clientUUID string) ([]map[string]any, error)
 	AddClientRoleMappings(ctx context.Context, realm, subject, subjectID, clientUUID string, roles []map[string]any) error
+}
+
+// ScopeMappingAPI covers which roles are in the scope of a client or a client
+// scope — what a token may carry once fullScopeAllowed is false. Keycloak's
+// endpoint is the same shape for both owners, so owner selects which:
+// client.ScopeOwnerClients or client.ScopeOwnerClientScopes.
+//
+// It is a separate concern from RoleMappingAPI despite the matching shape: that
+// one grants a role to a subject, this one decides whether a role the subject
+// already holds reaches the token.
+type ScopeMappingAPI interface {
+	GetRealmScopeMappings(ctx context.Context, realm, owner, ownerID string) ([]map[string]any, error)
+	AddRealmScopeMappings(ctx context.Context, realm, owner, ownerID string, roles []map[string]any) error
+	GetClientScopeMappings(ctx context.Context, realm, owner, ownerID, clientUUID string) ([]map[string]any, error)
+	AddClientScopeMappings(ctx context.Context, realm, owner, ownerID, clientUUID string, roles []map[string]any) error
 }
 
 // GroupMembershipAPI covers a user's group memberships.

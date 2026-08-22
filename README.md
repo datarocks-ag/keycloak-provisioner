@@ -14,6 +14,7 @@ Release notes are maintained in [CHANGELOG.md](CHANGELOG.md).
 - `sslRequired` setting on any realm (`external`, `all`, `none`)
 - Realm attributes, merged over Keycloak's current values so unmanaged keys are never dropped
 - Client scopes as a first-class resource, with their own protocol mappers and realm-level assignment
+- Role scope mappings on a client or a client scope, the other half of `fullScopeAllowed: false`
 - Organizations with domains and additive membership (Keycloak 26+), including organization-scoped groups (Keycloak 26.6+)
 - Authentication flows with nested subflows and execution config, plus realm and client flow bindings
 - Identity providers (identity brokering) with mappers, merged over the server's representation so secrets and unmanaged config keys survive, and linkable to organizations
@@ -118,6 +119,7 @@ In dry-run mode, every mutating call logs a `DRY-RUN:` message and is skipped. R
       - **Client scope assignment** — configured default/optional scopes attached (additive)
    6. **Realm roles** — created or updated
    7. **Service account roles** — assigned (additive, after roles exist)
+      - **Scope mappings** — roles declared on a client or client scope added to its scope (additive, after roles exist)
    8. **Groups** — created or updated (matched by `name`)
       - **Attributes** — set from config
       - **Realm/client role assignments** — granted if not already mapped (additive)
@@ -135,6 +137,9 @@ roles created earlier in the same run, and before users so group memberships
 resolve to groups defined in the same config. Identity providers run after
 authentication flows, whose aliases their broker login fields reference, and
 after roles and groups, which a hardcoded-role or hardcoded-group mapper names.
+Scope mappings run with the service account roles rather than where they are
+declared: they name roles on any client in the realm, and realm roles, none of
+which exist while the owning client or client scope is being reconciled.
 Organizations run last so their members resolve to users created in the same run
 and their identity provider links resolve to providers created just above. Role assignments, group
 memberships and organization memberships are additive: the provisioner grants any configured role or
@@ -270,6 +275,8 @@ Every field is optional except `realm`. A field left out is not sent, so Keycloa
 | `protocolMappers` | list | Protocol mappers on this client |
 | `clientRoles` | list | Roles defined on this client |
 | `serviceAccountRoles` | object | Roles granted to the service account |
+| `fullScopeAllowed` | bool | Whether tokens carry every role the subject holds (see Token Exchange) |
+| `scopeMappings` | object | Roles in this client's scope (see Role Scope Mappings) |
 
 ## Master Realm
 
@@ -482,9 +489,11 @@ clients:
     fullScopeAllowed: false          # carry only roles reachable via assigned scopes
 ```
 
-With `fullScopeAllowed: false`, roles must be reached through `defaultClientScopes`
-or `optionalClientScopes`, so the client's token scope is what the config says it
-is rather than whatever the subject happens to hold.
+With `fullScopeAllowed: false`, roles reach the token only through the client's
+scope, so the client's token scope is what the config says it is rather than
+whatever the subject happens to hold. Declaring the flag alone narrows the client
+to nothing: `scopeMappings` is what puts roles back. See
+[Role scope mappings](#role-scope-mappings).
 
 Omitting the field leaves it unmanaged. Keycloak's client update is a sparse merge
 for this flag, so a client already set to `false` out-of-band is not widened by a
@@ -524,7 +533,73 @@ realms:
 
 Scopes are matched by `name`. Protocol mappers on a scope follow the same rules as protocol mappers on a client.
 
-`defaultClientScopes` and `optionalClientScopes` on a client attach existing scopes to that client. Assignment is additive: configured scopes that are not yet attached are added, and nothing is ever detached. A referenced scope that does not exist is logged as a warning and skipped.
+`defaultClientScopes` and `optionalClientScopes` on a client attach existing scopes to that client. Assignment is additive: configured scopes that are not yet attached are added, and nothing is ever detached — including Keycloak's own default scopes, which a client declaring a scope keeps. A referenced scope that does not exist is logged as a warning and skipped.
+
+## Role Scope Mappings
+
+`scopeMappings` declares which roles are in scope for a client, or for a client
+scope. It is the other half of `fullScopeAllowed: false`: that flag decides
+whether a client's tokens carry every role the subject holds, and this decides
+which roles they carry instead.
+
+```yaml
+realms:
+  - realm: "my-realm"
+    clients:
+      - clientId: "bff"
+        fullScopeAllowed: false
+        scopeMappings:
+          realm:
+            - "app-admin"
+          clients:
+            sandbox-ledger:
+              - "reader"
+            sandbox-document:
+              - "reader"
+```
+
+A role reaches the token only if the subject holds it **and** it is in the
+client's scope, so `scopeMappings` narrows — it never grants. Granting is what a
+user's or group's `roles` do. Both halves are needed: a client whose scope
+includes `sandbox-ledger`'s `reader` still issues tokens without it to a user who
+was never given that role.
+
+This is also what makes an audience reachable. Keycloak derives the audiences a
+client may request from the roles in its scope, so with `fullScopeAllowed: false`
+and no scope mappings, a token exchange fails with `Requested audience not
+available` for every downstream client. Naming that client's roles here — and no
+others — is how an exchange is scoped to exactly the audiences it should reach.
+
+The same field on a client scope declares the roles once for every client the
+scope is attached to:
+
+```yaml
+realms:
+  - realm: "my-realm"
+    clientScopes:
+      - name: "ledger-access"
+        scopeMappings:
+          clients:
+            sandbox-ledger:
+              - "reader"
+    clients:
+      - clientId: "bff"
+        fullScopeAllowed: false
+        defaultClientScopes:
+          - "ledger-access"
+```
+
+Keycloak treats a role reached this way exactly like one mapped on the client
+itself. Which to use is a question of reuse: on the client for a grant that
+belongs to that client alone, on a client scope for one several clients share.
+
+Assignment is additive, like every other role assignment here: a role already in
+scope is left alone, and one present on the server but absent from the config is
+never removed. This cannot take back a scope that was widened out of band — to
+narrow a client that already has too much in scope, remove the mapping in
+Keycloak. A role named here that does not exist fails the run rather than being
+skipped, since a role silently left out of scope surfaces much later as a token
+missing a claim.
 
 ## Realm Attributes
 

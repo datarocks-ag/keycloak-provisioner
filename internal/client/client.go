@@ -764,6 +764,49 @@ func (c *Client) AddClientRoleMappings(ctx context.Context, realm, subject, subj
 	return c.addRoleMappings(ctx, path, roles)
 }
 
+// Scope mapping owners. Keycloak's scope-mapping endpoint is the same shape for
+// both: /{clients|client-scopes}/{id}/scope-mappings/...
+const (
+	ScopeOwnerClients      = "clients"
+	ScopeOwnerClientScopes = "client-scopes"
+)
+
+func scopeMappingPath(realm, owner, ownerID string) string {
+	return "/admin/realms/" + url.PathEscape(realm) + "/" + url.PathEscape(owner) +
+		"/" + url.PathEscape(ownerID) + "/scope-mappings"
+}
+
+// GetRealmScopeMappings returns the realm roles in the scope of a client or a
+// client scope. owner is ScopeOwnerClients or ScopeOwnerClientScopes.
+//
+// The listing is of directly assigned roles, which is what the reconciler
+// compares against: the sibling /available and /composite sub-resources answer
+// different questions and would make an already-applied mapping look missing.
+func (c *Client) GetRealmScopeMappings(ctx context.Context, realm, owner, ownerID string) ([]map[string]any, error) {
+	return c.getRoleMappings(ctx, scopeMappingPath(realm, owner, ownerID)+"/realm", "realm scope mappings")
+}
+
+// AddRealmScopeMappings puts realm roles into the scope of a client or a client scope.
+func (c *Client) AddRealmScopeMappings(ctx context.Context, realm, owner, ownerID string, roles []map[string]any) error {
+	return c.addRoleMappings(ctx, scopeMappingPath(realm, owner, ownerID)+"/realm", roles)
+}
+
+// GetClientScopeMappings returns the roles of one client that are in the scope
+// of a client or a client scope.
+func (c *Client) GetClientScopeMappings(ctx context.Context, realm, owner, ownerID, clientUUID string) ([]map[string]any, error) {
+	path := scopeMappingPath(realm, owner, ownerID) + "/clients/" + url.PathEscape(clientUUID)
+
+	return c.getRoleMappings(ctx, path, "client scope mappings")
+}
+
+// AddClientScopeMappings puts roles of one client into the scope of a client or
+// a client scope.
+func (c *Client) AddClientScopeMappings(ctx context.Context, realm, owner, ownerID, clientUUID string, roles []map[string]any) error {
+	path := scopeMappingPath(realm, owner, ownerID) + "/clients/" + url.PathEscape(clientUUID)
+
+	return c.addRoleMappings(ctx, path, roles)
+}
+
 // GetServiceAccountUser returns the service account user for a client.
 func (c *Client) GetServiceAccountUser(ctx context.Context, realm, clientUUID string) (map[string]any, error) {
 	path := "/admin/realms/" + url.PathEscape(realm) + "/clients/" + url.PathEscape(clientUUID) + "/service-account-user"

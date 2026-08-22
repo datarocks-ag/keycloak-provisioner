@@ -150,11 +150,12 @@ func (p *Provisioner) ensureRealmClientScopeType(ctx context.Context, realm, sco
 // ensureClientScopeAssignments attaches the client's configured default and
 // optional scopes.
 //
-// The inline defaultClientScopes/optionalClientScopes fields of the client
-// representation are only honoured by Keycloak when a client is created, so
-// they cannot pick up a scope added to an existing client. These explicit
-// assignments cover the update path. Assignment is additive — scopes already
-// attached to the client are left alone, and none are ever detached.
+// This is the only path that attaches them. The inline
+// defaultClientScopes/optionalClientScopes fields of the client representation
+// are ignored by Keycloak on update, and on create they replace the realm's
+// default scopes rather than adding to them, so buildClientBody omits them
+// entirely. Assignment here is additive — scopes already attached to the client
+// are left alone, and none are ever detached.
 func (p *Provisioner) ensureClientScopeAssignments(
 	ctx context.Context,
 	realm, clientUUID string,
