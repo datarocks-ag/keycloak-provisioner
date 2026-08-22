@@ -102,6 +102,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Provisioning an organization group with more than 10 subgroups is idempotent
+  again. Keycloak defaults the group children endpoint to 10 results, and
+  organization groups are listed whole and matched by name in the provisioner
+  rather than filtered by Keycloak, so past the tenth subgroup the second run
+  tried to recreate what already existed and failed with
+  `409 Sibling group with the given name already exists`. Realm groups were
+  never affected: their lookup asks Keycloak for an exact name, so the default
+  never truncates the answer.
 - Provisioning an organization with more than 10 members is idempotent again.
   Keycloak defaults `GET /organizations/{id}/members` to 10 results, so the
   provisioner's view of who was already a member was truncated: it re-added

@@ -2804,3 +2804,68 @@ realms:
 		t.Fatalf("second run must be idempotent for an organization above the listing default: %v", err)
 	}
 }
+
+// TestIntegrationOrganizationGroupWithManySubgroupsIsIdempotent covers the
+// children listing default, which is 10. Unlike realm groups — whose lookup
+// asks Keycloak for an exact name and so is never truncated — organization
+// groups are listed whole and matched by name here, so past the tenth subgroup
+// the provisioner stops seeing what already exists.
+func TestIntegrationOrganizationGroupWithManySubgroupsIsIdempotent(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	var subs strings.Builder
+	for i := 1; i <= 12; i++ {
+		fmt.Fprintf(&subs, "              - name: \"sub%02d\"\n", i)
+	}
+
+	configYAML := `
+realms:
+  - realm: "manysubs-realm"
+    enabled: true
+    organizationsEnabled: true
+    organizations:
+      - name: "acme"
+        domains:
+          - name: "acme.test"
+        groups:
+          - name: "engineering"
+            subGroups:
+` + subs.String()
+
+	cfgPath := writeTestConfig(t, configYAML)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+
+	orgs, err := kc.GetOrganizations(ctx, "manysubs-realm", "acme")
+	if err != nil || len(orgs) == 0 {
+		t.Fatalf("organization not found: %v", err)
+	}
+	orgID := orgs[0]["id"].(string)
+
+	top, err := kc.GetOrganizationGroups(ctx, "manysubs-realm", orgID, "")
+	if err != nil || len(top) == 0 {
+		t.Fatalf("engineering group not found: %v", err)
+	}
+
+	children, err := kc.GetOrganizationGroups(ctx, "manysubs-realm", orgID, top[0]["id"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(children) != 12 {
+		t.Errorf("expected the children listing to return all 12 subgroups, got %d", len(children))
+	}
+
+	// Second run: every subgroup exists, so a truncated listing makes the
+	// provisioner try to create the ones it cannot see.
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("second run must be idempotent above the children listing default: %v", err)
+	}
+}
