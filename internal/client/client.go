@@ -1,3 +1,7 @@
+// Package client is a Keycloak Admin REST API adapter built on net/http,
+// with no Keycloak SDK. Every payload is an untyped map[string]any so the
+// provisioner can send sparse bodies and let Keycloak keep the fields it is
+// not asked to change.
 package client
 
 import (

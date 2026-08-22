@@ -1,3 +1,8 @@
+// Package provisioner reconciles a config against a Keycloak server.
+//
+// Reconciliation is idempotent and additive: resources are created when
+// absent and updated in place otherwise, and nothing is ever deleted. What
+// a config does not mention is left alone.
 package provisioner
 
 import (

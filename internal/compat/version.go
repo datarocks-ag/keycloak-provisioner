@@ -1,12 +1,3 @@
-// Package compat guards a config against the Keycloak server it is about to be
-// applied to.
-//
-// Some configuration is only understood by newer Keycloak releases, and some
-// of it also depends on a server feature that can be switched off. Applying
-// such a config to an older or differently-configured server fails partway
-// through with a raw Keycloak error, after earlier resources have already been
-// written. This package detects the mismatch up front so the run can be
-// refused before anything is mutated.
 package compat
 
 import (

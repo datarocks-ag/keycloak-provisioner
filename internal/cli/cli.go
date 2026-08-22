@@ -20,9 +20,10 @@ type Options struct {
 	LogLevel    string
 	DryRun      bool
 	ShowVersion bool
-	// SkipVersionCheck disables the whole pre-flight compatibility check, both
-	// the version comparison and the server feature checks. It exists for
-	// custom builds this tool should not be the judge of.
+	// SkipVersionCheck disables the whole pre-flight compatibility check: the
+	// version comparison, the server feature checks, and the validation of
+	// authenticators and protocol mapper types against the server. It exists
+	// for custom builds this tool should not be the judge of.
 	SkipVersionCheck bool
 }
 
