@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -3278,4 +3279,94 @@ realms:
 	}
 
 	t.Logf("Keycloak's message, which names neither the value nor the alternatives: %v", err)
+}
+
+// TestIntegrationDeclaredScopesKeepBuiltIns pins the create path against the
+// trap that made client scope role mappings look broken: Keycloak reads
+// defaultClientScopes in a client representation as the complete list and
+// attaches nothing else, so a client naming one scope used to lose the realm's
+// defaults — "roles" among them, the scope that emits resource_access. The
+// client's tokens then carried no roles at all, whatever its scope mappings
+// said.
+//
+// The provisioner therefore leaves both lists out of the client body and
+// attaches them afterwards, additively. This asserts the built-in scopes are
+// still there alongside the declared one.
+func TestIntegrationDeclaredScopesKeepBuiltIns(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	const realm = "declared-scopes-realm"
+
+	configYAML := `
+realms:
+  - realm: "declared-scopes-realm"
+    enabled: true
+    clientScopes:
+      - name: "ledger-access"
+    clients:
+      - clientId: "bff"
+        enabled: true
+        defaultClientScopes:
+          - "ledger-access"
+`
+	cfg, err := config.Load(writeTestConfig(t, configYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("provisioning failed: %v", err)
+	}
+
+	assigned, err := kc.GetClientScopeAssignments(ctx, realm, clientUUID(t, kc, realm, "bff"), client.ClientScopeDefault)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	names := nameSetOf(assigned)
+	if !names["ledger-access"] {
+		t.Error("the declared scope must be attached")
+	}
+	// "roles" is the one that matters — without it a token has no
+	// resource_access — but a client losing "basic" or "profile" is just as
+	// silent, so all three are pinned.
+	for _, builtIn := range []string{"roles", "basic", "profile"} {
+		if !names[builtIn] {
+			t.Errorf("built-in default scope %q must survive declaring a scope, got %v", builtIn, sortedNames(names))
+		}
+	}
+}
+
+func nameSetOf(items []map[string]any) map[string]bool {
+	out := make(map[string]bool, len(items))
+	for _, item := range items {
+		if name, ok := item["name"].(string); ok {
+			out[name] = true
+		}
+	}
+
+	return out
+}
+
+func sortedNames(set map[string]bool) []string {
+	out := make([]string, 0, len(set))
+	for name := range set {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+
+	return out
+}
+
+func clientUUID(t *testing.T, kc *client.Client, realm, clientID string) string {
+	t.Helper()
+
+	clients, err := kc.GetClients(context.Background(), realm, clientID)
+	if err != nil || len(clients) == 0 {
+		t.Fatalf("client %q not found: %v", clientID, err)
+	}
+
+	return clients[0]["id"].(string)
 }

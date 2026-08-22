@@ -524,7 +524,7 @@ realms:
 
 Scopes are matched by `name`. Protocol mappers on a scope follow the same rules as protocol mappers on a client.
 
-`defaultClientScopes` and `optionalClientScopes` on a client attach existing scopes to that client. Assignment is additive: configured scopes that are not yet attached are added, and nothing is ever detached. A referenced scope that does not exist is logged as a warning and skipped.
+`defaultClientScopes` and `optionalClientScopes` on a client attach existing scopes to that client. Assignment is additive: configured scopes that are not yet attached are added, and nothing is ever detached — including Keycloak's own default scopes, which a client declaring a scope keeps. A referenced scope that does not exist is logged as a warning and skipped.
 
 ## Realm Attributes
 

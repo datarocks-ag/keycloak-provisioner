@@ -7,7 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No unreleased changes._
+### Fixed
+
+
+- A client declaring `defaultClientScopes` or `optionalClientScopes` no longer
+  loses Keycloak's own default scopes.
+
+  Keycloak reads either list in a client representation as the client's
+  *complete* scope list, so a client naming one scope was created with only that
+  one — without `roles`, the scope that emits `resource_access`, and without
+  `basic`, `profile`, `email`, `web-origins` and `acr`. Its tokens then carried
+  no roles at all, whatever else was configured, which reads as a role or scope
+  mapping problem and is neither.
+
+  The provisioner now leaves both lists out of the client body and attaches them
+  through the same additive assignment the update path already used, matching
+  what the README documented all along: scopes are added, and nothing is ever
+  detached. A client provisioned before this fix keeps its narrowed set — the
+  reconciler adds, so re-running restores nothing. Attach the missing built-ins
+  by naming them in `defaultClientScopes`, or recreate the client.
 
 ## [1.9.0] — 2026-08-22
 
