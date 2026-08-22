@@ -1021,6 +1021,32 @@ func (c *Client) UpdateOrganization(ctx context.Context, realm, orgID string, bo
 }
 
 // GetOrganizationMembers returns the members of an organization.
+// GetOrganization returns one organization's full representation.
+//
+// The search listing omits "attributes", so an update that has to merge them
+// needs this instead. Everything else the update must preserve — alias,
+// domains, redirectUrl — is in both.
+func (c *Client) GetOrganization(ctx context.Context, realm, orgID string) (map[string]any, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/organizations/" + url.PathEscape(orgID)
+
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding organization: %w", err)
+	}
+
+	return result, nil
+}
+
 func (c *Client) GetOrganizationMembers(ctx context.Context, realm, orgID string) ([]map[string]any, error) {
 	// max=-1 asks for every member. Keycloak defaults this endpoint to 10,
 	// which silently truncates the caller's view of who is already a member —

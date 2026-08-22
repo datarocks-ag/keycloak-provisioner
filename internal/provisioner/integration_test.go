@@ -2869,3 +2869,138 @@ realms:
 		t.Fatalf("second run must be idempotent above the children listing default: %v", err)
 	}
 }
+
+// TestIntegrationOrganizationUpdateIsIdempotent covers the whole second-run
+// path for an organization, which failed outright before this fix.
+//
+// Keycloak's organization update is not a sparse patch, and says so
+// inconsistently: a missing alias is a 400 whose message claims something tried
+// to change it, missing domains and redirectUrl are cleared silently, and
+// supplied attributes replace the whole map. Only the first is visible as an
+// error, so fixing it alone would have exposed the rest.
+func TestIntegrationOrganizationUpdateIsIdempotent(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	configYAML := `
+realms:
+  - realm: "orgupdate-realm"
+    enabled: true
+    organizationsEnabled: true
+    organizations:
+      - name: "Acme"
+        alias: "acme"
+        description: "Acme Corporation"
+        redirectUrl: "https://acme.test/back"
+        domains:
+          - name: "acme.test"
+          - name: "acme.example"
+        attributes:
+          tier:
+            - "gold"
+      # Declares neither domains nor redirectUrl, so only the merge can keep
+      # what is set on the server. Keycloak allows an organization with no
+      # domains, so this is a config someone would really write.
+      - name: "Globex"
+        alias: "globex"
+`
+	cfgPath := writeTestConfig(t, configYAML)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+
+	orgs, err := kc.GetOrganizations(ctx, "orgupdate-realm", "Acme")
+	if err != nil || len(orgs) == 0 {
+		t.Fatalf("organization not found: %v", err)
+	}
+	orgID := orgs[0]["id"].(string)
+
+	// Set an attribute out of band, the way an operator would. The config never
+	// mentions it, so only a merge keeps it.
+	current, err := kc.GetOrganization(ctx, "orgupdate-realm", orgID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	attrs, _ := current["attributes"].(map[string]any)
+	if attrs == nil {
+		attrs = map[string]any{}
+	}
+	attrs["region"] = []any{"eu"}
+	current["attributes"] = attrs
+
+	if err := kc.UpdateOrganization(ctx, "orgupdate-realm", orgID, current); err != nil {
+		t.Fatalf("out-of-band update: %v", err)
+	}
+
+	// Globex declares neither, so set both out of band.
+	globexes, err := kc.GetOrganizations(ctx, "orgupdate-realm", "Globex")
+	if err != nil || len(globexes) == 0 {
+		t.Fatalf("Globex not found: %v", err)
+	}
+	globexID := globexes[0]["id"].(string)
+
+	globex, err := kc.GetOrganization(ctx, "orgupdate-realm", globexID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	globex["redirectUrl"] = "https://globex.test/back"
+	globex["domains"] = []any{map[string]any{"name": "globex.test", "verified": false}}
+
+	if err := kc.UpdateOrganization(ctx, "orgupdate-realm", globexID, globex); err != nil {
+		t.Fatalf("out-of-band update of Globex: %v", err)
+	}
+
+	// The second run is the assertion: it used to fail here with
+	// 400 "Cannot change the alias".
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("second run must succeed against an existing organization: %v", err)
+	}
+
+	after, err := kc.GetOrganization(ctx, "orgupdate-realm", orgID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if after["alias"] != "acme" {
+		t.Errorf("alias: got %v", after["alias"])
+	}
+	if after["redirectUrl"] != "https://acme.test/back" {
+		t.Errorf("redirectUrl was cleared by the update: got %v", after["redirectUrl"])
+	}
+
+	domains, _ := after["domains"].([]any)
+	if len(domains) != 2 {
+		t.Errorf("expected both domains to survive the update, got %v", after["domains"])
+	}
+
+	afterAttrs, _ := after["attributes"].(map[string]any)
+	if _, ok := afterAttrs["tier"]; !ok {
+		t.Errorf("configured attribute missing: %v", afterAttrs)
+	}
+	if _, ok := afterAttrs["region"]; !ok {
+		t.Errorf("an attribute set out of band must survive a run that does not declare it: %v", afterAttrs)
+	}
+
+	// Globex is the honest test of the silent clears: its config declares
+	// neither field, so nothing but the merge puts them back.
+	afterGlobex, err := kc.GetOrganization(ctx, "orgupdate-realm", globexID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if afterGlobex["redirectUrl"] != "https://globex.test/back" {
+		t.Errorf("a redirectUrl the config does not declare was cleared: got %v", afterGlobex["redirectUrl"])
+	}
+
+	if domains, _ := afterGlobex["domains"].([]any); len(domains) != 1 {
+		t.Errorf("a domain the config does not declare was cleared: got %v", afterGlobex["domains"])
+	}
+}

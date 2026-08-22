@@ -527,6 +527,16 @@ func (d *dryRunAPI) GetOrganizations(ctx context.Context, realm, search string) 
 	return d.inner.GetOrganizations(ctx, realm, search)
 }
 
+// GetOrganization short-circuits for an organization that does not exist yet:
+// there is no representation to merge over, and the reconciler treats a nil
+// result as "nothing to preserve".
+func (d *dryRunAPI) GetOrganization(ctx context.Context, realm, orgID string) (map[string]any, error) {
+	if d.realmIsSynthetic(realm) || isSyntheticID(orgID) {
+		return nil, nil
+	}
+	return d.inner.GetOrganization(ctx, realm, orgID)
+}
+
 // CreateOrganization returns a synthetic id so the organization's groups and
 // members can still be reported. Unlike client scopes there is no bookkeeping
 // to keep: an organization is looked up once per run, so nothing rediscovers it

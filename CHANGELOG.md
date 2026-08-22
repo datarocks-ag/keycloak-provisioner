@@ -7,7 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No unreleased changes._
+### Fixed
+
+- Provisioning a realm whose organizations already exist no longer fails. Every
+  second run aborted on the first existing organization with
+  `400 Cannot change the alias`, and creation was unaffected, so this only
+  appeared once a config was applied twice.
+
+  The message inverts the cause. Keycloak requires `alias` to be **present** on
+  an update and reads its absence as an attempt to set it to null; the
+  provisioner left it out precisely because the alias is immutable. Nothing
+  tried to change it — nothing supplied it.
+
+  Two further defects sat behind that one, invisible while the run could not get
+  past it. Measured against 26.6: omitting `domains` or `redirectUrl` from an
+  update **silently clears them**, and supplying `attributes` **replaces the
+  whole map** rather than merging. Organization updates now merge over the
+  server's current representation, as identity provider updates already did, so
+  a domain, redirect URL or attribute set outside the config survives a run that
+  does not mention it.
+
+  Declaring an alias that differs from the stored one is now rejected before the
+  request, naming both values. Keycloak's refusal names neither.
 
 ## [1.8.0] — 2026-08-22
 

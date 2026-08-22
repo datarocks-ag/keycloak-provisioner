@@ -142,6 +142,9 @@ type AuthenticationFlowAPI interface {
 // OrganizationAPI covers organizations and their members.
 type OrganizationAPI interface {
 	GetOrganizations(ctx context.Context, realm, search string) ([]map[string]any, error)
+	// GetOrganization returns the full representation, including attributes,
+	// which the search listing omits.
+	GetOrganization(ctx context.Context, realm, orgID string) (map[string]any, error)
 	CreateOrganization(ctx context.Context, realm string, body map[string]any) (string, error)
 	UpdateOrganization(ctx context.Context, realm, orgID string, body map[string]any) error
 	GetOrganizationMembers(ctx context.Context, realm, orgID string) ([]map[string]any, error)

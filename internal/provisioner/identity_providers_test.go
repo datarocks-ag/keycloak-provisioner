@@ -389,6 +389,9 @@ func TestOrganizationsShareOneIdentityProviderListing(t *testing.T) {
 				{"id": "org-" + r.URL.Query().Get("search"), "name": r.URL.Query().Get("search")},
 			})
 		},
+		"GET /admin/realms/{realm}/organizations/{id}": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]any{"id": "org-1", "name": "acme", "alias": "acme"})
+		},
 		"PUT /admin/realms/{realm}/organizations/{id}": func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
 		},
