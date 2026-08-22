@@ -280,11 +280,16 @@ type Client struct {
 	StandardTokenExchangeEnabled *bool `yaml:"standardTokenExchangeEnabled"`
 	// FullScopeAllowed controls whether the client's tokens carry every role
 	// the subject holds, or only those reachable through its assigned client
-	// scopes. Keycloak defaults it to true on create, which is the permissive
-	// setting; leaving this unset keeps that default rather than tightening it.
-	// Set it to false to scope a client down — it is the main control over how
-	// broad an exchanged token can be, so it matters most alongside
+	// scopes. Set it to false to scope a client down — it is the main control
+	// over how broad an exchanged token can be, so it matters most alongside
 	// StandardTokenExchangeEnabled.
+	//
+	// Leaving it unset sends no key, which means two different things. On a
+	// client the provisioner creates, Keycloak applies its own default of true,
+	// the permissive setting. On one that already exists, the client update is
+	// a sparse merge for this flag, so whatever is stored is preserved — a
+	// client set to false out of band is not widened. Declare it explicitly
+	// wherever the scope matters rather than relying on either.
 	FullScopeAllowed     *bool             `yaml:"fullScopeAllowed"`
 	BearerOnly           *bool             `yaml:"bearerOnly"`
 	ConsentRequired      *bool             `yaml:"consentRequired"`
