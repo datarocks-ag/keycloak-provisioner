@@ -20,9 +20,9 @@ type Options struct {
 	LogLevel    string
 	DryRun      bool
 	ShowVersion bool
-	// SkipVersionCheck disables the pre-flight check that the Keycloak server
-	// is new enough for the config. It exists for custom builds whose version
-	// string this tool cannot judge.
+	// SkipVersionCheck disables the whole pre-flight compatibility check, both
+	// the version comparison and the server feature checks. It exists for
+	// custom builds this tool should not be the judge of.
 	SkipVersionCheck bool
 }
 

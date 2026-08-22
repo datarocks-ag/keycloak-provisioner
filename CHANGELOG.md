@@ -97,6 +97,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Integration tests share one Keycloak container instead of starting a
+  fresh one per test, cutting the suite from roughly five minutes to
+  about thirty seconds. The per-test containers had pushed the package
+  past the ten-minute Go test timeout in CI and strained the Docker
+  daemon enough to cause spurious readiness failures. Each test already
+  provisions its own uniquely named realm; the master realm is the one
+  piece of shared state, so the test that changes it now restores it.
+  The container starts lazily, so a unit-test-only run under the
+  integration build tag does not pay for one. Verified order-independent
+  with `-shuffle=on`.
+
 - Empty attribute names are now rejected at config load time for both
   realm and client `attributes` maps. Previously an empty key was passed
   through to Keycloak.

@@ -275,3 +275,25 @@ func TestRequirementsAreWellFormed(t *testing.T) {
 		}
 	}
 }
+
+// TestCheckIgnoresDisabledStandardTokenExchange pins that turning the feature
+// off is not "using" it: the attribute an older Keycloak does not recognise is
+// harmless, so gating on it would refuse a config that works.
+func TestCheckIgnoresDisabledStandardTokenExchange(t *testing.T) {
+	cfg := &config.Config{Realms: []config.Realm{{
+		Realm:   "test",
+		Clients: []config.Client{{ClientID: "web", StandardTokenExchangeEnabled: boolPtr(false)}},
+	}}}
+
+	old := ServerInfo{RawVersion: "26.0.0", Version: Version{26, 0, 0}, Parsed: true}
+
+	if problems := Check(cfg, old); len(problems) != 0 {
+		t.Errorf("disabling token exchange must not require 26.2, got %v", problems)
+	}
+
+	// Unset is likewise not a use.
+	cfg.Realms[0].Clients[0].StandardTokenExchangeEnabled = nil
+	if problems := Check(cfg, old); len(problems) != 0 {
+		t.Errorf("an unset field must not require 26.2, got %v", problems)
+	}
+}

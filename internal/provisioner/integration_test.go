@@ -4,10 +4,12 @@ package provisioner_test
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"keycloak-provisioner/internal/client"
@@ -24,16 +26,66 @@ import (
 // organization groups, so 26.6 is the supported floor.
 const keycloakImage = "keycloak/keycloak:26.6"
 
+// The suite shares one Keycloak across every test that targets the supported
+// version. Starting a container per test cost roughly ten seconds each and
+// pushed the package past the ten-minute test timeout in CI, as well as
+// straining the Docker daemon enough to produce spurious readiness failures.
+//
+// Sharing is safe because each test provisions its own uniquely named realm.
+// The one piece of genuinely global state is the master realm, so a test that
+// changes it has to put it back — see TestIntegrationSslRequired.
+//
+// Startup is lazy so a unit-test-only run under the integration build tag does
+// not pay for a container it never uses; TestMain does the teardown.
+var (
+	sharedOnce      sync.Once
+	sharedClient    *client.Client
+	sharedTerminate func()
+	sharedErr       error
+)
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+
+	if sharedTerminate != nil {
+		sharedTerminate()
+	}
+
+	os.Exit(code)
+}
+
+// setupKeycloak returns the Keycloak shared by the whole suite. The returned
+// function is a no-op: the container outlives the test, and TestMain tears it
+// down. It keeps the call signature that per-test containers used.
 func setupKeycloak(t *testing.T) (*client.Client, func()) {
 	t.Helper()
 
-	return setupKeycloakVersion(t, keycloakImage)
+	sharedOnce.Do(func() {
+		sharedClient, sharedTerminate, sharedErr = startKeycloak(keycloakImage)
+	})
+
+	if sharedErr != nil {
+		t.Fatalf("failed to start the shared keycloak container: %v", sharedErr)
+	}
+
+	return sharedClient, func() {}
 }
 
-// setupKeycloakVersion starts a specific Keycloak image, so a test can check
-// behaviour against a release older than the supported floor.
+// setupKeycloakVersion starts a container of its own, for a test that needs a
+// release other than the supported floor. Prefer setupKeycloak; this exists
+// only for version-specific behaviour.
 func setupKeycloakVersion(t *testing.T, image string) (*client.Client, func()) {
 	t.Helper()
+
+	kc, terminate, err := startKeycloak(image)
+	if err != nil {
+		t.Fatalf("failed to start keycloak container: %v", err)
+	}
+
+	return kc, terminate
+}
+
+func startKeycloak(image string) (*client.Client, func(), error) {
 	ctx := context.Background()
 
 	kcContainer, err := keycloak.Run(ctx,
@@ -42,7 +94,7 @@ func setupKeycloakVersion(t *testing.T, image string) (*client.Client, func()) {
 		keycloak.WithAdminPassword("admin"),
 	)
 	if err != nil {
-		t.Fatalf("failed to start keycloak container: %v", err)
+		return nil, nil, fmt.Errorf("starting keycloak container: %w", err)
 	}
 
 	// Keycloak defaults master realm sslRequired=EXTERNAL, which blocks
@@ -58,26 +110,26 @@ func setupKeycloakVersion(t *testing.T, image string) (*client.Client, func()) {
 		"--password", "admin",
 	})
 	if err != nil || exitCode != 0 {
-		t.Fatalf("failed to disable SSL on master realm: exit=%d err=%v", exitCode, err)
+		return nil, nil, fmt.Errorf("disabling SSL on master realm: exit=%d err=%w", exitCode, err)
 	}
 
 	baseURL, err := kcContainer.GetAuthServerURL(ctx)
 	if err != nil {
-		t.Fatalf("failed to get auth server URL: %v", err)
+		return nil, nil, fmt.Errorf("getting auth server URL: %w", err)
 	}
 
 	kc := client.New(baseURL, "admin", "admin")
 	if err := kc.Connect(ctx); err != nil {
-		t.Fatalf("failed to connect to keycloak: %v", err)
+		return nil, nil, fmt.Errorf("connecting to keycloak: %w", err)
 	}
 
-	cleanup := func() {
+	terminate := func() {
 		if err := testcontainers.TerminateContainer(kcContainer); err != nil {
 			log.Printf("failed to terminate container: %v", err)
 		}
 	}
 
-	return kc, cleanup
+	return kc, terminate, nil
 }
 
 func writeTestConfig(t *testing.T, yaml string) string {
@@ -889,6 +941,18 @@ func TestIntegrationSslRequired(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
+
+	// This test ends with master at sslRequired=external, which blocks token
+	// requests over the Docker bridge and would break every test sharing this
+	// container afterwards. Put it back.
+	t.Cleanup(func() {
+		if err := kc.UpdateRealm(ctx, "master", map[string]any{
+			"realm":       "master",
+			"sslRequired": "none",
+		}); err != nil {
+			t.Errorf("restoring master sslRequired: %v", err)
+		}
+	})
 
 	// Test 1: Set sslRequired on a realm using lowercase config value
 	configYAML := `

@@ -89,12 +89,17 @@ func usesOrganizationGroups(cfg *config.Config) []string {
 	return paths
 }
 
+// usesStandardTokenExchange counts a client only when it enables the feature.
+// Setting the field to false writes standard.token.exchange.enabled=false,
+// which an older Keycloak simply does not recognise — refusing the run would
+// block a config that works. Config validation draws the same line: its
+// confidential-client rule applies only when the value is true.
 func usesStandardTokenExchange(cfg *config.Config) []string {
 	var paths []string
 
 	for i, realm := range cfg.Realms {
 		for j, c := range realm.Clients {
-			if c.StandardTokenExchangeEnabled != nil {
+			if c.StandardTokenExchangeEnabled != nil && *c.StandardTokenExchangeEnabled {
 				paths = append(paths, fmt.Sprintf("realms[%d].clients[%d].standardTokenExchangeEnabled", i, j))
 			}
 		}
