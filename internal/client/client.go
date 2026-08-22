@@ -609,12 +609,6 @@ func (c *Client) ResetUserPassword(ctx context.Context, realm, userID, password 
 	return nil
 }
 
-// GetUserGroups returns the groups the user is a direct member of.
-// GetUserCredentials returns the credentials a user holds.
-//
-// Secrets are not included — Keycloak returns the type, id, label and public
-// metadata only, which is enough to tell whether a credential of a given kind
-// already exists.
 // GetRequiredActions returns the required actions registered in a realm.
 //
 // The set is server-wide in practice — realms are seeded from the same
@@ -640,6 +634,11 @@ func (c *Client) GetRequiredActions(ctx context.Context, realm string) ([]map[st
 	return result, nil
 }
 
+// GetUserCredentials returns the credentials a user holds.
+//
+// Secrets are not included — Keycloak returns the type, id, label and public
+// metadata only, which is what the reconciler matches on to decide whether a
+// credential is already present.
 func (c *Client) GetUserCredentials(ctx context.Context, realm, userID string) ([]map[string]any, error) {
 	path := "/admin/realms/" + url.PathEscape(realm) + "/users/" + url.PathEscape(userID) + "/credentials"
 
@@ -661,6 +660,7 @@ func (c *Client) GetUserCredentials(ctx context.Context, realm, userID string) (
 	return result, nil
 }
 
+// GetUserGroups returns the groups the user is a direct member of.
 func (c *Client) GetUserGroups(ctx context.Context, realm, userID string) ([]map[string]any, error) {
 	path := "/admin/realms/" + url.PathEscape(realm) + "/users/" + url.PathEscape(userID) + "/groups"
 	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)

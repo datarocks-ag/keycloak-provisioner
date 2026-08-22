@@ -662,7 +662,6 @@ func expandProtocolMappers(mappers []ProtocolMapper) {
 	}
 }
 
-// expandConfig walks the config and expands env vars in string fields.
 // normalizeSslRequired lowercases the sslRequired value to match Keycloak's API.
 func normalizeSslRequired(value string) string {
 	return strings.ToLower(value)
@@ -683,6 +682,7 @@ func expandStringMap(m map[string]string) map[string]string {
 	return expanded
 }
 
+// expandConfig walks the config and expands env vars in string fields.
 func expandConfig(cfg *Config) {
 	if cfg.MasterRealm != nil {
 		cfg.MasterRealm.SslRequired = normalizeSslRequired(expandEnvVars(cfg.MasterRealm.SslRequired))
