@@ -5,23 +5,115 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 
 	"keycloak-provisioner/internal/config"
 )
 
-func TestBuildOrganizationBodyIncludesAliasOnlyOnCreate(t *testing.T) {
+func TestBuildOrganizationCreateBodyIncludesAlias(t *testing.T) {
 	o := config.Organization{Name: "acme", Alias: "acme-corp"}
 
-	created := buildOrganizationBody(o, true)
+	created := buildOrganizationCreateBody(o)
 	if created["alias"] != "acme-corp" {
 		t.Errorf("expected alias on create, got %v", created["alias"])
 	}
 
-	updated := buildOrganizationBody(o, false)
-	if _, ok := updated["alias"]; ok {
-		t.Error("alias must be omitted on update; Keycloak treats it as immutable")
+	// Omitted so Keycloak derives one, rather than sent empty.
+	if _, ok := buildOrganizationCreateBody(config.Organization{Name: "acme"})["alias"]; ok {
+		t.Error("alias must be omitted on create when the config does not declare one")
+	}
+}
+
+// TestBuildOrganizationUpdateBodyKeepsAlias covers the inverse of what this
+// code used to assume. The alias is immutable, so it was left out of the update
+// — but Keycloak requires it present and reads its absence as an attempt to set
+// it to null, refusing with "Cannot change the alias". Nothing tried to change
+// it; nothing supplied it.
+func TestBuildOrganizationUpdateBodyKeepsAlias(t *testing.T) {
+	current := map[string]any{"id": "org-1", "name": "acme", "alias": "acme-corp"}
+
+	body, err := buildOrganizationUpdateBody(config.Organization{Name: "acme"}, current)
+	if err != nil {
+		t.Fatalf("buildOrganizationUpdateBody: %v", err)
+	}
+
+	if body["alias"] != "acme-corp" {
+		t.Errorf("update must carry the alias, got %v", body["alias"])
+	}
+}
+
+// TestBuildOrganizationUpdateBodyPreservesUnconfigured covers the two fields
+// Keycloak silently clears when they are absent from an update.
+func TestBuildOrganizationUpdateBodyPreservesUnconfigured(t *testing.T) {
+	current := map[string]any{
+		"id":          "org-1",
+		"name":        "acme",
+		"alias":       "acme-corp",
+		"redirectUrl": "https://acme.test/back",
+		"domains":     []any{map[string]any{"name": "acme.test", "verified": false}},
+		"attributes":  map[string]any{"tier": []any{"gold"}, "region": []any{"eu"}},
+	}
+
+	// A config that declares none of them.
+	body, err := buildOrganizationUpdateBody(config.Organization{Name: "acme"}, current)
+	if err != nil {
+		t.Fatalf("buildOrganizationUpdateBody: %v", err)
+	}
+
+	if body["redirectUrl"] != "https://acme.test/back" {
+		t.Errorf("redirectUrl must be carried forward or Keycloak clears it, got %v", body["redirectUrl"])
+	}
+	if domains, ok := body["domains"].([]any); !ok || len(domains) != 1 {
+		t.Errorf("domains must be carried forward or Keycloak clears them, got %v", body["domains"])
+	}
+}
+
+// TestBuildOrganizationUpdateBodyMergesAttributes covers the third shape:
+// attributes survive being omitted, but supplying any replaces the whole map.
+func TestBuildOrganizationUpdateBodyMergesAttributes(t *testing.T) {
+	current := map[string]any{
+		"id":         "org-1",
+		"name":       "acme",
+		"alias":      "acme-corp",
+		"attributes": map[string]any{"tier": []any{"gold"}, "region": []any{"eu"}},
+	}
+
+	o := config.Organization{Name: "acme", Attributes: map[string][]string{"tier": {"silver"}}}
+
+	body, err := buildOrganizationUpdateBody(o, current)
+	if err != nil {
+		t.Fatalf("buildOrganizationUpdateBody: %v", err)
+	}
+
+	attrs, ok := body["attributes"].(map[string][]string)
+	if !ok {
+		t.Fatalf("unexpected attributes type: %T", body["attributes"])
+	}
+	if len(attrs["tier"]) != 1 || attrs["tier"][0] != "silver" {
+		t.Errorf("configured attribute must win, got %v", attrs["tier"])
+	}
+	if len(attrs["region"]) != 1 || attrs["region"][0] != "eu" {
+		t.Errorf("an attribute set out of band must survive, got %v", attrs["region"])
+	}
+}
+
+// TestBuildOrganizationUpdateBodyRejectsAliasChange catches the mismatch
+// locally, because Keycloak's refusal names neither the configured alias nor
+// the stored one.
+func TestBuildOrganizationUpdateBodyRejectsAliasChange(t *testing.T) {
+	current := map[string]any{"id": "org-1", "name": "acme", "alias": "acme-corp"}
+
+	_, err := buildOrganizationUpdateBody(config.Organization{Name: "acme", Alias: "acme-new"}, current)
+	if err == nil {
+		t.Fatal("expected a changed alias to be rejected")
+	}
+
+	for _, want := range []string{"acme-corp", "acme-new"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should name %q, got: %v", want, err)
+		}
 	}
 }
 
@@ -35,7 +127,7 @@ func TestBuildOrganizationBodyDomains(t *testing.T) {
 		},
 	}
 
-	body := buildOrganizationBody(o, true)
+	body := buildOrganizationCreateBody(o)
 
 	domains, ok := body["domains"].([]map[string]any)
 	if !ok || len(domains) != 2 {
@@ -86,6 +178,9 @@ func TestEnsureOrganizationCreateStrategySkipsExisting(t *testing.T) {
 		"GET /admin/realms/{realm}/organizations": func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode([]map[string]any{{"id": "org-1", "name": "acme"}})
 		},
+		"GET /admin/realms/{realm}/organizations/{id}": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]any{"id": "org-1", "name": "acme", "alias": "acme"})
+		},
 		"PUT /admin/realms/{realm}/organizations/{id}": func(w http.ResponseWriter, r *http.Request) {
 			t.Error("update must not be called with strategy=create")
 			w.WriteHeader(http.StatusNoContent)
@@ -108,6 +203,9 @@ func TestEnsureOrganizationMembersAddsMissing(t *testing.T) {
 	server := testServer(t, map[string]http.HandlerFunc{
 		"GET /admin/realms/{realm}/organizations": func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode([]map[string]any{{"id": "org-1", "name": "acme"}})
+		},
+		"GET /admin/realms/{realm}/organizations/{id}": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]any{"id": "org-1", "name": "acme", "alias": "acme"})
 		},
 		"PUT /admin/realms/{realm}/organizations/{id}": func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
@@ -158,6 +256,9 @@ func TestEnsureOrganizationMembersWarnsOnMissingUser(t *testing.T) {
 		"GET /admin/realms/{realm}/organizations": func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode([]map[string]any{{"id": "org-1", "name": "acme"}})
 		},
+		"GET /admin/realms/{realm}/organizations/{id}": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]any{"id": "org-1", "name": "acme", "alias": "acme"})
+		},
 		"PUT /admin/realms/{realm}/organizations/{id}": func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
 		},
@@ -195,6 +296,9 @@ func TestEnsureOrganizationGroupCreatesTreeInOrder(t *testing.T) {
 	server := testServer(t, map[string]http.HandlerFunc{
 		"GET /admin/realms/{realm}/organizations": func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode([]map[string]any{{"id": "org-1", "name": "acme"}})
+		},
+		"GET /admin/realms/{realm}/organizations/{id}": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]any{"id": "org-1", "name": "acme", "alias": "acme"})
 		},
 		"PUT /admin/realms/{realm}/organizations/{id}": func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
@@ -264,6 +368,9 @@ func TestEnsureOrganizationGroupUpdatesExistingWithAttributes(t *testing.T) {
 		"GET /admin/realms/{realm}/organizations": func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode([]map[string]any{{"id": "org-1", "name": "acme"}})
 		},
+		"GET /admin/realms/{realm}/organizations/{id}": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]any{"id": "org-1", "name": "acme", "alias": "acme"})
+		},
 		"PUT /admin/realms/{realm}/organizations/{id}": func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
 		},
@@ -313,6 +420,9 @@ func TestEnsureOrganizationGroupSkipsNonOrgMember(t *testing.T) {
 	server := testServer(t, map[string]http.HandlerFunc{
 		"GET /admin/realms/{realm}/organizations": func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode([]map[string]any{{"id": "org-1", "name": "acme"}})
+		},
+		"GET /admin/realms/{realm}/organizations/{id}": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]any{"id": "org-1", "name": "acme", "alias": "acme"})
 		},
 		"PUT /admin/realms/{realm}/organizations/{id}": func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
@@ -366,6 +476,9 @@ func TestEnsureOrganizationGroupSkipsExistingMembership(t *testing.T) {
 	server := testServer(t, map[string]http.HandlerFunc{
 		"GET /admin/realms/{realm}/organizations": func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode([]map[string]any{{"id": "org-1", "name": "acme"}})
+		},
+		"GET /admin/realms/{realm}/organizations/{id}": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]any{"id": "org-1", "name": "acme", "alias": "acme"})
 		},
 		"PUT /admin/realms/{realm}/organizations/{id}": func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
@@ -429,6 +542,9 @@ func TestEnsureOrganizationGroupsFetchMembersOnce(t *testing.T) {
 	server := testServer(t, map[string]http.HandlerFunc{
 		"GET /admin/realms/{realm}/organizations": func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode([]map[string]any{{"id": "org-1", "name": "acme"}})
+		},
+		"GET /admin/realms/{realm}/organizations/{id}": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]any{"id": "org-1", "name": "acme", "alias": "acme"})
 		},
 		"PUT /admin/realms/{realm}/organizations/{id}": func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
@@ -498,6 +614,9 @@ func TestEnsureOrganizationGroupsSkipMemberReadWhenNoneAssigned(t *testing.T) {
 		"GET /admin/realms/{realm}/organizations": func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode([]map[string]any{{"id": "org-1", "name": "acme"}})
 		},
+		"GET /admin/realms/{realm}/organizations/{id}": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]any{"id": "org-1", "name": "acme", "alias": "acme"})
+		},
 		"PUT /admin/realms/{realm}/organizations/{id}": func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
 		},
@@ -527,5 +646,26 @@ func TestEnsureOrganizationGroupsSkipMemberReadWhenNoneAssigned(t *testing.T) {
 	defer mu.Unlock()
 	if orgMemberReads != 0 {
 		t.Errorf("no group assigns members, so the member listing should not be read; got %d", orgMemberReads)
+	}
+}
+
+// TestBuildOrganizationCreateBodySendsAttributes guards the create path, which
+// is easy to lose when the two builders are split: the update path merges
+// attributes, so an organization created without them looks correct from the
+// second run onward and only the first run is wrong.
+func TestBuildOrganizationCreateBodySendsAttributes(t *testing.T) {
+	o := config.Organization{
+		Name:       "acme",
+		Attributes: map[string][]string{"tier": {"gold"}},
+	}
+
+	body := buildOrganizationCreateBody(o)
+
+	attrs, ok := body["attributes"].(map[string][]string)
+	if !ok {
+		t.Fatalf("create body must carry attributes, got %T: %v", body["attributes"], body["attributes"])
+	}
+	if len(attrs["tier"]) != 1 || attrs["tier"][0] != "gold" {
+		t.Errorf("unexpected attributes: %v", attrs)
 	}
 }

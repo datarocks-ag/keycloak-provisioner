@@ -78,3 +78,43 @@ func buildAcrLoaMapAttribute(m map[string]int) string {
 
 	return string(encoded)
 }
+
+// mergeMultiValueField merges configured values over a named multivalued field
+// of an existing Keycloak representation, returning a fresh map.
+//
+// The single-valued mergeStringMapField cannot be reused: an organization's
+// attributes are lists, and Keycloak returns them as []any of strings. Values
+// are replaced per key rather than concatenated — a configured key states what
+// that attribute is, and appending would make repeated runs grow it.
+func mergeMultiValueField(existing map[string]any, field string, configured map[string][]string) map[string][]string {
+	merged := make(map[string][]string, len(configured))
+
+	if current, ok := existing[field].(map[string]any); ok {
+		for k, v := range current {
+			values, ok := v.([]any)
+			if !ok {
+				continue
+			}
+
+			out := make([]string, 0, len(values))
+
+			for _, item := range values {
+				if s, ok := item.(string); ok {
+					out = append(out, s)
+					continue
+				}
+				// Keycloak returns these as JSON strings, but tolerate anything
+				// else rather than dropping the key.
+				out = append(out, fmt.Sprint(item))
+			}
+
+			merged[k] = out
+		}
+	}
+
+	for k, v := range configured {
+		merged[k] = v
+	}
+
+	return merged
+}

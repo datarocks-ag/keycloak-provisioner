@@ -616,7 +616,22 @@ Two further differences from realm groups:
 
 Group names must be unique among siblings but may repeat at different levels, matching realm groups. Subgroups nest to any depth, and both group creation and membership are additive.
 
-`alias` is only sent when the organization is created, since Keycloak treats it as immutable afterwards. Omitting it does not mean the provisioner copies `name` — the field is left out of the request entirely and Keycloak derives its own value.
+`alias` is immutable once the organization exists. On create it is sent only when declared, so omitting it lets Keycloak derive one rather than copying `name`. Declaring an alias that differs from the stored one is rejected before the request is sent, naming both — Keycloak's own refusal names neither.
+
+### Updates merge over the server's representation
+
+Like identity providers, an organization update is not a sparse patch, and Keycloak is inconsistent about how it says so. Measured against 26.6:
+
+| left out of the update | what happens |
+| --- | --- |
+| `alias` | **400 `Cannot change the alias`** — the message reads as though something tried to change it; in fact nothing supplied it, and the absence is read as setting it to null |
+| `domains` | **silently cleared** |
+| `redirectUrl` | **silently cleared** |
+| `attributes` | preserved — but supplying any *replaces* the whole map |
+
+So the provisioner reads the organization's current representation and merges the config over it. A domain, redirect URL or attribute set outside the config survives a run that does not mention it, and configured attributes merge over stored ones rather than replacing them — the same rule realm and client attributes follow.
+
+The read is a separate request per organization on the update path, because the search listing used to find it by name omits `attributes`.
 
 Organizations can link identity providers by alias — see
 [Identity Providers](#identity-providers) below. A provider must already exist,

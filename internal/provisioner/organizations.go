@@ -29,7 +29,7 @@ func (p *Provisioner) ensureOrganization(
 	if len(existing) == 0 {
 		slog.Info("Creating organization", "realm", realm, "organization", o.Name)
 
-		orgID, err = p.client.CreateOrganization(ctx, realm, buildOrganizationBody(o, true))
+		orgID, err = p.client.CreateOrganization(ctx, realm, buildOrganizationCreateBody(o))
 		if err != nil {
 			return err
 		}
@@ -44,7 +44,18 @@ func (p *Provisioner) ensureOrganization(
 		} else {
 			slog.Info("Updating organization", "realm", realm, "organization", o.Name, "uuid", orgID)
 
-			body := buildOrganizationBody(o, false)
+			// The search listing omits attributes, so the merge reads the full
+			// representation rather than reusing what the lookup returned.
+			current, err := p.client.GetOrganization(ctx, realm, orgID)
+			if err != nil {
+				return fmt.Errorf("reading organization %q: %w", o.Name, err)
+			}
+
+			body, err := buildOrganizationUpdateBody(o, current)
+			if err != nil {
+				return err
+			}
+
 			body["id"] = orgID
 
 			if err := p.client.UpdateOrganization(ctx, realm, orgID, body); err != nil {
@@ -312,17 +323,76 @@ func organizationID(org map[string]any, name string) (string, error) {
 	return id, nil
 }
 
-// buildOrganizationBody builds the organization representation. onCreate
-// controls whether the alias is included: Keycloak rejects changing it on an
-// existing organization.
-func buildOrganizationBody(o config.Organization, onCreate bool) map[string]any {
-	body := map[string]any{
-		"name": o.Name,
-	}
+// buildOrganizationCreateBody builds the representation for a new organization.
+// Nothing exists to preserve, so only what the config declares is sent and
+// Keycloak fills in the rest — including deriving an alias when none is given.
+func buildOrganizationCreateBody(o config.Organization) map[string]any {
+	body := map[string]any{"name": o.Name}
 
-	if onCreate && o.Alias != "" {
+	if o.Alias != "" {
 		body["alias"] = o.Alias
 	}
+
+	// Sent as declared: there is no stored map to merge with yet.
+	if len(o.Attributes) > 0 {
+		body["attributes"] = o.Attributes
+	}
+
+	applyOrganizationConfig(body, o)
+
+	return body
+}
+
+// buildOrganizationUpdateBody merges the configured organization over its
+// current representation.
+//
+// Keycloak's organization update is not a sparse patch, and it is inconsistent
+// about how it says so. Measured against 26.6:
+//
+//   - alias omitted is rejected with 400 "Cannot change the alias" — the
+//     message reads as though something tried to change it, when in fact
+//     nothing supplied it and the absence is read as setting it to null.
+//   - domains and redirectUrl omitted are silently cleared.
+//   - attributes omitted are preserved, but attributes supplied replace the
+//     whole map rather than merging into it.
+//
+// Merging over the current representation is the one shape that satisfies all
+// four, and it matches what identity providers already do.
+func buildOrganizationUpdateBody(o config.Organization, current map[string]any) (map[string]any, error) {
+	body := make(map[string]any, len(current)+6)
+
+	for k, v := range current {
+		body[k] = v
+	}
+
+	// The alias is immutable. Keycloak's own refusal names neither the
+	// configured alias nor the stored one, so the mismatch is caught here.
+	if stored, _ := current["alias"].(string); o.Alias != "" && stored != "" && o.Alias != stored {
+		return nil, fmt.Errorf(
+			"organization %q: alias is %q on the server but %q in the config, and Keycloak does not allow it to change; "+
+				"either restore the configured value or remove the alias from the config",
+			o.Name, stored, o.Alias)
+	}
+
+	body["name"] = o.Name
+
+	applyOrganizationConfig(body, o)
+
+	// Configured attributes merge over the stored ones rather than replacing
+	// them, so a key set out of band survives — the same rule realm and client
+	// attributes follow.
+	if len(o.Attributes) > 0 {
+		body["attributes"] = mergeMultiValueField(current, "attributes", o.Attributes)
+	}
+
+	return body, nil
+}
+
+// applyOrganizationConfig overlays the fields a config may declare that both
+// paths treat identically. Attributes are not among them: create sends them as
+// declared, update merges them over the stored map, so each caller sets them
+// itself.
+func applyOrganizationConfig(body map[string]any, o config.Organization) {
 	if o.Enabled != nil {
 		body["enabled"] = *o.Enabled
 	}
@@ -332,22 +402,20 @@ func buildOrganizationBody(o config.Organization, onCreate bool) map[string]any 
 	if o.RedirectUrl != "" {
 		body["redirectUrl"] = o.RedirectUrl
 	}
-	if len(o.Attributes) > 0 {
-		body["attributes"] = o.Attributes
-	}
 	if len(o.Domains) > 0 {
 		domains := make([]map[string]any, 0, len(o.Domains))
+
 		for _, d := range o.Domains {
 			domain := map[string]any{"name": d.Name}
 			if d.Verified != nil {
 				domain["verified"] = *d.Verified
 			}
+
 			domains = append(domains, domain)
 		}
+
 		body["domains"] = domains
 	}
-
-	return body
 }
 
 // ensureOrganizationMembers adds the configured users to the organization.
