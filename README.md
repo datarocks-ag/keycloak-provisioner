@@ -571,8 +571,8 @@ These are **not** realm groups. They live in a namespace of their own: they neve
 Two further differences from realm groups:
 
 - **No role mappings**, and the API is a trap. `realmRoles` and `clientRoles` are
-  rejected at config load rather than silently omitted, because the underlying
-  endpoint misleads. On Keycloak 26.6,
+  rejected at config load with an explanation, rather than left out of the schema
+  and refused as unknown fields, because the underlying endpoint misleads. On Keycloak 26.6,
   `POST /organizations/{org}/groups/{group}/role-mappings/realm` answers **404**.
   On 26.7 it answers **204**, and the subsequent `GET` returns the role — but the
   mapping has no effect: a member's composite realm roles are unchanged,

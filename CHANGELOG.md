@@ -29,8 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   config load with an explanation, instead of being rejected as unknown fields.
   Keycloak 26.7 accepts the corresponding role-mapping call and reads the role
   back, but the mapping never reaches a member's effective roles or any token
-  claim, so an unknown-field error read as "not implemented yet" and invited
-  wiring the endpoint up by hand.
+  claim. An unknown-field error reads as "not implemented yet", which invites
+  wiring the endpoint up by hand; naming the trap does not.
 
 ### Fixed
 

@@ -200,9 +200,10 @@ type Organization struct {
 
 // OrganizationGroup is a group owned by an organization.
 //
-// Unlike a realm Group it has no realmRoles or clientRoles: Keycloak exposes
-// no role-mapping endpoint for organization groups, and the realm group API
-// refuses them outright.
+// Unlike a realm Group it carries no role mappings, and the realm group API
+// refuses to manage it outright. Its realmRoles and clientRoles fields exist
+// only so validation can reject them with an explanation — see the comment on
+// those fields for why an outright omission would be the worse choice.
 type OrganizationGroup struct {
 	Name       string              `yaml:"name"`
 	Attributes map[string][]string `yaml:"attributes"` // Keycloak group attributes are multivalued
@@ -220,6 +221,11 @@ type OrganizationGroup struct {
 	// effective roles or any token claim. Leaving these fields out would make
 	// the parser reject them as unknown, which reads as "not implemented yet"
 	// and invites someone to wire the endpoint up by hand and get silence.
+	//
+	// Validation rejects them when present at all, not merely when non-empty,
+	// so "realmRoles: []" is refused too. Someone who writes that is reaching
+	// for the feature, and the point is to answer them now rather than once
+	// they add the first entry.
 	RealmRoles  []string            `yaml:"realmRoles"`
 	ClientRoles map[string][]string `yaml:"clientRoles"`
 }
@@ -1064,7 +1070,7 @@ func validateOrganizationGroups(prefix string, groups []OrganizationGroup) error
 		}
 		names[g.Name] = true
 
-		if len(g.RealmRoles) > 0 || len(g.ClientRoles) > 0 {
+		if g.RealmRoles != nil || g.ClientRoles != nil {
 			return fmt.Errorf("%s: organization groups cannot carry role mappings; "+
 				"Keycloak stores them but they never reach a member's effective roles "+
 				"or any token claim. Assign the roles to the members directly, or use a "+
