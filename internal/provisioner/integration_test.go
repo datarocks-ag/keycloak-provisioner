@@ -2382,3 +2382,80 @@ func containsRoleNamed(roles []map[string]any, name string) bool {
 	}
 	return false
 }
+
+// TestIntegrationEnvVarClientIdInRoleKeys covers the whole path for a ${VAR}
+// used as the clientId key of a role map, for both a user and a service
+// account. Expansion of those keys was previously missing, so the literal
+// "${VAR}" reached Keycloak and provisioning failed with "client not found".
+func TestIntegrationEnvVarClientIdInRoleKeys(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	t.Setenv("IT_LEDGER_CLIENT_ID", "ledger-api")
+
+	configYAML := `
+realms:
+  - realm: "envkey-realm"
+    enabled: true
+    clients:
+      - clientId: "${IT_LEDGER_CLIENT_ID}"
+        enabled: true
+        clientRoles:
+          - name: "ledger.read"
+      - clientId: "worker"
+        enabled: true
+        serviceAccountsEnabled: true
+        publicClient: false
+        serviceAccountRoles:
+          clients:
+            "${IT_LEDGER_CLIENT_ID}": ["ledger.read"]
+    users:
+      - username: "alice"
+        enabled: true
+        roles:
+          clients:
+            "${IT_LEDGER_CLIENT_ID}": ["ledger.read"]
+`
+	cfgPath := writeTestConfig(t, configYAML)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("provisioning failed: %v", err)
+	}
+
+	clients, err := kc.GetClients(ctx, "envkey-realm", "ledger-api")
+	if err != nil || len(clients) == 0 {
+		t.Fatalf("ledger-api client not found: %v", err)
+	}
+	ledgerUUID := clients[0]["id"].(string)
+
+	users, err := kc.GetUsers(ctx, "envkey-realm", "alice")
+	if err != nil || len(users) == 0 {
+		t.Fatalf("alice not found: %v", err)
+	}
+
+	mappings, err := kc.GetClientRoleMappings(ctx, "envkey-realm", client.RoleSubjectUsers, users[0]["id"].(string), ledgerUUID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsRoleNamed(mappings, "ledger.read") {
+		t.Errorf("expected alice to hold ledger.read on ledger-api, got %v", mappings)
+	}
+
+	saUsers, err := kc.GetUsers(ctx, "envkey-realm", "service-account-worker")
+	if err != nil || len(saUsers) == 0 {
+		t.Fatalf("worker service account not found: %v", err)
+	}
+
+	saMappings, err := kc.GetClientRoleMappings(ctx, "envkey-realm", client.RoleSubjectUsers, saUsers[0]["id"].(string), ledgerUUID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsRoleNamed(saMappings, "ledger.read") {
+		t.Errorf("expected worker service account to hold ledger.read, got %v", saMappings)
+	}
+}

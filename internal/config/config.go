@@ -10,8 +10,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -328,7 +330,7 @@ type User struct {
 // UserRoles defines realm and client role assignments for a user or service account.
 type UserRoles struct {
 	Realm   []string            `yaml:"realm"`
-	Clients map[string][]string `yaml:"clients"`
+	Clients map[string][]string `yaml:"clients"` // clientId -> client role names to grant; clientId keys support ${VAR} expansion
 }
 
 // Group defines a Keycloak group to provision within a realm. Groups may nest
@@ -374,11 +376,7 @@ func expandUserRoles(roles *UserRoles) {
 	for i := range roles.Realm {
 		roles.Realm[i] = expandEnvVars(roles.Realm[i])
 	}
-	for k, v := range roles.Clients {
-		for i := range v {
-			roles.Clients[k][i] = expandEnvVars(v[i])
-		}
-	}
+	roles.Clients = expandMultiValueMap(roles.Clients)
 }
 
 // expandUsers expands env vars in a slice of User structs.
@@ -468,18 +466,28 @@ func expandOrganizationGroup(g *OrganizationGroup) {
 
 // expandMultiValueMap returns a copy of m with env vars expanded in keys and
 // in every value. It returns m unchanged when empty so a nil map stays nil.
+//
+// When two source keys expand to the same key — "${VAR}" expanding to a literal
+// key the config also names, or two variables holding the same value — their
+// value lists are concatenated rather than one side silently winning.
+// Source keys are visited in sorted order so that merge yields the same result
+// on every run, which map iteration order alone would not guarantee.
 func expandMultiValueMap(m map[string][]string) map[string][]string {
 	if len(m) == 0 {
 		return m
 	}
 
 	expanded := make(map[string][]string, len(m))
-	for k, values := range m {
+	for _, k := range slices.Sorted(maps.Keys(m)) {
+		values := m[k]
+
 		vs := make([]string, len(values))
 		for i, v := range values {
 			vs[i] = expandEnvVars(v)
 		}
-		expanded[expandEnvVars(k)] = vs
+
+		key := expandEnvVars(k)
+		expanded[key] = append(expanded[key], vs...)
 	}
 
 	return expanded
@@ -605,34 +613,11 @@ func expandConfig(cfg *Config) {
 // expandGroup recursively expands env vars in a group's string fields and subgroups.
 func expandGroup(g *Group) {
 	g.Name = expandEnvVars(g.Name)
-	for k := range g.Attributes {
-		for i := range g.Attributes[k] {
-			g.Attributes[k][i] = expandEnvVars(g.Attributes[k][i])
-		}
-	}
+	g.Attributes = expandMultiValueMap(g.Attributes)
 	for i := range g.RealmRoles {
 		g.RealmRoles[i] = expandEnvVars(g.RealmRoles[i])
 	}
-	renames := make(map[string]string)
-	for clientID, roles := range g.ClientRoles {
-		for i := range roles {
-			roles[i] = expandEnvVars(roles[i])
-		}
-		if expanded := expandEnvVars(clientID); expanded != clientID {
-			renames[clientID] = expanded
-		}
-	}
-	// Apply renames after iterating to avoid mutating the map mid-range. When an
-	// expanded client ID collides with an existing key (e.g. "${X}" expands to a
-	// literal "app" key that is also present, or two vars expand to the same ID),
-	// merge the role lists rather than silently dropping one side.
-	for oldID, newID := range renames {
-		if newID == oldID {
-			continue
-		}
-		g.ClientRoles[newID] = append(g.ClientRoles[newID], g.ClientRoles[oldID]...)
-		delete(g.ClientRoles, oldID)
-	}
+	g.ClientRoles = expandMultiValueMap(g.ClientRoles)
 	for i := range g.SubGroups {
 		expandGroup(&g.SubGroups[i])
 	}

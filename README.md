@@ -82,6 +82,14 @@ secret: "${MY_APP_CLIENT_SECRET}"     # replaced with env var value at load time
 literal: "$${MY_APP_CLIENT_SECRET}"   # rendered as the literal string ${MY_APP_CLIENT_SECRET}
 ```
 
+Map **keys** are expanded as well as values, everywhere a config block is a map:
+realm, client and client-scope `attributes`; a client's
+`authenticationFlowBindingOverrides`; protocol mapper and authentication
+execution `config`; group and organization `attributes`; and the clientId keys
+under a group's `clientRoles`, a user's `roles.clients` and a client's
+`serviceAccountRoles.clients`. If two keys expand to the same name, their values
+are merged rather than one replacing the other.
+
 Unknown YAML fields are rejected at load time so typos surface immediately.
 
 ## Dry-Run
