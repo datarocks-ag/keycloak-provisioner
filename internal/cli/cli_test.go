@@ -119,3 +119,26 @@ func TestLevelFor(t *testing.T) {
 		}
 	}
 }
+
+func TestParseSkipVersionCheck(t *testing.T) {
+	lookup := envFromMap(map[string]string{
+		"KEYCLOAK_USER":     "admin",
+		"KEYCLOAK_PASSWORD": "secret",
+	})
+
+	opts, err := Parse([]string{"--skip-version-check"}, lookup, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if !opts.SkipVersionCheck {
+		t.Error("expected SkipVersionCheck to be set")
+	}
+
+	opts, err = Parse(nil, lookup, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if opts.SkipVersionCheck {
+		t.Error("SkipVersionCheck should default to false")
+	}
+}

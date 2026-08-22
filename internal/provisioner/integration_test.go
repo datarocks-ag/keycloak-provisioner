@@ -4,13 +4,16 @@ package provisioner_test
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"keycloak-provisioner/internal/client"
+	"keycloak-provisioner/internal/compat"
 	"keycloak-provisioner/internal/config"
 	"keycloak-provisioner/internal/provisioner"
 
@@ -18,19 +21,80 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
+// keycloakImage is the version these tests target. 26.2+ is required for
+// Standard Token Exchange (RFC 8693), 26+ for Organizations, and 26.6+ for
+// organization groups, so 26.6 is the supported floor.
+const keycloakImage = "keycloak/keycloak:26.6"
+
+// The suite shares one Keycloak across every test that targets the supported
+// version. Starting a container per test cost roughly ten seconds each and
+// pushed the package past the ten-minute test timeout in CI, as well as
+// straining the Docker daemon enough to produce spurious readiness failures.
+//
+// Sharing is safe because each test provisions its own uniquely named realm.
+// The one piece of genuinely global state is the master realm, so a test that
+// changes it has to put it back — see TestIntegrationSslRequired.
+//
+// Startup is lazy so a unit-test-only run under the integration build tag does
+// not pay for a container it never uses; TestMain does the teardown.
+var (
+	sharedOnce      sync.Once
+	sharedClient    *client.Client
+	sharedTerminate func()
+	sharedErr       error
+)
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+
+	if sharedTerminate != nil {
+		sharedTerminate()
+	}
+
+	os.Exit(code)
+}
+
+// setupKeycloak returns the Keycloak shared by the whole suite. The returned
+// function is a no-op: the container outlives the test, and TestMain tears it
+// down. It keeps the call signature that per-test containers used.
 func setupKeycloak(t *testing.T) (*client.Client, func()) {
 	t.Helper()
+
+	sharedOnce.Do(func() {
+		sharedClient, sharedTerminate, sharedErr = startKeycloak(keycloakImage)
+	})
+
+	if sharedErr != nil {
+		t.Fatalf("failed to start the shared keycloak container: %v", sharedErr)
+	}
+
+	return sharedClient, func() {}
+}
+
+// setupKeycloakVersion starts a container of its own, for a test that needs a
+// release other than the supported floor. Prefer setupKeycloak; this exists
+// only for version-specific behaviour.
+func setupKeycloakVersion(t *testing.T, image string) (*client.Client, func()) {
+	t.Helper()
+
+	kc, terminate, err := startKeycloak(image)
+	if err != nil {
+		t.Fatalf("failed to start keycloak container: %v", err)
+	}
+
+	return kc, terminate
+}
+
+func startKeycloak(image string) (*client.Client, func(), error) {
 	ctx := context.Background()
 
 	kcContainer, err := keycloak.Run(ctx,
-		// 26.2+ is required for Standard Token Exchange (RFC 8693) and 26+
-		// for Organizations. The supported floor is 26.6.
-		"keycloak/keycloak:26.6",
+		image,
 		keycloak.WithAdminUsername("admin"),
 		keycloak.WithAdminPassword("admin"),
 	)
 	if err != nil {
-		t.Fatalf("failed to start keycloak container: %v", err)
+		return nil, nil, fmt.Errorf("starting keycloak container: %w", err)
 	}
 
 	// Keycloak defaults master realm sslRequired=EXTERNAL, which blocks
@@ -45,27 +109,32 @@ func setupKeycloak(t *testing.T) (*client.Client, func()) {
 		"--user", "admin",
 		"--password", "admin",
 	})
-	if err != nil || exitCode != 0 {
-		t.Fatalf("failed to disable SSL on master realm: exit=%d err=%v", exitCode, err)
+	if err != nil {
+		return nil, nil, fmt.Errorf("disabling SSL on master realm: %w", err)
+	}
+	// Exec reports a non-zero status without returning an error, so this is a
+	// separate case: wrapping a nil err with %w would render "%!w(<nil>)".
+	if exitCode != 0 {
+		return nil, nil, fmt.Errorf("disabling SSL on master realm: kcadm exited %d", exitCode)
 	}
 
 	baseURL, err := kcContainer.GetAuthServerURL(ctx)
 	if err != nil {
-		t.Fatalf("failed to get auth server URL: %v", err)
+		return nil, nil, fmt.Errorf("getting auth server URL: %w", err)
 	}
 
 	kc := client.New(baseURL, "admin", "admin")
 	if err := kc.Connect(ctx); err != nil {
-		t.Fatalf("failed to connect to keycloak: %v", err)
+		return nil, nil, fmt.Errorf("connecting to keycloak: %w", err)
 	}
 
-	cleanup := func() {
+	terminate := func() {
 		if err := testcontainers.TerminateContainer(kcContainer); err != nil {
 			log.Printf("failed to terminate container: %v", err)
 		}
 	}
 
-	return kc, cleanup
+	return kc, terminate, nil
 }
 
 func writeTestConfig(t *testing.T, yaml string) string {
@@ -877,6 +946,18 @@ func TestIntegrationSslRequired(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
+
+	// This test ends with master at sslRequired=external, which blocks token
+	// requests over the Docker bridge and would break every test sharing this
+	// container afterwards. Put it back.
+	t.Cleanup(func() {
+		if err := kc.UpdateRealm(ctx, "master", map[string]any{
+			"realm":       "master",
+			"sslRequired": "none",
+		}); err != nil {
+			t.Errorf("restoring master sslRequired: %v", err)
+		}
+	})
 
 	// Test 1: Set sslRequired on a realm using lowercase config value
 	configYAML := `
@@ -2028,5 +2109,184 @@ realms:
 	}
 	if !strings.Contains(err.Error(), "copyFrom") {
 		t.Errorf("error should point at copyFrom, got: %v", err)
+	}
+}
+
+// TestIntegrationCompatibilityCheckPasses confirms the gate does not stand in
+// the way of a config the server genuinely supports.
+func TestIntegrationCompatibilityCheckPasses(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	configYAML := `
+realms:
+  - realm: "compat-ok-realm"
+    enabled: true
+    organizationsEnabled: true
+    organizations:
+      - name: "acme"
+        domains:
+          - name: "acme.com"
+        groups:
+          - name: "engineering"
+    clients:
+      - clientId: "exchange-app"
+        standardTokenExchangeEnabled: true
+`
+	cfg, err := config.Load(writeTestConfig(t, configYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if err := compat.Verify(ctx, kc, cfg); err != nil {
+		t.Fatalf("config should be supported by %s: %v", keycloakImage, err)
+	}
+
+	info, err := compat.ReadServerInfo(ctx, kc)
+	if err != nil {
+		t.Fatalf("ReadServerInfo: %v", err)
+	}
+	if !info.Parsed {
+		t.Errorf("the server version should be parseable, got %q", info.RawVersion)
+	}
+	if !info.Features["ORGANIZATION"] {
+		t.Errorf("ORGANIZATION should be enabled by default, features: %v", info.Features)
+	}
+}
+
+// TestIntegrationCompatibilityCheckRejectsOldServer runs against a release that
+// predates organization groups and asserts the gate refuses the config —
+// against a real server rather than a fabricated version string.
+func TestIntegrationCompatibilityCheckRejectsOldServer(t *testing.T) {
+	// 26.2 has organizations but not organization groups, which arrived in 26.6.
+	kc, cleanup := setupKeycloakVersion(t, "keycloak/keycloak:26.2")
+	defer cleanup()
+
+	configYAML := `
+realms:
+  - realm: "compat-old-realm"
+    enabled: true
+    organizationsEnabled: true
+    organizations:
+      - name: "acme"
+        domains:
+          - name: "acme.com"
+        groups:
+          - name: "engineering"
+`
+	cfg, err := config.Load(writeTestConfig(t, configYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+
+	err = compat.Verify(ctx, kc, cfg)
+	if err == nil {
+		t.Fatal("expected organization groups to be refused on 26.2")
+	}
+	for _, want := range []string{"organization groups", "26.6", "organizations[0].groups"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should mention %q, got: %v", want, err)
+		}
+	}
+
+	// Organizations themselves are supported on 26.2, so a config without
+	// groups must still pass — the gate has to be precise, not blanket.
+	withoutGroups := `
+realms:
+  - realm: "compat-old-realm"
+    enabled: true
+    organizationsEnabled: true
+    organizations:
+      - name: "acme"
+        domains:
+          - name: "acme.com"
+`
+	cfg, err = config.Load(writeTestConfig(t, withoutGroups))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := compat.Verify(ctx, kc, cfg); err != nil {
+		t.Errorf("organizations without groups should be supported on 26.2: %v", err)
+	}
+}
+
+// TestIntegrationCapabilityCheckRejectsUnknownProvider asks the real server
+// what it offers and confirms a config naming something it does not have is
+// refused, with the config path and a suggestion.
+func TestIntegrationCapabilityCheckRejectsUnknownProvider(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	configYAML := `
+realms:
+  - realm: "capability-realm"
+    enabled: true
+    authenticationFlows:
+      - alias: "typo-flow"
+        executions:
+          - provider: "auth-cookei"
+    clients:
+      - clientId: "web"
+        protocolMappers:
+          - name: "aud"
+            protocol: "openid-connect"
+            protocolMapper: "oidc-audiance-mapper"
+`
+	cfg, err := config.Load(writeTestConfig(t, configYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = compat.Verify(context.Background(), kc, cfg)
+	if err == nil {
+		t.Fatal("expected the unknown authenticator and mapper to be refused")
+	}
+
+	for _, want := range []string{
+		"auth-cookei",
+		`did you mean "auth-cookie"`,
+		"authenticationFlows[0].executions[0].provider",
+		"oidc-audiance-mapper",
+		`did you mean "oidc-audience-mapper"`,
+		"clients[0].protocolMappers[0].protocolMapper",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should mention %q, got: %v", want, err)
+		}
+	}
+}
+
+// TestIntegrationCapabilitiesMatchServer confirms the capability lists are read
+// correctly from a real server, so the check is not silently comparing against
+// nothing.
+func TestIntegrationCapabilitiesMatchServer(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	caps, err := compat.ReadCapabilities(context.Background(), kc)
+	if err != nil {
+		t.Fatalf("ReadCapabilities: %v", err)
+	}
+
+	// Providers from several of the four lists, to prove they are unioned.
+	for _, want := range []string{
+		"auth-cookie",                         // authenticator-providers
+		"conditional-level-of-authentication", // present while step-up is enabled
+		"registration-page-form",              // form-providers
+		"client-secret",                       // client-authenticator-providers
+	} {
+		if !caps.Authenticators[want] {
+			t.Errorf("expected provider %q to be reported by the server", want)
+		}
+	}
+
+	if !caps.ProtocolMappers["openid-connect"]["oidc-audience-mapper"] {
+		t.Errorf("expected the OIDC audience mapper, got %d protocols", len(caps.ProtocolMappers))
+	}
+	if !caps.ProtocolMappers["saml"]["saml-audience-mapper"] {
+		t.Error("expected SAML mapper types to be reported too")
 	}
 }

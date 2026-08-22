@@ -20,6 +20,10 @@ type Options struct {
 	LogLevel    string
 	DryRun      bool
 	ShowVersion bool
+	// SkipVersionCheck disables the whole pre-flight compatibility check, both
+	// the version comparison and the server feature checks. It exists for
+	// custom builds this tool should not be the judge of.
+	SkipVersionCheck bool
 }
 
 // EnvLookup is os.LookupEnv-shaped; injected for tests.
@@ -38,17 +42,20 @@ func Parse(args []string, lookup EnvLookup, out io.Writer) (*Options, error) {
 	dryRun := fs.Bool("dry-run", false, "log intended changes without applying them")
 	showVersion := fs.Bool("version", false, "print version and exit")
 	configFlag := fs.String("config", "", "path to YAML config (overrides KEYCLOAK_CONFIG_PATH)")
+	skipVersionCheck := fs.Bool("skip-version-check", false,
+		"skip the pre-flight check that the Keycloak server supports the config")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
 
 	opts := &Options{
-		ShowVersion: *showVersion,
-		DryRun:      *dryRun,
-		KeycloakURL: envOrDefault(lookup, "KEYCLOAK_URL", "http://localhost:8080"),
-		ConfigPath:  envOrDefault(lookup, "KEYCLOAK_CONFIG_PATH", "./config.yaml"),
-		LogLevel:    envOrDefault(lookup, "LOG_LEVEL", "info"),
+		ShowVersion:      *showVersion,
+		DryRun:           *dryRun,
+		SkipVersionCheck: *skipVersionCheck,
+		KeycloakURL:      envOrDefault(lookup, "KEYCLOAK_URL", "http://localhost:8080"),
+		ConfigPath:       envOrDefault(lookup, "KEYCLOAK_CONFIG_PATH", "./config.yaml"),
+		LogLevel:         envOrDefault(lookup, "LOG_LEVEL", "info"),
 	}
 	if *configFlag != "" {
 		opts.ConfigPath = *configFlag

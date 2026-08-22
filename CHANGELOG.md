@@ -58,6 +58,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `authenticationFlowBindingOverrides` on clients, given as flow aliases
   and resolved to the flow IDs Keycloak stores on the client. An alias
   that does not resolve is an error rather than a silent skip.
+- Pre-flight Keycloak compatibility check. Before anything is
+  provisioned, the tool reads the server version and feature list and
+  refuses a config the server cannot apply, so a run either does the
+  whole job or changes nothing instead of failing partway with a raw
+  Keycloak error. The error names each unsupported capability, the
+  version it needs, and the config paths that use it. The check also
+  covers server feature flags, not just versions: a capability can be
+  supported by the release and still be switched off on the server,
+  which a version comparison alone cannot catch. Two cases are
+  deliberately not failures — a version string the tool cannot parse
+  (custom and nightly builds), where comparisons are skipped with a
+  warning and feature checks still apply, and a feature the server does
+  not report at all, which means the release predates it and is already
+  covered by the version comparison.
+- `--skip-version-check` to bypass the compatibility check.
+- A published compatibility table in the README, generated from the
+  requirement registry in `internal/compat/requirements.go`. A test
+  fails if the two drift apart; `go test ./internal/compat -update`
+  regenerates it.
+- The compatibility check also covers two settings that Keycloak accepts
+  and stores but silently ignores when the governing feature is off,
+  which is worse than a failure because nothing reports it:
+  `standardTokenExchangeEnabled` needs `TOKEN_EXCHANGE_STANDARD_V2`
+  (distinct from the legacy `TOKEN_EXCHANGE` preview, which is off by
+  default and unrelated), and `acrLoaMap` needs `STEP_UP_AUTHENTICATION`.
+  Step-up has no version floor — it predates the supported range — so a
+  requirement can now gate on a feature alone.
+- Provider validation. The check now also asks the server which
+  authenticators and protocol mapper types it offers and refuses config
+  naming anything else, which catches more than a version table can: a
+  provider missing because a feature is disabled, one absent from this
+  release, or a typo. Authenticators are checked against the union of the
+  server's four provider lists; protocol mappers against the types
+  reported for their protocol, which also catches a SAML mapper on an
+  OIDC client. Errors name the config path and, for a likely typo,
+  suggest the closest real name by edit distance — a provider that is
+  merely absent gets no suggestion, since a wrong one is worse than none.
+  Nothing is rejected when the server does not report its providers.
 
 ### Fixed
 
@@ -77,6 +115,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `standardTokenExchangeEnabled` still send no attributes at all.
 
 ### Changed
+
+- Integration tests share one Keycloak container instead of starting a
+  fresh one per test, cutting the suite from roughly five minutes to
+  about thirty seconds. The per-test containers had pushed the package
+  past the ten-minute Go test timeout in CI and strained the Docker
+  daemon enough to cause spurious readiness failures. Each test already
+  provisions its own uniquely named realm; the master realm is the one
+  piece of shared state, so the test that changes it now restores it.
+  The container starts lazily, so a unit-test-only run under the
+  integration build tag does not pay for one. Verified order-independent
+  with `-shuffle=on`.
 
 - Empty attribute names are now rejected at config load time for both
   realm and client `attributes` maps. Previously an empty key was passed
