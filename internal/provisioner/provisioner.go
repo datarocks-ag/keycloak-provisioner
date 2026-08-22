@@ -34,7 +34,7 @@ func New(api KeycloakAPI, cfg *config.Config) *Provisioner {
 }
 
 // Run executes the full provisioning sequence:
-// Master realm (if configured) -> For each realm: Realm -> Authentication flows -> Client scopes -> Clients (+ protocol mappers + client roles + client scope assignment) -> Realm roles -> Service account roles -> Groups -> Users -> Organizations
+// Master realm (if configured) -> For each realm: Realm -> Authentication flows -> Client scopes -> Clients (+ protocol mappers + client roles + client scope assignment) -> Realm roles -> Service account roles -> Groups -> Users -> Identity providers -> Organizations
 func (p *Provisioner) Run(ctx context.Context) error {
 	slog.Info("Starting provisioning")
 
@@ -183,8 +183,17 @@ func (p *Provisioner) provisionRealm(ctx context.Context, realm config.Realm, st
 		}
 	}
 
-	// 10. Organizations (+ domains + members). Last, so members resolve to
-	// users created in the same run.
+	// 10. Identity providers (+ mappers). After authentication flows, whose
+	// aliases the broker login fields reference, and after roles and groups,
+	// which a hardcoded-role or hardcoded-group mapper names. Before
+	// organizations, which link providers by alias.
+	if err := p.ensureIdentityProviders(ctx, realm, strategy); err != nil {
+		return fmt.Errorf("ensuring identity providers: %w", err)
+	}
+
+	// 11. Organizations (+ domains + members + identity provider links). Last,
+	// so members resolve to users created in the same run and links resolve to
+	// providers created above.
 	for _, org := range realm.Organizations {
 		if err := p.ensureOrganization(ctx, realm.Realm, org, strategy); err != nil {
 			return fmt.Errorf("ensuring organization %q: %w", org.Name, err)

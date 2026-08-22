@@ -51,6 +51,10 @@ func (p *Provisioner) ensureOrganization(ctx context.Context, realm string, o co
 		return err
 	}
 
+	if err := p.ensureOrganizationIdentityProviders(ctx, realm, orgID, o); err != nil {
+		return err
+	}
+
 	if len(o.Groups) == 0 {
 		return nil
 	}
@@ -388,6 +392,67 @@ func (p *Provisioner) ensureOrganizationMembers(ctx context.Context, realm, orgI
 		if err := p.client.AddOrganizationMember(ctx, realm, orgID, userID); err != nil {
 			return err
 		}
+	}
+
+	return nil
+}
+
+// ensureOrganizationIdentityProviders links the organization's configured
+// identity providers. Linking is additive: a provider already linked is left
+// alone and none is ever unlinked.
+//
+// Unlike a missing member, which is warned about and skipped, an alias that
+// names no provider in the realm fails the run. A user absent from Keycloak is
+// plausible drift in an environment the provisioner does not fully own; an
+// alias that resolves to nothing is a config error, and Keycloak's own answer
+// for it — a 400 naming neither the alias nor the organization — is not worth
+// surfacing.
+func (p *Provisioner) ensureOrganizationIdentityProviders(ctx context.Context, realm, orgID string, o config.Organization) error {
+	if len(o.IdentityProviders) == 0 {
+		return nil
+	}
+
+	linked, err := p.client.GetOrganizationIdentityProviders(ctx, realm, orgID)
+	if err != nil {
+		return err
+	}
+
+	current := make(map[string]bool, len(linked))
+
+	for _, idp := range linked {
+		if alias, ok := idp["alias"].(string); ok {
+			current[alias] = true
+		}
+	}
+
+	available, err := p.client.GetIdentityProviders(ctx, realm)
+	if err != nil {
+		return err
+	}
+
+	known := indexIdentityProvidersByAlias(available)
+
+	for _, alias := range o.IdentityProviders {
+		if current[alias] {
+			slog.Debug("Identity provider already linked to organization",
+				"realm", realm, "organization", o.Name, "identityProvider", alias)
+
+			continue
+		}
+
+		if _, ok := known[alias]; !ok {
+			return fmt.Errorf("organization %q: identity provider %q does not exist in realm %q",
+				o.Name, alias, realm)
+		}
+
+		slog.Info("Linking identity provider to organization",
+			"realm", realm, "organization", o.Name, "identityProvider", alias)
+
+		if err := p.client.AddOrganizationIdentityProvider(ctx, realm, orgID, alias); err != nil {
+			return err
+		}
+
+		current[alias] = true
 	}
 
 	return nil
