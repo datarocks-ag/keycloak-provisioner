@@ -95,7 +95,11 @@ type Realm struct {
 	AuthenticationFlows []AuthenticationFlow `yaml:"authenticationFlows"`
 	// AuthenticationBindings binds realm-level flows by alias.
 	AuthenticationBindings *AuthenticationBindings `yaml:"authenticationBindings"`
-	Strategy               string                  `yaml:"strategy"`
+	// IdentityProviders are provisioned after groups and before
+	// organizations, so an organization can associate a provider defined in
+	// the same config.
+	IdentityProviders []IdentityProvider `yaml:"identityProviders"`
+	Strategy          string             `yaml:"strategy"`
 }
 
 // validFlowProviderIds is the allowlist of authentication flow types.
@@ -196,6 +200,11 @@ type Organization struct {
 	// their own: they do not appear under the realm's groups, and Keycloak
 	// refuses to manage them through the normal group API.
 	Groups []OrganizationGroup `yaml:"groups"`
+	// IdentityProviders are aliases of providers to associate with this
+	// organization. The provider may be declared in the same realm or already
+	// exist. Association is additive and never removed, and Keycloak allows a
+	// provider to belong to at most one organization.
+	IdentityProviders []string `yaml:"identityProviders"`
 }
 
 // OrganizationGroup is a group owned by an organization.
@@ -228,6 +237,51 @@ type OrganizationGroup struct {
 	// they add the first entry.
 	RealmRoles  []string            `yaml:"realmRoles"`
 	ClientRoles map[string][]string `yaml:"clientRoles"`
+}
+
+// IdentityProvider defines an identity provider (identity broker) in a realm.
+//
+// Unlike every other resource here, Keycloak replaces the whole representation
+// on update: a field left out of the request is reset and the entire config map
+// is discarded. The provisioner therefore merges over the server's current
+// representation, so fields and config keys this struct does not model survive.
+type IdentityProvider struct {
+	Alias       string `yaml:"alias"`
+	DisplayName string `yaml:"displayName"`
+	// ProviderId is the broker type, e.g. "oidc", "saml", "google". It is
+	// validated against the providers the server actually offers.
+	ProviderId               string `yaml:"providerId"`
+	Enabled                  *bool  `yaml:"enabled"`
+	TrustEmail               *bool  `yaml:"trustEmail"`
+	StoreToken               *bool  `yaml:"storeToken"`
+	AddReadTokenRoleOnCreate *bool  `yaml:"addReadTokenRoleOnCreate"`
+	LinkOnly                 *bool  `yaml:"linkOnly"`
+	HideOnLogin              *bool  `yaml:"hideOnLogin"`
+	// FirstBrokerLoginFlowAlias and PostBrokerLoginFlowAlias name flows that
+	// must already exist. Keycloak answers 500, with no usable message, for an
+	// alias it cannot resolve, so they are checked before the write.
+	FirstBrokerLoginFlowAlias string `yaml:"firstBrokerLoginFlowAlias"`
+	PostBrokerLoginFlowAlias  string `yaml:"postBrokerLoginFlowAlias"`
+	// Config is the provider-specific configuration. Values support ${VAR}
+	// expansion, which is how clientSecret should be supplied. Keys this
+	// config does not mention are preserved rather than removed.
+	Config  map[string]string        `yaml:"config"`
+	Mappers []IdentityProviderMapper `yaml:"mappers"`
+}
+
+// IdentityProviderMapper maps claims or assertions from a broker onto the local
+// user. Mappers are matched by name within their identity provider.
+//
+// Unlike the provider itself, a mapper's config is replaced rather than merged:
+// it carries no masked secrets and no server-managed fields, so building it
+// from the config alone is the more predictable behaviour.
+type IdentityProviderMapper struct {
+	Name string `yaml:"name"`
+	// IdentityProviderMapper is the mapper type. Keycloak accepts an unknown
+	// one with 201 and leaves it inert, so it is validated against the types
+	// the server reports.
+	IdentityProviderMapper string            `yaml:"identityProviderMapper"`
+	Config                 map[string]string `yaml:"config"`
 }
 
 // OrganizationDomain is a domain owned by an organization.
@@ -441,6 +495,25 @@ func expandAuthenticationExecutions(executions []AuthenticationExecution) {
 	}
 }
 
+// expandIdentityProvider expands env vars in an identity provider, its config
+// and its mappers. Secrets reach the config through ${VAR} in Config, so no
+// separate secret handling is needed.
+func expandIdentityProvider(p *IdentityProvider) {
+	p.Alias = expandEnvVars(p.Alias)
+	p.DisplayName = expandEnvVars(p.DisplayName)
+	p.ProviderId = expandEnvVars(p.ProviderId)
+	p.FirstBrokerLoginFlowAlias = expandEnvVars(p.FirstBrokerLoginFlowAlias)
+	p.PostBrokerLoginFlowAlias = expandEnvVars(p.PostBrokerLoginFlowAlias)
+	p.Config = expandStringMap(p.Config)
+
+	for i := range p.Mappers {
+		m := &p.Mappers[i]
+		m.Name = expandEnvVars(m.Name)
+		m.IdentityProviderMapper = expandEnvVars(m.IdentityProviderMapper)
+		m.Config = expandStringMap(m.Config)
+	}
+}
+
 // expandAuthenticationBindings expands env vars in the realm flow bindings.
 func expandAuthenticationBindings(b *AuthenticationBindings) {
 	if b == nil {
@@ -470,6 +543,10 @@ func expandOrganization(o *Organization) {
 
 	for i := range o.Members {
 		o.Members[i] = expandEnvVars(o.Members[i])
+	}
+
+	for i := range o.IdentityProviders {
+		o.IdentityProviders[i] = expandEnvVars(o.IdentityProviders[i])
 	}
 
 	for i := range o.Groups {
@@ -633,6 +710,10 @@ func expandConfig(cfg *Config) {
 		}
 
 		expandAuthenticationBindings(r.AuthenticationBindings)
+
+		for j := range r.IdentityProviders {
+			expandIdentityProvider(&r.IdentityProviders[j])
+		}
 
 		for j := range r.Groups {
 			expandGroup(&r.Groups[j])
@@ -829,6 +910,10 @@ func validate(cfg *Config) error {
 		if err := validateAuthenticationFlows(i, r.AuthenticationFlows); err != nil {
 			return err
 		}
+
+		if err := validateIdentityProviders(i, r.IdentityProviders); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -968,6 +1053,76 @@ func validateAuthenticationExecutions(prefix string, executions []Authentication
 	return nil
 }
 
+func validateIdentityProviders(realmIdx int, idps []IdentityProvider) error {
+	aliases := make(map[string]bool)
+
+	for i, idp := range idps {
+		prefix := fmt.Sprintf("realms[%d].identityProviders[%d]", realmIdx, i)
+
+		if idp.Alias == "" {
+			return fmt.Errorf("%s.alias: is required", prefix)
+		}
+		// The alias is a URL path segment. Escaping would turn a slash into
+		// %2F and address something other than what was written.
+		if strings.Contains(idp.Alias, "/") {
+			return fmt.Errorf("%s.alias: %q must not contain '/'", prefix, idp.Alias)
+		}
+		if aliases[idp.Alias] {
+			return fmt.Errorf("%s.alias: duplicate identity provider alias %q", prefix, idp.Alias)
+		}
+		aliases[idp.Alias] = true
+
+		if idp.ProviderId == "" {
+			return fmt.Errorf("%s.providerId: is required", prefix)
+		}
+
+		if err := scanNullBytes(map[string]string{
+			prefix + ".alias":                     idp.Alias,
+			prefix + ".displayName":               idp.DisplayName,
+			prefix + ".providerId":                idp.ProviderId,
+			prefix + ".firstBrokerLoginFlowAlias": idp.FirstBrokerLoginFlowAlias,
+			prefix + ".postBrokerLoginFlowAlias":  idp.PostBrokerLoginFlowAlias,
+		}); err != nil {
+			return err
+		}
+
+		if err := validateAttributes(prefix+".config", idp.Config); err != nil {
+			return err
+		}
+
+		names := make(map[string]bool)
+
+		for j, m := range idp.Mappers {
+			mPrefix := fmt.Sprintf("%s.mappers[%d]", prefix, j)
+
+			if m.Name == "" {
+				return fmt.Errorf("%s.name: is required", mPrefix)
+			}
+			if names[m.Name] {
+				return fmt.Errorf("%s.name: duplicate mapper name %q", mPrefix, m.Name)
+			}
+			names[m.Name] = true
+
+			if m.IdentityProviderMapper == "" {
+				return fmt.Errorf("%s.identityProviderMapper: is required", mPrefix)
+			}
+
+			if err := scanNullBytes(map[string]string{
+				mPrefix + ".name":                   m.Name,
+				mPrefix + ".identityProviderMapper": m.IdentityProviderMapper,
+			}); err != nil {
+				return err
+			}
+
+			if err := validateAttributes(mPrefix+".config", m.Config); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
 func validateOrganizations(realmIdx int, r Realm) error {
 	if len(r.Organizations) == 0 {
 		return nil
@@ -981,6 +1136,9 @@ func validateOrganizations(realmIdx int, r Realm) error {
 	}
 
 	names := make(map[string]bool)
+	// Tracks which organization claims each identity provider alias, so a
+	// second claim can name the first.
+	linkedIdPs := make(map[string]string)
 
 	for i, o := range r.Organizations {
 		prefix := fmt.Sprintf("realms[%d].organizations[%d]", realmIdx, i)
@@ -1027,6 +1185,47 @@ func validateOrganizations(realmIdx int, r Realm) error {
 		if err := validateOrganizationGroups(prefix+".groups", o.Groups); err != nil {
 			return err
 		}
+
+		if err := validateOrganizationIdentityProviders(prefix, o, linkedIdPs); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateOrganizationIdentityProviders checks the aliases one organization
+// associates, and records them in linkedIdPs so a provider claimed by two
+// organizations is caught.
+//
+// Keycloak allows a provider to belong to at most one organization and answers
+// 400 for a second claim, so catching it here turns a mid-run failure into a
+// config error. An alias not declared under realms[i].identityProviders is
+// deliberately allowed: it may already exist on the server, the same way
+// members may name pre-existing users.
+func validateOrganizationIdentityProviders(prefix string, o Organization, linkedIdPs map[string]string) error {
+	seen := make(map[string]bool)
+
+	for i, alias := range o.IdentityProviders {
+		path := fmt.Sprintf("%s.identityProviders[%d]", prefix, i)
+
+		if alias == "" {
+			return fmt.Errorf("%s: identity provider alias is required", path)
+		}
+		if containsNullByte(alias) {
+			return fmt.Errorf("%s: contains null byte", path)
+		}
+		if seen[alias] {
+			return fmt.Errorf("%s: duplicate identity provider alias %q", path, alias)
+		}
+		seen[alias] = true
+
+		if owner, taken := linkedIdPs[alias]; taken {
+			return fmt.Errorf(
+				"%s: identity provider %q is already associated with organization %q; Keycloak allows only one",
+				path, alias, owner)
+		}
+		linkedIdPs[alias] = o.Name
 	}
 
 	return nil
