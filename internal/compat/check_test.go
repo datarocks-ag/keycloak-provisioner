@@ -264,8 +264,13 @@ func TestRequirementsAreWellFormed(t *testing.T) {
 		}
 		seen[r.Name] = true
 
-		if _, err := ParseVersion(r.MinVersion); err != nil {
-			t.Errorf("%s: unparseable MinVersion %q: %v", r.Name, r.MinVersion, err)
+		if r.MinVersion == "" && r.Feature == "" {
+			t.Errorf("%s: has neither a MinVersion nor a Feature, so it gates nothing", r.Name)
+		}
+		if r.MinVersion != "" {
+			if _, err := ParseVersion(r.MinVersion); err != nil {
+				t.Errorf("%s: unparseable MinVersion %q: %v", r.Name, r.MinVersion, err)
+			}
 		}
 		if r.Uses == nil {
 			t.Errorf("%s: has no Uses predicate", r.Name)
@@ -295,5 +300,73 @@ func TestCheckIgnoresDisabledStandardTokenExchange(t *testing.T) {
 	cfg.Realms[0].Clients[0].StandardTokenExchangeEnabled = nil
 	if problems := Check(cfg, old); len(problems) != 0 {
 		t.Errorf("an unset field must not require 26.2, got %v", problems)
+	}
+}
+
+// TestCheckStandardTokenExchangeFeatureDisabled covers the flag that governs
+// standard token exchange. With it off, Keycloak still stores
+// standard.token.exchange.enabled=true and provisioning succeeds — the setting
+// is simply inert, which is why the gate has to catch it.
+func TestCheckStandardTokenExchangeFeatureDisabled(t *testing.T) {
+	cfg := &config.Config{Realms: []config.Realm{{
+		Realm:   "test",
+		Clients: []config.Client{{ClientID: "web", StandardTokenExchangeEnabled: boolPtr(true)}},
+	}}}
+
+	info := ServerInfo{
+		RawVersion: "26.6.4",
+		Version:    Version{26, 6, 4},
+		Parsed:     true,
+		Features:   map[string]bool{"TOKEN_EXCHANGE_STANDARD_V2": false},
+	}
+
+	problems := Check(cfg, info)
+	if len(problems) != 1 {
+		t.Fatalf("expected the disabled feature to be reported, got %v", problems)
+	}
+	if !strings.Contains(problems[0].Reason, "TOKEN_EXCHANGE_STANDARD_V2") {
+		t.Errorf("reason should name the feature, got %q", problems[0].Reason)
+	}
+
+	// The legacy preview feature is unrelated and must not be consulted.
+	info.Features = map[string]bool{"TOKEN_EXCHANGE_STANDARD_V2": true, "TOKEN_EXCHANGE": false}
+	if problems := Check(cfg, info); len(problems) != 0 {
+		t.Errorf("the legacy TOKEN_EXCHANGE preview must not matter, got %v", problems)
+	}
+}
+
+// TestCheckStepUpAuthentication covers a requirement with no version floor:
+// only the feature flag decides.
+func TestCheckStepUpAuthentication(t *testing.T) {
+	cfg := &config.Config{Realms: []config.Realm{{
+		Realm:     "test",
+		AcrLoaMap: map[string]int{"gold": 2},
+		Clients:   []config.Client{{ClientID: "web", AcrLoaMap: map[string]int{"gold": 2}}},
+	}}}
+
+	disabled := ServerInfo{
+		RawVersion: "26.6.4",
+		Version:    Version{26, 6, 4},
+		Parsed:     true,
+		Features:   map[string]bool{"STEP_UP_AUTHENTICATION": false},
+	}
+
+	problems := Check(cfg, disabled)
+	if len(problems) != 1 {
+		t.Fatalf("expected step-up to be reported, got %v", problems)
+	}
+	if len(problems[0].Paths) != 2 {
+		t.Errorf("both the realm and the client map should be named, got %v", problems[0].Paths)
+	}
+
+	// No version floor, so even an old server passes when the feature is on.
+	enabled := ServerInfo{
+		RawVersion: "26.0.0",
+		Version:    Version{26, 0, 0},
+		Parsed:     true,
+		Features:   map[string]bool{"STEP_UP_AUTHENTICATION": true},
+	}
+	if problems := Check(cfg, enabled); len(problems) != 0 {
+		t.Errorf("step-up has no version floor, got %v", problems)
 	}
 }

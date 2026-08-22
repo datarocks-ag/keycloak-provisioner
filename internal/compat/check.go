@@ -105,7 +105,7 @@ func Check(cfg *config.Config, info ServerInfo) []Problem {
 // unsatisfiedBy returns why the server cannot satisfy this requirement, or ""
 // when it can.
 func (r Requirement) unsatisfiedBy(info ServerInfo) string {
-	if info.Parsed {
+	if info.Parsed && r.MinVersion != "" {
 		// A malformed MinVersion is a bug in the table rather than a problem
 		// with the server, so it must not silently pass: treat it as a
 		// mismatch and name it.

@@ -26,7 +26,12 @@ func DocsTable() string {
 			feature = "`" + r.Feature + "`"
 		}
 
-		fmt.Fprintf(&b, "| %s | %s | %s |\n", r.Name, r.MinVersion, feature)
+		minVersion := r.MinVersion
+		if minVersion == "" {
+			minVersion = "any"
+		}
+
+		fmt.Fprintf(&b, "| %s | %s | %s |\n", r.Name, minVersion, feature)
 	}
 
 	return b.String()

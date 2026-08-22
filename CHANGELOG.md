@@ -77,6 +77,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   requirement registry in `internal/compat/requirements.go`. A test
   fails if the two drift apart; `go test ./internal/compat -update`
   regenerates it.
+- The compatibility check also covers two settings that Keycloak accepts
+  and stores but silently ignores when the governing feature is off,
+  which is worse than a failure because nothing reports it:
+  `standardTokenExchangeEnabled` needs `TOKEN_EXCHANGE_STANDARD_V2`
+  (distinct from the legacy `TOKEN_EXCHANGE` preview, which is off by
+  default and unrelated), and `acrLoaMap` needs `STEP_UP_AUTHENTICATION`.
+  Step-up has no version floor — it predates the supported range — so a
+  requirement can now gate on a feature alone.
 
 ### Fixed
 

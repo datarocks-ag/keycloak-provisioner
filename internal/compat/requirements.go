@@ -18,7 +18,8 @@ import (
 type Requirement struct {
 	// Name is how the capability is described in errors and in the docs table.
 	Name string
-	// MinVersion is the oldest Keycloak that supports it.
+	// MinVersion is the oldest Keycloak that supports it, or "" when every
+	// release in range does and only the feature flag matters.
 	MinVersion string
 	// Feature is the Keycloak server feature that must also be enabled, or ""
 	// when the capability is not behind a feature flag. Version alone is not
@@ -53,10 +54,41 @@ var Requirements = []Requirement{
 	{
 		Name:       "standard token exchange",
 		MinVersion: "26.2",
-		Feature:    "",
-		Since:      "Standard Token Exchange (RFC 8693) is supported from Keycloak 26.2; it is not behind the legacy TOKEN_EXCHANGE preview feature",
+		Feature:    "TOKEN_EXCHANGE_STANDARD_V2",
+		Since:      "Standard Token Exchange (RFC 8693) is supported from Keycloak 26.2. It is governed by TOKEN_EXCHANGE_STANDARD_V2, not by the legacy TOKEN_EXCHANGE preview feature, which is off by default and unrelated",
 		Uses:       usesStandardTokenExchange,
 	},
+	{
+		Name: "step-up authentication",
+		// No version floor: acr.loa.map long predates any Keycloak this tool
+		// meets. The feature can still be switched off, which is what matters.
+		MinVersion: "",
+		Feature:    "STEP_UP_AUTHENTICATION",
+		Since:      "Step-up authentication predates the supported range; disabling STEP_UP_AUTHENTICATION removes the conditional-level-of-authentication authenticator and makes acr.loa.map inert",
+		Uses:       usesStepUpAuthentication,
+	},
+}
+
+// usesStepUpAuthentication reports the realms and clients that declare an
+// ACR-to-LoA map. With the feature disabled the attribute is still written and
+// provisioning still succeeds — it simply has no effect, which is worse than a
+// failure because nothing says so.
+func usesStepUpAuthentication(cfg *config.Config) []string {
+	var paths []string
+
+	for i, realm := range cfg.Realms {
+		if len(realm.AcrLoaMap) > 0 {
+			paths = append(paths, fmt.Sprintf("realms[%d].acrLoaMap", i))
+		}
+
+		for j, c := range realm.Clients {
+			if len(c.AcrLoaMap) > 0 {
+				paths = append(paths, fmt.Sprintf("realms[%d].clients[%d].acrLoaMap", i, j))
+			}
+		}
+	}
+
+	return paths
 }
 
 func usesOrganizations(cfg *config.Config) []string {

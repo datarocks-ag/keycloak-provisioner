@@ -498,11 +498,14 @@ Some configuration only works on newer Keycloak releases, and some of it also de
 |---|---|---|
 | organizations | 26.0 | `ORGANIZATION` |
 | organization groups | 26.6 | `ORGANIZATION` |
-| standard token exchange | 26.2 | — |
+| standard token exchange | 26.2 | `TOKEN_EXCHANGE_STANDARD_V2` |
+| step-up authentication | any | `STEP_UP_AUTHENTICATION` |
 
 <!-- END COMPATIBILITY TABLE -->
 
-Anything not listed works on every Keycloak this tool supports. The table is generated from the requirement registry in `internal/compat/requirements.go`, and a test fails if the two drift apart — run `go test ./internal/compat -update` to regenerate it.
+`any` in the version column means every Keycloak in range supports it and only the feature flag matters. Anything not listed at all works everywhere and is never checked.
+
+The check covers two different failure modes. Most of these would make provisioning **fail** partway through. Two would not: with `TOKEN_EXCHANGE_STANDARD_V2` or `STEP_UP_AUTHENTICATION` switched off, Keycloak still accepts and stores the settings — they are simply inert. That is arguably worse than a failure, because nothing tells you, so the check treats it the same way. The table is generated from the requirement registry in `internal/compat/requirements.go`, and a test fails if the two drift apart — run `go test ./internal/compat -update` to regenerate it.
 
 A config that uses none of these is never blocked, whatever the server version.
 
