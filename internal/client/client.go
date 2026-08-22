@@ -1078,6 +1078,13 @@ func (c *Client) GetOrganizationGroups(ctx context.Context, realm, orgID, parent
 		path += "/" + url.PathEscape(parentID) + "/children"
 	}
 
+	// max=-1 asks for every group at this level. The children endpoint defaults
+	// to 10, and callers match by name over the whole listing rather than
+	// asking Keycloak to filter — the realm group API takes an exact search,
+	// this one does not — so a truncated page reads as "not there" and the
+	// caller tries to create a sibling that already exists.
+	path += "?max=-1"
+
 	return c.listOrganizationGroups(ctx, path)
 }
 

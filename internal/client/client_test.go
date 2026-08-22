@@ -2286,3 +2286,47 @@ func TestGetOrganizationMembersRequestsAllMembers(t *testing.T) {
 		t.Errorf("listing must ask for every member, got query %q; Keycloak defaults this endpoint to 10", gotQuery)
 	}
 }
+
+// TestGetOrganizationGroupsRequestsAllGroups pins the query parameter. The
+// children endpoint defaults to 10, and unlike the realm group API this one
+// takes no exact-name search, so the caller matches over the whole listing —
+// a truncated page reads as "not there".
+func TestGetOrganizationGroupsRequestsAllGroups(t *testing.T) {
+	var mu sync.Mutex
+	queries := map[string]string{}
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/organizations/{id}/groups": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			queries["top"] = r.URL.RawQuery
+			mu.Unlock()
+			json.NewEncoder(w).Encode([]map[string]any{{"id": "g-1", "name": "engineering"}})
+		},
+		"GET /admin/realms/{realm}/organizations/{id}/groups/{gid}/children": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			queries["children"] = r.URL.RawQuery
+			mu.Unlock()
+			json.NewEncoder(w).Encode([]map[string]any{{"id": "g-2", "name": "backend"}})
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	ctx := context.Background()
+
+	if _, err := c.GetOrganizationGroups(ctx, "test", "org-1", ""); err != nil {
+		t.Fatalf("top level: %v", err)
+	}
+	if _, err := c.GetOrganizationGroups(ctx, "test", "org-1", "g-1"); err != nil {
+		t.Fatalf("children: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	for level, got := range queries {
+		if got != "max=-1" {
+			t.Errorf("%s listing must ask for every group, got query %q", level, got)
+		}
+	}
+}
