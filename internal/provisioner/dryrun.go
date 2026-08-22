@@ -349,6 +349,36 @@ func (d *dryRunAPI) GetUserCredentials(ctx context.Context, realm, userID string
 	return d.inner.GetUserCredentials(ctx, realm, userID)
 }
 
+func (d *dryRunAPI) GetRealmScopeMappings(ctx context.Context, realm, owner, ownerID string) ([]map[string]any, error) {
+	if d.realmIsSynthetic(realm) || isSyntheticID(ownerID) {
+		return nil, nil
+	}
+
+	return d.inner.GetRealmScopeMappings(ctx, realm, owner, ownerID)
+}
+
+func (d *dryRunAPI) AddRealmScopeMappings(_ context.Context, realm, owner, ownerID string, roles []map[string]any) error {
+	slog.Info("DRY-RUN: would add realm roles to scope",
+		"realm", realm, "owner", owner, "ownerID", ownerID, "roles", roleNames(roles))
+
+	return nil
+}
+
+func (d *dryRunAPI) GetClientScopeMappings(ctx context.Context, realm, owner, ownerID, clientUUID string) ([]map[string]any, error) {
+	if d.realmIsSynthetic(realm) || isSyntheticID(ownerID) || isSyntheticID(clientUUID) {
+		return nil, nil
+	}
+
+	return d.inner.GetClientScopeMappings(ctx, realm, owner, ownerID, clientUUID)
+}
+
+func (d *dryRunAPI) AddClientScopeMappings(_ context.Context, realm, owner, ownerID, clientUUID string, roles []map[string]any) error {
+	slog.Info("DRY-RUN: would add client roles to scope",
+		"realm", realm, "owner", owner, "ownerID", ownerID, "clientUUID", clientUUID, "roles", roleNames(roles))
+
+	return nil
+}
+
 func (d *dryRunAPI) GetUserGroups(ctx context.Context, realm, userID string) ([]map[string]any, error) {
 	if isSyntheticID(userID) || d.realmIsSynthetic(realm) {
 		return nil, nil

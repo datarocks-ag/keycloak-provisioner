@@ -2338,3 +2338,91 @@ func TestGetOrganizationGroupsRequestsAllGroups(t *testing.T) {
 		}
 	}
 }
+
+// TestScopeMappingPaths pins the URL each owner and role kind produces. The
+// four paths differ by one or two segments, and a wrong one would write to
+// whichever resource happens to share the id rather than fail.
+func TestScopeMappingPaths(t *testing.T) {
+	var got string
+
+	record := func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.Path
+		if r.Method == http.MethodGet {
+			json.NewEncoder(w).Encode([]map[string]any{{"id": "role-1", "name": "reader"}})
+
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"/admin/realms/{realm}/clients/{id}/scope-mappings/":       record,
+		"/admin/realms/{realm}/client-scopes/{id}/scope-mappings/": record,
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	ctx := context.Background()
+	roles := []map[string]any{{"id": "role-1", "name": "reader"}}
+
+	cases := map[string]struct {
+		call func() error
+		want string
+	}{
+		"realm roles on a client": {
+			call: func() error {
+				_, err := c.GetRealmScopeMappings(ctx, "test", ScopeOwnerClients, "bff-uuid")
+
+				return err
+			},
+			want: "/admin/realms/test/clients/bff-uuid/scope-mappings/realm",
+		},
+		"client roles on a client": {
+			call: func() error {
+				return c.AddClientScopeMappings(ctx, "test", ScopeOwnerClients, "bff-uuid", "ledger-uuid", roles)
+			},
+			want: "/admin/realms/test/clients/bff-uuid/scope-mappings/clients/ledger-uuid",
+		},
+		"realm roles on a client scope": {
+			call: func() error {
+				return c.AddRealmScopeMappings(ctx, "test", ScopeOwnerClientScopes, "scope-uuid", roles)
+			},
+			want: "/admin/realms/test/client-scopes/scope-uuid/scope-mappings/realm",
+		},
+		"client roles on a client scope": {
+			call: func() error {
+				_, err := c.GetClientScopeMappings(ctx, "test", ScopeOwnerClientScopes, "scope-uuid", "ledger-uuid")
+
+				return err
+			},
+			want: "/admin/realms/test/client-scopes/scope-uuid/scope-mappings/clients/ledger-uuid",
+		},
+	}
+
+	for label, tc := range cases {
+		t.Run(label, func(t *testing.T) {
+			got = ""
+			if err := tc.call(); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("path = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestGetRealmScopeMappings_Error(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/clients/{id}/scope-mappings/realm": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("error"))
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	if _, err := c.GetRealmScopeMappings(context.Background(), "test", ScopeOwnerClients, "bff-uuid"); err == nil {
+		t.Fatal("expected error")
+	}
+}

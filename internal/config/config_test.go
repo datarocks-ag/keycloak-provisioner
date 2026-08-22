@@ -2563,6 +2563,70 @@ realms:
 	}
 }
 
+func TestScopeMappingsParsing(t *testing.T) {
+	t.Setenv("LEDGER_CLIENT_ID", "sandbox-ledger")
+
+	yaml := `
+realms:
+  - realm: "test"
+    clientScopes:
+      - name: "ledger-access"
+        scopeMappings:
+          clients:
+            "${LEDGER_CLIENT_ID}": ["reader"]
+    clients:
+      - clientId: "bff"
+        fullScopeAllowed: false
+        scopeMappings:
+          realm: ["${LEDGER_CLIENT_ID}-admin"]
+          clients:
+            "${LEDGER_CLIENT_ID}": ["reader", "writer"]
+      - clientId: "unset"
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	scope := cfg.Realms[0].ClientScopes[0]
+	if got := scope.ScopeMappings.Clients["sandbox-ledger"]; len(got) != 1 || got[0] != "reader" {
+		t.Errorf("client scope scopeMappings = %v, want [reader] under the expanded key", scope.ScopeMappings.Clients)
+	}
+
+	clients := cfg.Realms[0].Clients
+	// The clientId key is expanded as well as the values: a templated key that
+	// reached Keycloak literally would fail the run with a client not found.
+	if got := clients[0].ScopeMappings.Clients["sandbox-ledger"]; len(got) != 2 {
+		t.Errorf("client scopeMappings.clients = %v, want two roles under the expanded key", clients[0].ScopeMappings.Clients)
+	}
+	if got := clients[0].ScopeMappings.Realm; len(got) != 1 || got[0] != "sandbox-ledger-admin" {
+		t.Errorf("client scopeMappings.realm = %v, want the expanded realm role", got)
+	}
+
+	// Unset must stay nil: the reconciler reads nil as "the config said nothing"
+	// and leaves the scope alone.
+	if clients[1].ScopeMappings != nil {
+		t.Errorf("expected unset scopeMappings to stay nil, got %v", clients[1].ScopeMappings)
+	}
+}
+
+// TestScopeMappingsValidationNamesTheKey guards the message, not the check: a
+// role set is validated in three places now, and a scopeMappings problem
+// reported under ".roles" would send the reader to a key they did not write.
+func TestScopeMappingsValidationNamesTheKey(t *testing.T) {
+	yaml := "realms:\n  - realm: \"test\"\n    clients:\n      - clientId: \"bff\"\n        scopeMappings:\n          realm: [\"bad\\x00role\"]\n"
+
+	path := writeTempConfig(t, yaml)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected a null byte in a scope mapping role to be rejected")
+	}
+	if !strings.Contains(err.Error(), "clients[0].scopeMappings.realm[0]") {
+		t.Errorf("error should name the scopeMappings key, got: %v", err)
+	}
+}
+
 func TestClientDefaultAcrValuesParsing(t *testing.T) {
 	t.Setenv("TEST_ACR", "gold")
 
