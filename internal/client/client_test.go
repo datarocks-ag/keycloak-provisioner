@@ -1594,3 +1594,174 @@ func TestAddGroupClientRoleMappings_Error(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestGetClientScopes(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/client-scopes": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"id": "cs-1", "name": "orders:read"},
+			})
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	result, err := c.GetClientScopes(context.Background(), "test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result) != 1 || result[0]["name"] != "orders:read" {
+		t.Fatalf("unexpected result: %v", result)
+	}
+}
+
+func TestGetClientScopes_Error(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/client-scopes": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("error"))
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	if _, err := c.GetClientScopes(context.Background(), "test"); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestCreateClientScope(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"POST /admin/realms/{realm}/client-scopes": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Location", "http://kc/admin/realms/test/client-scopes/cs-9")
+			w.WriteHeader(http.StatusCreated)
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	id, err := c.CreateClientScope(context.Background(), "test", map[string]any{"name": "orders:read"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if id != "cs-9" {
+		t.Errorf("expected cs-9, got %q", id)
+	}
+}
+
+func TestUpdateClientScope(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"PUT /admin/realms/{realm}/client-scopes/{id}": func(w http.ResponseWriter, r *http.Request) {
+			if got := r.PathValue("id"); got != "cs-1" {
+				t.Errorf("expected scope id cs-1, got %q", got)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	if err := c.UpdateClientScope(context.Background(), "test", "cs-1", map[string]any{"name": "x"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestClientScopeProtocolMappers(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/client-scopes/{id}/protocol-mappers/models": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{{"id": "m-1", "name": "audience"}})
+		},
+		"POST /admin/realms/{realm}/client-scopes/{id}/protocol-mappers/models": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusCreated)
+		},
+		"PUT /admin/realms/{realm}/client-scopes/{id}/protocol-mappers/models/{mapperId}": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	ctx := context.Background()
+
+	mappers, err := c.GetClientScopeProtocolMappers(ctx, "test", "cs-1")
+	if err != nil || len(mappers) != 1 {
+		t.Fatalf("get: %v %v", mappers, err)
+	}
+	if err := c.CreateClientScopeProtocolMapper(ctx, "test", "cs-1", map[string]any{"name": "audience"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := c.UpdateClientScopeProtocolMapper(ctx, "test", "cs-1", "m-1", map[string]any{"name": "audience"}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+}
+
+func TestClientScopeAssignmentEndpoints(t *testing.T) {
+	var mu sync.Mutex
+	seen := map[string]string{}
+
+	record := func(key string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			defer mu.Unlock()
+			seen[key] = r.PathValue("scopeId")
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}
+	emptyList := func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{})
+	}
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/default-default-client-scopes":                   emptyList,
+		"PUT /admin/realms/{realm}/default-default-client-scopes/{scopeId}":         record("realmDefault"),
+		"GET /admin/realms/{realm}/default-optional-client-scopes":                  emptyList,
+		"PUT /admin/realms/{realm}/default-optional-client-scopes/{scopeId}":        record("realmOptional"),
+		"GET /admin/realms/{realm}/clients/{uuid}/default-client-scopes":            emptyList,
+		"PUT /admin/realms/{realm}/clients/{uuid}/default-client-scopes/{scopeId}":  record("clientDefault"),
+		"GET /admin/realms/{realm}/clients/{uuid}/optional-client-scopes":           emptyList,
+		"PUT /admin/realms/{realm}/clients/{uuid}/optional-client-scopes/{scopeId}": record("clientOptional"),
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	ctx := context.Background()
+
+	if _, err := c.GetRealmDefaultClientScopes(ctx, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.AddRealmDefaultClientScope(ctx, "test", "cs-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.GetRealmOptionalClientScopes(ctx, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.AddRealmOptionalClientScope(ctx, "test", "cs-2"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.GetClientDefaultScopes(ctx, "test", "uuid-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.AddClientDefaultScope(ctx, "test", "uuid-1", "cs-3"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.GetClientOptionalScopes(ctx, "test", "uuid-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.AddClientOptionalScope(ctx, "test", "uuid-1", "cs-4"); err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	want := map[string]string{
+		"realmDefault":   "cs-1",
+		"realmOptional":  "cs-2",
+		"clientDefault":  "cs-3",
+		"clientOptional": "cs-4",
+	}
+	for k, v := range want {
+		if seen[k] != v {
+			t.Errorf("%s: expected %q, got %q", k, v, seen[k])
+		}
+	}
+}

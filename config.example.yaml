@@ -43,6 +43,22 @@ realms:
     #   silver: 1
     #   gold: 2
 
+    # Client scopes are provisioned before clients, so a client below can
+    # reference a scope defined here. Matched by name.
+    # clientScopes:
+    #   - name: "orders:read"
+    #     description: "Read access to orders"
+    #     protocol: "openid-connect"   # default when omitted
+    #     type: "optional"             # "default", "optional", or "none" (default)
+    #     attributes:
+    #       "include.in.token.scope": "true"
+    #     protocolMappers:
+    #       - name: "orders-audience"
+    #         protocol: "openid-connect"
+    #         protocolMapper: "oidc-audience-mapper"
+    #         config:
+    #           "included.client.audience": "orders-api"
+
     clients:
       - clientId: "my-app"
         secret: "${MY_APP_CLIENT_SECRET}"

@@ -891,3 +891,190 @@ func (c *Client) AddGroupClientRoleMappings(ctx context.Context, realm, groupID,
 	}
 	return nil
 }
+
+// GetClientScopes returns all client scopes defined in the realm.
+// The admin API has no lookup by name, so callers match on the "name" field.
+func (c *Client) GetClientScopes(ctx context.Context, realm string) ([]map[string]any, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/client-scopes"
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding client scopes: %w", err)
+	}
+	return result, nil
+}
+
+// CreateClientScope creates a new client scope in the realm.
+// Returns the UUID of the newly created scope, extracted from the Location header.
+func (c *Client) CreateClientScope(ctx context.Context, realm string, body map[string]any) (string, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/client-scopes"
+	resp, err := c.doRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		return "", readError(resp)
+	}
+	return parseLocationID(resp, "creating client scope")
+}
+
+// UpdateClientScope updates a client scope by ID.
+func (c *Client) UpdateClientScope(ctx context.Context, realm, scopeID string, body map[string]any) error {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/client-scopes/" + url.PathEscape(scopeID)
+	resp, err := c.doRequest(ctx, http.MethodPut, path, body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return readError(resp)
+	}
+	return nil
+}
+
+// GetClientScopeProtocolMappers returns the protocol mappers of a client scope.
+func (c *Client) GetClientScopeProtocolMappers(ctx context.Context, realm, scopeID string) ([]map[string]any, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/client-scopes/" + url.PathEscape(scopeID) + "/protocol-mappers/models"
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding client scope protocol mappers: %w", err)
+	}
+	return result, nil
+}
+
+// CreateClientScopeProtocolMapper creates a protocol mapper on a client scope.
+func (c *Client) CreateClientScopeProtocolMapper(ctx context.Context, realm, scopeID string, body map[string]any) error {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/client-scopes/" + url.PathEscape(scopeID) + "/protocol-mappers/models"
+	resp, err := c.doRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		return readError(resp)
+	}
+	return nil
+}
+
+// UpdateClientScopeProtocolMapper updates a protocol mapper on a client scope by ID.
+func (c *Client) UpdateClientScopeProtocolMapper(ctx context.Context, realm, scopeID, mapperID string, body map[string]any) error {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/client-scopes/" + url.PathEscape(scopeID) + "/protocol-mappers/models/" + url.PathEscape(mapperID)
+	resp, err := c.doRequest(ctx, http.MethodPut, path, body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return readError(resp)
+	}
+	return nil
+}
+
+// listClientScopeAssignments is the shared reader for the four endpoints that
+// return a list of client scopes assigned somewhere (realm-wide defaults and
+// optionals, and a single client's defaults and optionals).
+func (c *Client) listClientScopeAssignments(ctx context.Context, path, what string) ([]map[string]any, error) {
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding %s: %w", what, err)
+	}
+	return result, nil
+}
+
+// putClientScopeAssignment is the shared writer for the four endpoints that
+// assign a client scope. All of them are idempotent PUTs with no body.
+func (c *Client) putClientScopeAssignment(ctx context.Context, path string) error {
+	resp, err := c.doRequest(ctx, http.MethodPut, path, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return readError(resp)
+	}
+	return nil
+}
+
+// GetRealmDefaultClientScopes returns the realm's default client scopes, which
+// Keycloak assigns to every newly created client.
+func (c *Client) GetRealmDefaultClientScopes(ctx context.Context, realm string) ([]map[string]any, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/default-default-client-scopes"
+	return c.listClientScopeAssignments(ctx, path, "realm default client scopes")
+}
+
+// AddRealmDefaultClientScope adds a client scope to the realm's defaults.
+func (c *Client) AddRealmDefaultClientScope(ctx context.Context, realm, scopeID string) error {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/default-default-client-scopes/" + url.PathEscape(scopeID)
+	return c.putClientScopeAssignment(ctx, path)
+}
+
+// GetRealmOptionalClientScopes returns the realm's optional client scopes.
+func (c *Client) GetRealmOptionalClientScopes(ctx context.Context, realm string) ([]map[string]any, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/default-optional-client-scopes"
+	return c.listClientScopeAssignments(ctx, path, "realm optional client scopes")
+}
+
+// AddRealmOptionalClientScope adds a client scope to the realm's optionals.
+func (c *Client) AddRealmOptionalClientScope(ctx context.Context, realm, scopeID string) error {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/default-optional-client-scopes/" + url.PathEscape(scopeID)
+	return c.putClientScopeAssignment(ctx, path)
+}
+
+// GetClientDefaultScopes returns the default client scopes assigned to a client.
+func (c *Client) GetClientDefaultScopes(ctx context.Context, realm, clientUUID string) ([]map[string]any, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/clients/" + url.PathEscape(clientUUID) + "/default-client-scopes"
+	return c.listClientScopeAssignments(ctx, path, "client default scopes")
+}
+
+// AddClientDefaultScope assigns a client scope to a client as a default scope.
+func (c *Client) AddClientDefaultScope(ctx context.Context, realm, clientUUID, scopeID string) error {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/clients/" + url.PathEscape(clientUUID) + "/default-client-scopes/" + url.PathEscape(scopeID)
+	return c.putClientScopeAssignment(ctx, path)
+}
+
+// GetClientOptionalScopes returns the optional client scopes assigned to a client.
+func (c *Client) GetClientOptionalScopes(ctx context.Context, realm, clientUUID string) ([]map[string]any, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/clients/" + url.PathEscape(clientUUID) + "/optional-client-scopes"
+	return c.listClientScopeAssignments(ctx, path, "client optional scopes")
+}
+
+// AddClientOptionalScope assigns a client scope to a client as an optional scope.
+func (c *Client) AddClientOptionalScope(ctx context.Context, realm, clientUUID, scopeID string) error {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/clients/" + url.PathEscape(clientUUID) + "/optional-client-scopes/" + url.PathEscape(scopeID)
+	return c.putClientScopeAssignment(ctx, path)
+}
