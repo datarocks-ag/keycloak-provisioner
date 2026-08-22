@@ -14,6 +14,7 @@ import (
 	"os"
 	"regexp"
 	"slices"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -355,6 +356,16 @@ type Client struct {
 	// It is marshalled into the client's acr.loa.map attribute and wins over an
 	// acr.loa.map entry supplied through Attributes.
 	AcrLoaMap map[string]int `yaml:"acrLoaMap"`
+	// DefaultAcrValues are the ACR values Keycloak applies when a request does
+	// not ask for one. Each must be a key of the effective ACR-to-LoA map,
+	// either this client's AcrLoaMap or the realm's.
+	//
+	// Keycloak stores them in the default.acr.values attribute as a single
+	// "##"-separated string — not a JSON array, despite the field being a list
+	// everywhere it is presented. Writing one by hand through Attributes is
+	// easy to get wrong, and the rejection quotes the ACR map rather than the
+	// encoding, so it reads as the wrong problem. This field encodes it.
+	DefaultAcrValues []string `yaml:"defaultAcrValues"`
 	// AuthenticationFlowBindingOverrides overrides realm flow bindings for
 	// this client. Keys are binding names ("browser", "direct_grant") and
 	// values are flow aliases, which the provisioner resolves to flow IDs.
@@ -727,6 +738,9 @@ func expandConfig(cfg *Config) {
 			for k := range c.OptionalClientScopes {
 				c.OptionalClientScopes[k] = expandEnvVars(c.OptionalClientScopes[k])
 			}
+			for k := range c.DefaultAcrValues {
+				c.DefaultAcrValues[k] = expandEnvVars(c.DefaultAcrValues[k])
+			}
 			c.Attributes = expandStringMap(c.Attributes)
 			c.AuthenticationFlowBindingOverrides = expandStringMap(c.AuthenticationFlowBindingOverrides)
 			expandProtocolMappers(c.ProtocolMappers)
@@ -935,7 +949,7 @@ func validate(cfg *Config) error {
 			return err
 		}
 
-		if err := validateClients(i, r.Clients); err != nil {
+		if err := validateClients(i, r.Clients, r.AcrLoaMap); err != nil {
 			return err
 		}
 
@@ -1443,7 +1457,7 @@ func validateUserRoles(prefix string, roles *UserRoles) error {
 	return nil
 }
 
-func validateClients(realmIdx int, clients []Client) error {
+func validateClients(realmIdx int, clients []Client, realmAcrLoaMap map[string]int) error {
 	clientIDs := make(map[string]bool)
 
 	for j, c := range clients {
@@ -1489,6 +1503,10 @@ func validateClients(realmIdx int, clients []Client) error {
 		}
 
 		if err := validateAcrLoaMap(prefix+".acrLoaMap", c.AcrLoaMap); err != nil {
+			return err
+		}
+
+		if err := validateDefaultAcrValues(prefix, c, realmAcrLoaMap); err != nil {
 			return err
 		}
 
@@ -1771,6 +1789,81 @@ func validateCredentials(prefix string, creds []Credential) error {
 		if c.Algorithm != "" && !validOTPAlgorithms[c.Algorithm] {
 			return fmt.Errorf("%s.algorithm: %q is not one of HmacSHA1, HmacSHA256, HmacSHA512", path, c.Algorithm)
 		}
+	}
+
+	return nil
+}
+
+// acrValueSeparator is how Keycloak packs several ACR values into the single
+// default.acr.values attribute.
+const acrValueSeparator = "##"
+
+// validateDefaultAcrValues checks a client's default ACR values against the
+// ACR-to-LoA map they have to come from.
+//
+// The map may also be set on the server rather than in config, so a value is
+// only rejected when a declared map disproves it — the same rule the broker
+// flow aliases follow. Keycloak's own rejection quotes the map without naming
+// the value or listing what it would accept.
+func validateDefaultAcrValues(prefix string, c Client, realmAcrLoaMap map[string]int) error {
+	if len(c.DefaultAcrValues) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]bool, len(c.DefaultAcrValues))
+
+	for i, v := range c.DefaultAcrValues {
+		path := fmt.Sprintf("%s.defaultAcrValues[%d]", prefix, i)
+
+		if v == "" {
+			return fmt.Errorf("%s: is empty", path)
+		}
+		if containsNullByte(v) {
+			return fmt.Errorf("%s: contains null byte", path)
+		}
+		// Keycloak joins the values with this, so one containing it would come
+		// back as two.
+		if strings.Contains(v, acrValueSeparator) {
+			return fmt.Errorf("%s: %q must not contain %q, which Keycloak uses to separate the values",
+				path, v, acrValueSeparator)
+		}
+		if seen[v] {
+			return fmt.Errorf("%s: duplicate ACR value %q", path, v)
+		}
+
+		seen[v] = true
+	}
+
+	known := make(map[string]bool, len(realmAcrLoaMap)+len(c.AcrLoaMap))
+	for name := range realmAcrLoaMap {
+		known[name] = true
+	}
+
+	for name := range c.AcrLoaMap {
+		known[name] = true
+	}
+
+	// Nothing declared means nothing to check against: the map may exist on
+	// the server already.
+	if len(known) == 0 {
+		return nil
+	}
+
+	for i, v := range c.DefaultAcrValues {
+		if known[v] {
+			continue
+		}
+
+		names := make([]string, 0, len(known))
+		for name := range known {
+			names = append(names, name)
+		}
+
+		sort.Strings(names)
+
+		return fmt.Errorf(
+			"%s.defaultAcrValues[%d]: %q is not in the acrLoaMap; the config declares %s",
+			prefix, i, v, strings.Join(names, ", "))
 	}
 
 	return nil

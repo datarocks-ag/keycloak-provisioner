@@ -3191,3 +3191,91 @@ func directGrant(t *testing.T, baseURL, realm, username, password, totp string) 
 
 	return "", fmt.Errorf("no token: %v", body["error_description"])
 }
+
+// TestIntegrationClientDefaultAcrValues proves the encoding is the one Keycloak
+// accepts. That is the whole point of the typed field: written by hand through
+// the generic attributes map, a JSON array is rejected with a message about the
+// ACR-to-LoA map rather than about encoding, which sends you looking in the
+// wrong place.
+func TestIntegrationClientDefaultAcrValues(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	configYAML := `
+realms:
+  - realm: "acrdefaults-realm"
+    enabled: true
+    acrLoaMap:
+      gold: 2
+      silver: 1
+    clients:
+      - clientId: "acrdefaults-app"
+        enabled: true
+        defaultAcrValues:
+          - "gold"
+          - "silver"
+`
+	cfgPath := writeTestConfig(t, configYAML)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+
+	clients, err := kc.GetClients(ctx, "acrdefaults-realm", "acrdefaults-app")
+	if err != nil || len(clients) == 0 {
+		t.Fatalf("acr-app not found: %v", err)
+	}
+
+	attrs, _ := clients[0]["attributes"].(map[string]any)
+	if got := attrs["default.acr.values"]; got != "gold##silver" {
+		t.Errorf("default.acr.values = %v, want gold##silver", got)
+	}
+
+	// Re-running must not disturb it.
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+}
+
+// TestIntegrationClientDefaultAcrValuesRejectedByServer records why the config
+// checks the values itself. Keycloak's refusal names neither the offending
+// value nor what it would accept.
+func TestIntegrationClientDefaultAcrValuesRejectedByServer(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	// Bypass the config check by writing the attribute by hand, the way someone
+	// would before the typed field existed.
+	configYAML := `
+realms:
+  - realm: "acr-reject-realm"
+    enabled: true
+    acrLoaMap:
+      gold: 2
+    clients:
+      - clientId: "bad-acrdefaults-app"
+        enabled: true
+        attributes:
+          default.acr.values: "[\"standard\"]"
+`
+	cfgPath := writeTestConfig(t, configYAML)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = provisioner.New(kc, cfg).Run(context.Background())
+	if err == nil {
+		t.Fatal("expected Keycloak to reject an unknown ACR value")
+	}
+	if !strings.Contains(err.Error(), "ACR") {
+		t.Errorf("expected the server's ACR complaint, got: %v", err)
+	}
+
+	t.Logf("Keycloak's message, which names neither the value nor the alternatives: %v", err)
+}

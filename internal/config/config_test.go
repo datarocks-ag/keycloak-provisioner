@@ -2562,3 +2562,108 @@ realms:
 		t.Errorf("expected unset fullScopeAllowed to stay nil, got %v", *clients[2].FullScopeAllowed)
 	}
 }
+
+func TestClientDefaultAcrValuesParsing(t *testing.T) {
+	t.Setenv("TEST_ACR", "gold")
+
+	yaml := `
+realms:
+  - realm: "test"
+    acrLoaMap:
+      gold: 2
+      silver: 1
+    clients:
+      - clientId: "app"
+        defaultAcrValues:
+          - "${TEST_ACR}"
+          - "silver"
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got := cfg.Realms[0].Clients[0].DefaultAcrValues
+	if len(got) != 2 || got[0] != "gold" || got[1] != "silver" {
+		t.Errorf("unexpected defaultAcrValues: %v", got)
+	}
+}
+
+func TestClientDefaultAcrValuesValidation(t *testing.T) {
+	tests := []struct {
+		name  string
+		realm string
+		want  string
+	}{
+		{
+			"value not in the declared map",
+			`    acrLoaMap:
+      gold: 2
+    clients:
+      - clientId: "app"
+        defaultAcrValues:
+          - "standard"`,
+			`"standard" is not in the acrLoaMap; the config declares gold`,
+		},
+		{
+			"separator inside a value",
+			`    acrLoaMap:
+      gold: 2
+    clients:
+      - clientId: "app"
+        defaultAcrValues:
+          - "go##ld"`,
+			`must not contain "##"`,
+		},
+		{
+			"duplicate value",
+			`    acrLoaMap:
+      gold: 2
+    clients:
+      - clientId: "app"
+        defaultAcrValues:
+          - "gold"
+          - "gold"`,
+			"duplicate ACR value",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			yaml := "realms:\n  - realm: \"test\"\n" + tc.realm + "\n"
+
+			path := writeTempConfig(t, yaml)
+			if _, err := Load(path); err == nil {
+				t.Fatalf("expected an error mentioning %q", tc.want)
+			} else if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("expected %q, got: %v", tc.want, err)
+			}
+		})
+	}
+}
+
+// TestClientDefaultAcrValuesAcceptsClientMapAndUndeclared covers the two cases
+// that must not fail: the value comes from the client's own map, or no map is
+// declared anywhere and the server may already have one.
+func TestClientDefaultAcrValuesAcceptsClientMapAndUndeclared(t *testing.T) {
+	for name, realm := range map[string]string{
+		"client's own map": `    clients:
+      - clientId: "app"
+        acrLoaMap:
+          gold: 2
+        defaultAcrValues:
+          - "gold"`,
+		"no map declared anywhere": `    clients:
+      - clientId: "app"
+        defaultAcrValues:
+          - "set-on-the-server"`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := writeTempConfig(t, "realms:\n  - realm: \"test\"\n"+realm+"\n")
+			if _, err := Load(path); err != nil {
+				t.Errorf("must be accepted: %v", err)
+			}
+		})
+	}
+}

@@ -36,6 +36,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dry-run reports a credential-only user update as
   `would seed user credentials`, naming each credential, rather than the generic
   `would update user` it would otherwise share with every other user change.
+- `defaultAcrValues` on a client, the ACR values Keycloak applies when a request
+  asks for none. It was already reachable through the generic `attributes` map,
+  but the encoding is not what the field's shape suggests: Keycloak stores the
+  values in `default.acr.values` as one `##`-separated string, and rejects both
+  a JSON array and bare level numbers. Worse, the rejection quotes the
+  ACR-to-LoA map rather than the encoding, so it reads as the wrong problem.
+
+  Values are also checked against the effective `acrLoaMap` at config load when
+  one is declared, naming the offending value and listing what is available —
+  Keycloak's own refusal names neither. The check is skipped when no map is
+  declared anywhere, since the server may already have one.
+
+  The README example previously wrote that attribute as a JSON array, which
+  Keycloak rejects. It now uses the typed field.
 
 ## [1.8.1] — 2026-08-22
 
