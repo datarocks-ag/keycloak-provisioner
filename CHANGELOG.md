@@ -75,9 +75,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with the subject carried in `subject` (`users` or `groups`) and `subjectName`
   attributes. The `Realm role already assigned` and `Client role already
   assigned` debug lines are unchanged, and groups now emit them too.
-- Failures assigning roles to a group now say which group and which role, and
-  wrap the underlying error. The group path returned these bare, so a failure
-  reported only what Keycloak said.
+- Failures assigning roles now carry more context. Group role failures name the
+  group and the role and wrap the underlying error, where the group path
+  returned these bare; and a client that cannot be resolved names the realm and
+  the subject as well as the clientId, where each path previously reported only
+  part of that.
 - Roles are sent to the role-mapping endpoints as `{id, name}` rather than the
   whole representation Keycloak returned. Groups already did this; users and
   service accounts now do too, so nothing echoes back a server-derived field

@@ -108,7 +108,7 @@ func (p *Provisioner) ensureClientRoleMappings(ctx context.Context, realm string
 
 		clientUUID, err := p.resolveClientUUID(ctx, realm, clientID)
 		if err != nil {
-			return err
+			return fmt.Errorf("resolving client for %s %q: %w", subject.kind, subject.name, err)
 		}
 
 		existing, err := p.client.GetClientRoleMappings(ctx, realm, subject.kind, subject.id, clientUUID)
@@ -167,4 +167,22 @@ func (p *Provisioner) ensureUserRoles(ctx context.Context, realm, userID, userna
 	}
 
 	return p.ensureRoleMappings(ctx, realm, userRoleSubject(userID, username), roles.Realm, roles.Clients)
+}
+
+// resolveClientUUID returns the internal UUID of the client with the given clientId.
+func (p *Provisioner) resolveClientUUID(ctx context.Context, realm, clientID string) (string, error) {
+	clients, err := p.client.GetClients(ctx, realm, clientID)
+	if err != nil {
+		return "", err
+	}
+	for _, c := range clients {
+		if id, ok := c["clientId"].(string); ok && id == clientID {
+			uuid, ok := c["id"].(string)
+			if !ok {
+				return "", fmt.Errorf("client %q: missing or invalid id in response", clientID)
+			}
+			return uuid, nil
+		}
+	}
+	return "", fmt.Errorf("client %q not found in realm %q", clientID, realm)
 }

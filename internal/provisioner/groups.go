@@ -124,24 +124,6 @@ func (p *Provisioner) resolveGroupPath(ctx context.Context, realm, path string) 
 	return parentID, nil
 }
 
-// resolveClientUUID returns the internal UUID of the client with the given clientId.
-func (p *Provisioner) resolveClientUUID(ctx context.Context, realm, clientID string) (string, error) {
-	clients, err := p.client.GetClients(ctx, realm, clientID)
-	if err != nil {
-		return "", err
-	}
-	for _, c := range clients {
-		if id, ok := c["clientId"].(string); ok && id == clientID {
-			uuid, ok := c["id"].(string)
-			if !ok {
-				return "", fmt.Errorf("client %q: missing or invalid id in response", clientID)
-			}
-			return uuid, nil
-		}
-	}
-	return "", fmt.Errorf("client %q not found", clientID)
-}
-
 // nameSet returns the set of "name" values present in a list of role representations.
 func nameSet(roles []map[string]any) map[string]bool {
 	set := make(map[string]bool, len(roles))
