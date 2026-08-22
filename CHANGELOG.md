@@ -23,6 +23,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   username so re-runs stay idempotent. Everything after creation —
   password, roles, group memberships — is unchanged.
 
+### Fixed
+
+- `${VAR}` references are now expanded in the **keys** of `roles.clients` under a
+  user and under a client's `serviceAccountRoles`, and in the keys of a group's
+  `attributes`. Only the values were expanded, so a templated clientId reached
+  Keycloak literally and provisioning failed with
+  `client "${VAR}" not found in realm`. Group `clientRoles` keys were already
+  expanded, which is why the gap went unnoticed.
+- When two keys of a multivalued map expand to the same key, their value lists
+  are merged instead of one silently overwriting the other, and the merge is now
+  order-independent. Organization and organization-group attributes previously
+  dropped one side, nondeterministically.
+
 ## [1.7.0] — 2026-08-22
 
 Extends the config schema to cover realm attributes, client scopes,

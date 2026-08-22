@@ -2314,3 +2314,111 @@ realms:
 		t.Errorf("expected the expanded id, got %q", got)
 	}
 }
+
+func TestEnvVarExpansionInUserClientRoleKeys(t *testing.T) {
+	t.Setenv("TEST_CLIENT_ID", "resolved-app")
+
+	yaml := `
+realms:
+  - realm: "test"
+    users:
+      - username: "alice"
+        roles:
+          clients:
+            "${TEST_CLIENT_ID}": ["admin"]
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	clients := cfg.Realms[0].Users[0].Roles.Clients
+	if roles, ok := clients["resolved-app"]; !ok || len(roles) != 1 || roles[0] != "admin" {
+		t.Errorf("expected user roles.clients re-keyed to resolved-app: got %v", clients)
+	}
+	if _, ok := clients["${TEST_CLIENT_ID}"]; ok {
+		t.Error("expected original templated key to be removed")
+	}
+}
+
+func TestEnvVarExpansionInServiceAccountClientRoleKeys(t *testing.T) {
+	t.Setenv("TEST_CLIENT_ID", "resolved-app")
+
+	yaml := `
+realms:
+  - realm: "test"
+    clients:
+      - clientId: "worker"
+        serviceAccountsEnabled: true
+        serviceAccountRoles:
+          clients:
+            "${TEST_CLIENT_ID}": ["admin"]
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	clients := cfg.Realms[0].Clients[0].ServiceAccountRoles.Clients
+	if roles, ok := clients["resolved-app"]; !ok || len(roles) != 1 || roles[0] != "admin" {
+		t.Errorf("expected serviceAccountRoles.clients re-keyed to resolved-app: got %v", clients)
+	}
+	if _, ok := clients["${TEST_CLIENT_ID}"]; ok {
+		t.Error("expected original templated key to be removed")
+	}
+}
+
+func TestEnvVarExpansionInGroupAttributeKeys(t *testing.T) {
+	t.Setenv("TEST_ATTR_KEY", "resolved.attr")
+
+	yaml := `
+realms:
+  - realm: "test"
+    groups:
+      - name: "engineering"
+        attributes:
+          "${TEST_ATTR_KEY}": ["value"]
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	attrs := cfg.Realms[0].Groups[0].Attributes
+	if values, ok := attrs["resolved.attr"]; !ok || len(values) != 1 || values[0] != "value" {
+		t.Errorf("expected group attributes re-keyed to resolved.attr: got %v", attrs)
+	}
+	if _, ok := attrs["${TEST_ATTR_KEY}"]; ok {
+		t.Error("expected original templated key to be removed")
+	}
+}
+
+func TestEnvVarExpansionInOrganizationAttributeKeyCollisionMerges(t *testing.T) {
+	t.Setenv("TEST_ATTR_KEY", "tier")
+
+	yaml := `
+realms:
+  - realm: "test"
+    organizationsEnabled: true
+    organizations:
+      - name: "acme"
+        domains:
+          - name: "acme.test"
+        attributes:
+          "${TEST_ATTR_KEY}": ["gold"]
+          "tier": ["silver"]
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	attrs := cfg.Realms[0].Organizations[0].Attributes
+	if len(attrs["tier"]) != 2 {
+		t.Errorf("expected colliding organization attribute keys to merge into 2 values, got %v", attrs)
+	}
+}
