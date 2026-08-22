@@ -163,6 +163,7 @@ func TestBuildClientBodyAllFields(t *testing.T) {
 	bearerOnly := false
 	consent := true
 	frontchannel := false
+	fullScope := false
 
 	c := config.Client{
 		ClientID:                  "app",
@@ -179,6 +180,7 @@ func TestBuildClientBodyAllFields(t *testing.T) {
 		StandardFlowEnabled:       &stdFlow,
 		DirectAccessGrantsEnabled: &directAccess,
 		ServiceAccountsEnabled:    &serviceAccounts,
+		FullScopeAllowed:          &fullScope,
 		BearerOnly:                &bearerOnly,
 		ConsentRequired:           &consent,
 		FrontchannelLogout:        &frontchannel,
@@ -202,6 +204,7 @@ func TestBuildClientBodyAllFields(t *testing.T) {
 		"standardFlowEnabled":       true,
 		"directAccessGrantsEnabled": false,
 		"serviceAccountsEnabled":    true,
+		"fullScopeAllowed":          false,
 		"bearerOnly":                false,
 		"consentRequired":           true,
 		"frontchannelLogout":        false,
@@ -421,5 +424,40 @@ func TestEnsureClientUpdatePreservesOutOfBandAttributes(t *testing.T) {
 	}
 	if attrs["post.logout.redirect.uris"] != "+" {
 		t.Errorf("configured attribute missing, got %v", attrs["post.logout.redirect.uris"])
+	}
+}
+
+// TestBuildClientBodyFullScopeAllowed covers both directions of the flag and,
+// more importantly, that leaving it unset sends no key at all. Keycloak's
+// client update is a sparse merge for top-level booleans, so omitting the key
+// preserves whatever the client already has rather than resetting it to the
+// permissive default.
+func TestBuildClientBodyFullScopeAllowed(t *testing.T) {
+	on := true
+	off := false
+
+	tests := []struct {
+		name    string
+		configd *bool
+		wantKey bool
+		want    any
+	}{
+		{"unset sends no key", nil, false, nil},
+		{"false is sent", &off, true, false},
+		{"true is sent", &on, true, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body := buildClientBody(config.Client{ClientID: "app", FullScopeAllowed: tc.configd}, nil, nil)
+
+			got, ok := body["fullScopeAllowed"]
+			if ok != tc.wantKey {
+				t.Fatalf("fullScopeAllowed present = %v, want %v (body: %v)", ok, tc.wantKey, body)
+			}
+			if tc.wantKey && got != tc.want {
+				t.Errorf("fullScopeAllowed = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

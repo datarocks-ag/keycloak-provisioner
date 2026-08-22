@@ -115,6 +115,10 @@ realms:
         standardFlowEnabled: true
         directAccessGrantsEnabled: false
         serviceAccountsEnabled: false
+        # Keycloak defaults this to true, which puts every role the subject holds
+        # into the client's tokens. Set false to limit them to roles reachable
+        # through the assigned client scopes. Omitting it leaves it unmanaged.
+        fullScopeAllowed: false
         bearerOnly: false
         consentRequired: false
         frontchannelLogout: false
