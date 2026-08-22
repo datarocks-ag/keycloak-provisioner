@@ -389,3 +389,66 @@ func TestCheckStepUpAuthentication(t *testing.T) {
 		t.Errorf("step-up has no version floor, got %v", problems)
 	}
 }
+
+// errOnProviders answers server info but refuses the provider lists, the way a
+// least-privilege admin account does: create-realm is enough to provision but
+// not to read /authentication/*-providers.
+type errOnProviders struct{ doc map[string]any }
+
+func (e errOnProviders) GetServerInfo(context.Context) (map[string]any, error) {
+	return e.doc, nil
+}
+
+func (e errOnProviders) GetAuthenticationProviders(context.Context, string, string) ([]map[string]any, error) {
+	return nil, errors.New("unexpected status 403: Forbidden")
+}
+
+// TestVerifySkipsProviderChecksWhenForbidden pins that a check the account
+// cannot perform is skipped rather than failing the run. Aborting would break
+// setups that provision perfectly well, which is worse than not checking.
+func TestVerifySkipsProviderChecksWhenForbidden(t *testing.T) {
+	reader := errOnProviders{doc: serverInfoDoc("26.6.4", map[string]bool{"ORGANIZATION": true})}
+
+	cfg := &config.Config{Realms: []config.Realm{{
+		Realm: "test",
+		AuthenticationFlows: []config.AuthenticationFlow{{
+			Alias:      "f",
+			Executions: []config.AuthenticationExecution{{Provider: "anything-at-all"}},
+		}},
+	}}}
+
+	if err := Verify(context.Background(), reader, cfg); err != nil {
+		t.Fatalf("a forbidden provider list must not fail the run: %v", err)
+	}
+}
+
+// TestVerifyStillReportsVersionProblemsWhenProvidersForbidden confirms the
+// checks degrade independently: losing one does not lose the other.
+func TestVerifyStillReportsVersionProblemsWhenProvidersForbidden(t *testing.T) {
+	reader := errOnProviders{doc: serverInfoDoc("26.2.0", map[string]bool{"ORGANIZATION": true})}
+
+	err := Verify(context.Background(), reader, orgGroupConfig())
+	if err == nil {
+		t.Fatal("the version problem should still be reported")
+	}
+	if !strings.Contains(err.Error(), "organization groups") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// allFail refuses everything, as an account with no admin rights at all would.
+type allFail struct{}
+
+func (allFail) GetServerInfo(context.Context) (map[string]any, error) {
+	return nil, errors.New("unexpected status 403: Forbidden")
+}
+
+func (allFail) GetAuthenticationProviders(context.Context, string, string) ([]map[string]any, error) {
+	return nil, errors.New("unexpected status 403: Forbidden")
+}
+
+func TestVerifySkipsEverythingWhenServerInfoForbidden(t *testing.T) {
+	if err := Verify(context.Background(), allFail{}, orgGroupConfig()); err != nil {
+		t.Fatalf("an unreadable server must not fail the run: %v", err)
+	}
+}

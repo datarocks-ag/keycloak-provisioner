@@ -191,7 +191,12 @@ func TestReadCapabilities(t *testing.T) {
 		},
 	}
 
-	caps, err := ReadCapabilities(context.Background(), reader)
+	info, err := ReadServerInfo(context.Background(), reader)
+	if err != nil {
+		t.Fatalf("ReadServerInfo: %v", err)
+	}
+
+	caps, err := ReadCapabilities(context.Background(), reader, info)
 	if err != nil {
 		t.Fatalf("ReadCapabilities: %v", err)
 	}

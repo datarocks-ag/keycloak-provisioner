@@ -44,11 +44,12 @@ func (c Capabilities) known() bool {
 	return len(c.Authenticators) > 0
 }
 
-// ReadCapabilities collects the provider lists and protocol mapper types.
-func ReadCapabilities(ctx context.Context, reader ServerReader) (Capabilities, error) {
+// ReadCapabilities collects the provider lists, taking the mapper types from
+// the server info the caller already read.
+func ReadCapabilities(ctx context.Context, reader ServerReader, info ServerInfo) (Capabilities, error) {
 	caps := Capabilities{
 		Authenticators:  map[string]bool{},
-		ProtocolMappers: map[string]map[string]bool{},
+		ProtocolMappers: info.ProtocolMappers,
 	}
 
 	for _, kind := range providerKinds {
@@ -62,33 +63,6 @@ func ReadCapabilities(ctx context.Context, reader ServerReader) (Capabilities, e
 				caps.Authenticators[id] = true
 			}
 		}
-	}
-
-	raw, err := reader.GetServerInfo(ctx)
-	if err != nil {
-		return Capabilities{}, fmt.Errorf("reading server info: %w", err)
-	}
-
-	types, _ := raw["protocolMapperTypes"].(map[string]any)
-	for protocol, entry := range types {
-		mappers, ok := entry.([]any)
-		if !ok {
-			continue
-		}
-
-		ids := map[string]bool{}
-
-		for _, m := range mappers {
-			mapper, ok := m.(map[string]any)
-			if !ok {
-				continue
-			}
-			if id, ok := mapper["id"].(string); ok {
-				ids[id] = true
-			}
-		}
-
-		caps.ProtocolMappers[protocol] = ids
 	}
 
 	return caps, nil

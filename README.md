@@ -539,6 +539,19 @@ Suggestions use edit distance, so a genuine typo gets one and a provider that is
 
 If the server does not report its providers, nothing is rejected on the strength of a question that could not be asked.
 
+### Permissions
+
+The check needs more rights than provisioning does. Reading the server info and the provider lists requires an admin account with broad read access; an account holding only `create-realm`, for instance, is refused the provider lists.
+
+A check the account cannot perform is **skipped with a warning**, never treated as a failure — provisioning that works must keep working:
+
+```
+WARN  Could not read the server's provider lists; skipping provider validation
+      error="reading authenticator-providers: unexpected status 403: ..."
+```
+
+The two halves degrade independently, so losing the provider lists still leaves the version and feature checks in place.
+
 Pass `--skip-version-check` to bypass all of this.
 
 ## Connection Retry
