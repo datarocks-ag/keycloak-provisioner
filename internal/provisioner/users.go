@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 
-	"keycloak-provisioner/internal/client"
 	"keycloak-provisioner/internal/config"
 )
 
@@ -153,102 +152,6 @@ func (p *Provisioner) ensureUserGroups(ctx context.Context, realm, userID, usern
 		// Mark as member so duplicate paths in the config (after
 		// normalization) are not added again in the same run.
 		memberOf[normalized] = true
-	}
-
-	return nil
-}
-
-func (p *Provisioner) ensureUserRoles(ctx context.Context, realm, userID, username string, roles *config.UserRoles) error {
-	// Assign realm roles
-	if len(roles.Realm) > 0 {
-		existingRoles, err := p.client.GetRealmRoleMappings(ctx, realm, client.RoleSubjectUsers, userID)
-		if err != nil {
-			return fmt.Errorf("getting realm role mappings for user %q: %w", username, err)
-		}
-
-		existingNames := make(map[string]bool, len(existingRoles))
-		for _, r := range existingRoles {
-			if name, ok := r["name"].(string); ok {
-				existingNames[name] = true
-			}
-		}
-
-		var toAdd []map[string]any
-		for _, roleName := range roles.Realm {
-			if existingNames[roleName] {
-				slog.Debug("Realm role already assigned", "realm", realm, "username", username, "role", roleName)
-				continue
-			}
-			role, err := p.client.GetRealmRole(ctx, realm, roleName)
-			if err != nil {
-				return fmt.Errorf("looking up realm role %q: %w", roleName, err)
-			}
-			if role == nil {
-				return fmt.Errorf("realm role %q not found in realm %q", roleName, realm)
-			}
-			toAdd = append(toAdd, role)
-		}
-
-		if len(toAdd) > 0 {
-			slog.Info("Assigning realm roles to user", "realm", realm, "username", username, "count", len(toAdd))
-			if err := p.client.AddRealmRoleMappings(ctx, realm, client.RoleSubjectUsers, userID, toAdd); err != nil {
-				return fmt.Errorf("assigning realm roles to user %q: %w", username, err)
-			}
-		}
-	}
-
-	// Assign client roles
-	for clientID, clientRoleNames := range roles.Clients {
-		if len(clientRoleNames) == 0 {
-			continue
-		}
-
-		clients, err := p.client.GetClients(ctx, realm, clientID)
-		if err != nil {
-			return fmt.Errorf("looking up client %q: %w", clientID, err)
-		}
-		if len(clients) == 0 {
-			return fmt.Errorf("client %q not found in realm %q", clientID, realm)
-		}
-		clientUUID, ok := clients[0]["id"].(string)
-		if !ok {
-			return fmt.Errorf("client %q: missing or invalid id in response", clientID)
-		}
-
-		existingRoles, err := p.client.GetClientRoleMappings(ctx, realm, client.RoleSubjectUsers, userID, clientUUID)
-		if err != nil {
-			return fmt.Errorf("getting client role mappings for user %q on client %q: %w", username, clientID, err)
-		}
-
-		existingNames := make(map[string]bool, len(existingRoles))
-		for _, r := range existingRoles {
-			if name, ok := r["name"].(string); ok {
-				existingNames[name] = true
-			}
-		}
-
-		var toAdd []map[string]any
-		for _, roleName := range clientRoleNames {
-			if existingNames[roleName] {
-				slog.Debug("Client role already assigned", "realm", realm, "username", username, "client", clientID, "role", roleName)
-				continue
-			}
-			role, err := p.client.GetClientRole(ctx, realm, clientUUID, roleName)
-			if err != nil {
-				return fmt.Errorf("looking up client role %q on client %q: %w", roleName, clientID, err)
-			}
-			if role == nil {
-				return fmt.Errorf("client role %q not found on client %q in realm %q", roleName, clientID, realm)
-			}
-			toAdd = append(toAdd, role)
-		}
-
-		if len(toAdd) > 0 {
-			slog.Info("Assigning client roles to user", "realm", realm, "username", username, "client", clientID, "count", len(toAdd))
-			if err := p.client.AddClientRoleMappings(ctx, realm, client.RoleSubjectUsers, userID, clientUUID, toAdd); err != nil {
-				return fmt.Errorf("assigning client roles to user %q on client %q: %w", username, clientID, err)
-			}
-		}
 	}
 
 	return nil

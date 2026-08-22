@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"strings"
 
-	"keycloak-provisioner/internal/client"
 	"keycloak-provisioner/internal/config"
 )
 
@@ -20,11 +19,8 @@ func (p *Provisioner) ensureGroup(ctx context.Context, realm, parentID string, g
 		return err
 	}
 
-	if err := p.ensureGroupRealmRoles(ctx, realm, uuid, g); err != nil {
-		return fmt.Errorf("realm roles for group %q: %w", g.Name, err)
-	}
-	if err := p.ensureGroupClientRoles(ctx, realm, uuid, g); err != nil {
-		return fmt.Errorf("client roles for group %q: %w", g.Name, err)
+	if err := p.ensureRoleMappings(ctx, realm, groupRoleSubject(uuid, g.Name), g.RealmRoles, g.ClientRoles); err != nil {
+		return fmt.Errorf("roles for group %q: %w", g.Name, err)
 	}
 
 	for _, sub := range g.SubGroups {
@@ -98,85 +94,6 @@ func buildGroupBody(g config.Group) map[string]any {
 		body["attributes"] = g.Attributes
 	}
 	return body
-}
-
-// ensureGroupRealmRoles grants any configured realm roles not already mapped to the group.
-func (p *Provisioner) ensureGroupRealmRoles(ctx context.Context, realm, groupID string, g config.Group) error {
-	if len(g.RealmRoles) == 0 {
-		return nil
-	}
-
-	existing, err := p.client.GetRealmRoleMappings(ctx, realm, client.RoleSubjectGroups, groupID)
-	if err != nil {
-		return err
-	}
-	mapped := nameSet(existing)
-
-	var toAdd []map[string]any
-	for _, roleName := range g.RealmRoles {
-		if mapped[roleName] {
-			continue
-		}
-		role, err := p.client.GetRealmRole(ctx, realm, roleName)
-		if err != nil {
-			return err
-		}
-		if role == nil {
-			return fmt.Errorf("realm role %q not found", roleName)
-		}
-		toAdd = append(toAdd, map[string]any{"id": role["id"], "name": role["name"]})
-	}
-
-	if len(toAdd) == 0 {
-		return nil
-	}
-	slog.Info("Granting realm roles to group", "realm", realm, "group", g.Name, "count", len(toAdd))
-	return p.client.AddRealmRoleMappings(ctx, realm, client.RoleSubjectGroups, groupID, toAdd)
-}
-
-// ensureGroupClientRoles grants any configured client roles not already mapped to the group.
-func (p *Provisioner) ensureGroupClientRoles(ctx context.Context, realm, groupID string, g config.Group) error {
-	for clientID, roleNames := range g.ClientRoles {
-		if len(roleNames) == 0 {
-			continue
-		}
-
-		clientUUID, err := p.resolveClientUUID(ctx, realm, clientID)
-		if err != nil {
-			return err
-		}
-
-		existing, err := p.client.GetClientRoleMappings(ctx, realm, client.RoleSubjectGroups, groupID, clientUUID)
-		if err != nil {
-			return err
-		}
-		mapped := nameSet(existing)
-
-		var toAdd []map[string]any
-		for _, roleName := range roleNames {
-			if mapped[roleName] {
-				continue
-			}
-			role, err := p.client.GetClientRole(ctx, realm, clientUUID, roleName)
-			if err != nil {
-				return err
-			}
-			if role == nil {
-				return fmt.Errorf("client role %q not found on client %q", roleName, clientID)
-			}
-			toAdd = append(toAdd, map[string]any{"id": role["id"], "name": role["name"]})
-		}
-
-		if len(toAdd) == 0 {
-			continue
-		}
-		slog.Info("Granting client roles to group", "realm", realm, "group", g.Name, "client", clientID, "count", len(toAdd))
-		if err := p.client.AddClientRoleMappings(ctx, realm, client.RoleSubjectGroups, groupID, clientUUID, toAdd); err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
 
 // normalizeGroupPath returns the path in Keycloak's canonical form: a single

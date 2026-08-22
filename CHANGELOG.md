@@ -69,6 +69,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   attributes. Mappers on a client gained the same attributes in place of the
   bare `clientUUID`, and `containerName` is the clientId, which is more use in a
   log than the UUID. This matches how the dry-run adapter already reports them.
+- The user and group role reconcilers were merged into one. Four log messages
+  become two: `Assigning realm roles to user` and `Granting realm roles to
+  group` are both now `Assigning realm roles`, and likewise for client roles,
+  with the subject carried in `subject` (`users` or `groups`) and `subjectName`
+  attributes. The `Realm role already assigned` and `Client role already
+  assigned` debug lines are unchanged, and groups now emit them too.
+- Failures assigning roles to a group now say which group and which role, and
+  wrap the underlying error. The group path returned these bare, so a failure
+  reported only what Keycloak said.
+- Roles are sent to the role-mapping endpoints as `{id, name}` rather than the
+  whole representation Keycloak returned. Groups already did this; users and
+  service accounts now do too, so nothing echoes back a server-derived field
+  like `composite` or `containerId`.
 - `realmRoles` and `clientRoles` on an organization group are now rejected at
   config load with an explanation, instead of being rejected as unknown fields.
   Keycloak 26.7 accepts the corresponding role-mapping call and reads the role
