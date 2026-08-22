@@ -20,11 +20,11 @@ func (p *Provisioner) ensureUser(ctx context.Context, realm string, user config.
 	created := false
 
 	if len(existing) == 0 {
-		slog.Info("Creating user", "realm", realm, "username", user.Username)
-		id, err := p.client.CreateUser(ctx, realm, body)
+		id, err := p.createUser(ctx, realm, user, body)
 		if err != nil {
 			return err
 		}
+
 		userID = id
 		created = true
 	} else {
@@ -33,6 +33,15 @@ func (p *Provisioner) ensureUser(ctx context.Context, realm string, user config.
 			return fmt.Errorf("user %q: missing or invalid id in response", user.Username)
 		}
 		userID = id
+
+		// An id cannot be changed after creation, so a mismatch means the
+		// server holds a different identity than the config asserts —
+		// something else may already reference the existing one.
+		if user.ID != "" && user.ID != userID {
+			return fmt.Errorf(
+				"user %q exists with id %s but the config declares %s; ids cannot be changed after creation",
+				user.Username, userID, user.ID)
+		}
 
 		if strategy == "create" {
 			slog.Info("Skipping existing user (strategy=create)", "realm", realm, "username", user.Username)
@@ -77,6 +86,36 @@ func (p *Provisioner) ensureUser(ctx context.Context, realm string, user config.
 // Membership is additive — existing memberships are never removed. A group
 // that does not exist is logged as a warning and skipped; it does not abort
 // the run.
+// createUser creates a user and returns its id.
+//
+// A user that declares an id goes through partial import: Keycloak's
+// create-user endpoint accepts an id in the representation and silently
+// discards it, generating its own instead. Import honours it, and with
+// ifResourceExists=SKIP it creates only, so the rest of the reconcile —
+// password, roles, groups — continues down the normal path either way.
+func (p *Provisioner) createUser(ctx context.Context, realm string, user config.User, body map[string]any) (string, error) {
+	if user.ID == "" {
+		slog.Info("Creating user", "realm", realm, "username", user.Username)
+
+		return p.client.CreateUser(ctx, realm, body)
+	}
+
+	slog.Info("Creating user with a fixed id", "realm", realm, "username", user.Username, "userID", user.ID)
+
+	imported := make(map[string]any, len(body)+1)
+	for k, v := range body {
+		imported[k] = v
+	}
+
+	imported["id"] = user.ID
+
+	if err := p.client.PartialImportUsers(ctx, realm, []map[string]any{imported}); err != nil {
+		return "", fmt.Errorf("importing user %q with id %s: %w", user.Username, user.ID, err)
+	}
+
+	return user.ID, nil
+}
+
 func (p *Provisioner) ensureUserGroups(ctx context.Context, realm, userID, username string, groups []string) error {
 	existing, err := p.client.GetUserGroups(ctx, realm, userID)
 	if err != nil {

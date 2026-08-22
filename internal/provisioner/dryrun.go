@@ -268,6 +268,27 @@ func (d *dryRunAPI) CreateUser(_ context.Context, realm string, body map[string]
 	return id, nil
 }
 
+// PartialImportUsers is how a user with a chosen id is created, so the id it
+// would get is the one the config asked for, not a synthetic one. Recording it
+// keeps later steps that resolve the username — organization membership, for
+// instance — reporting correctly.
+func (d *dryRunAPI) PartialImportUsers(_ context.Context, realm string, users []map[string]any) error {
+	for _, u := range users {
+		username, _ := u["username"].(string)
+		id, _ := u["id"].(string)
+
+		slog.Info("DRY-RUN: would import user", "realm", realm, "username", username, "userID", id)
+
+		if username != "" && id != "" {
+			d.mu.Lock()
+			d.createdUsers[userKey{realm, username}] = id
+			d.mu.Unlock()
+		}
+	}
+
+	return nil
+}
+
 func (d *dryRunAPI) UpdateUser(_ context.Context, realm, userID string, body map[string]any) error {
 	slog.Info("DRY-RUN: would update user", "realm", realm, "userID", userID, "username", body["username"])
 	return nil

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -1089,5 +1090,157 @@ func TestEnsureUserGroupsMissingGroupWarnsAndContinues(t *testing.T) {
 
 	if got, _ := addedGroupID.Load().(string); got != "group-uuid-1" {
 		t.Errorf("expected membership added to group-uuid-1 after skipping missing group, got %q", got)
+	}
+}
+
+func TestEnsureUserWithFixedIDUsesPartialImport(t *testing.T) {
+	var mu sync.Mutex
+	var imported map[string]any
+	createCalled := false
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/users": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{})
+		},
+		"POST /admin/realms/{realm}/users": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			createCalled = true
+			mu.Unlock()
+			w.Header().Set("Location", "http://kc/admin/realms/test/users/generated-id")
+			w.WriteHeader(http.StatusCreated)
+		},
+		"POST /admin/realms/{realm}/partialImport": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			defer mu.Unlock()
+			json.NewDecoder(r.Body).Decode(&imported)
+			w.WriteHeader(http.StatusOK)
+		},
+	})
+	defer server.Close()
+
+	p := New(newTestClient(t, server.URL), &config.Config{})
+	user := config.User{Username: "alice", ID: "11111111-2222-3333-4444-555555555555"}
+
+	if err := p.ensureUser(context.Background(), "test", user, "update"); err != nil {
+		t.Fatalf("ensureUser: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// The create endpoint discards a supplied id, so it must not be used here.
+	if createCalled {
+		t.Error("a user with a fixed id must not go through the create endpoint")
+	}
+	if imported["ifResourceExists"] != "SKIP" {
+		t.Errorf("import should skip existing users, got %v", imported["ifResourceExists"])
+	}
+
+	users, ok := imported["users"].([]any)
+	if !ok || len(users) != 1 {
+		t.Fatalf("unexpected import body: %v", imported)
+	}
+
+	u, _ := users[0].(map[string]any)
+	if u["id"] != "11111111-2222-3333-4444-555555555555" {
+		t.Errorf("import should carry the configured id, got %v", u["id"])
+	}
+	if u["username"] != "alice" {
+		t.Errorf("import should carry the username, got %v", u["username"])
+	}
+}
+
+func TestEnsureUserWithoutIDUsesCreate(t *testing.T) {
+	var mu sync.Mutex
+	importCalled := false
+	createCalled := false
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/users": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{})
+		},
+		"POST /admin/realms/{realm}/users": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			createCalled = true
+			mu.Unlock()
+			w.Header().Set("Location", "http://kc/admin/realms/test/users/u-1")
+			w.WriteHeader(http.StatusCreated)
+		},
+		"POST /admin/realms/{realm}/partialImport": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			importCalled = true
+			mu.Unlock()
+			w.WriteHeader(http.StatusOK)
+		},
+	})
+	defer server.Close()
+
+	p := New(newTestClient(t, server.URL), &config.Config{})
+
+	if err := p.ensureUser(context.Background(), "test", config.User{Username: "alice"}, "update"); err != nil {
+		t.Fatalf("ensureUser: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !createCalled || importCalled {
+		t.Errorf("a user without an id should use create, not import (create=%v import=%v)", createCalled, importCalled)
+	}
+}
+
+func TestEnsureUserFixedIDMismatchFails(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/users": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"id": "e193aadf-c67b-40f9-ba47-4a497a5e2f07", "username": "alice"},
+			})
+		},
+		"PUT /admin/realms/{realm}/users/{id}": func(w http.ResponseWriter, r *http.Request) {
+			t.Error("must not update a user whose id does not match the config")
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	p := New(newTestClient(t, server.URL), &config.Config{})
+	user := config.User{Username: "alice", ID: "11111111-2222-3333-4444-555555555555"}
+
+	err := p.ensureUser(context.Background(), "test", user, "update")
+	if err == nil {
+		t.Fatal("expected a mismatch between the configured and existing id to fail")
+	}
+
+	// Both ids belong in the message: one names what is there, the other what
+	// was asked for.
+	for _, want := range []string{"e193aadf-c67b-40f9-ba47-4a497a5e2f07", "11111111-2222-3333-4444-555555555555"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should name %s, got: %v", want, err)
+		}
+	}
+}
+
+func TestEnsureUserFixedIDMatchingExistingProceeds(t *testing.T) {
+	const id = "11111111-2222-3333-4444-555555555555"
+
+	updated := false
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/users": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{{"id": id, "username": "alice"}})
+		},
+		"PUT /admin/realms/{realm}/users/{id}": func(w http.ResponseWriter, r *http.Request) {
+			updated = true
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	p := New(newTestClient(t, server.URL), &config.Config{})
+
+	if err := p.ensureUser(context.Background(), "test", config.User{Username: "alice", ID: id}, "update"); err != nil {
+		t.Fatalf("a matching id should reconcile normally: %v", err)
+	}
+	if !updated {
+		t.Error("expected the normal update path to run")
 	}
 }

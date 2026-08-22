@@ -485,3 +485,36 @@ func TestDryRunSubflowIsTrackedAsFlow(t *testing.T) {
 		t.Errorf("expected no executions for a would-be-created subflow, got %v", executions)
 	}
 }
+
+// TestDryRunImportedUserIsDiscoverable pins that a user imported with a fixed
+// id is reported under that id and can be resolved by later steps, rather than
+// getting a synthetic one.
+func TestDryRunImportedUserIsDiscoverable(t *testing.T) {
+	const id = "11111111-2222-3333-4444-555555555555"
+
+	inner := newFakeAPI()
+	d := NewDryRunAdapter(inner)
+	ctx := context.Background()
+
+	if err := d.CreateRealm(ctx, map[string]any{"realm": "r"}); err != nil {
+		t.Fatal(err)
+	}
+
+	err := d.PartialImportUsers(ctx, "r", []map[string]any{{"id": id, "username": "alice"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	users, err := d.GetUsers(ctx, "r", "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(users) != 1 {
+		t.Fatalf("expected the imported user to be discoverable, got %v", users)
+	}
+
+	// The whole point of a fixed id is that it is the configured one.
+	if users[0]["id"] != id {
+		t.Errorf("expected the configured id %s, got %v", id, users[0]["id"])
+	}
+}

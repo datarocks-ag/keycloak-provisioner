@@ -94,6 +94,9 @@ type UserAPI interface {
 	CreateUser(ctx context.Context, realm string, body map[string]any) (string, error)
 	UpdateUser(ctx context.Context, realm, userID string, body map[string]any) error
 	ResetUserPassword(ctx context.Context, realm, userID, password string, temporary bool) error
+	// PartialImportUsers creates users with a chosen id, which CreateUser
+	// cannot do — Keycloak discards the id it is given.
+	PartialImportUsers(ctx context.Context, realm string, users []map[string]any) error
 }
 
 // RoleMappingAPI covers granting roles to users and groups.
