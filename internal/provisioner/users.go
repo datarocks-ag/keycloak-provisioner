@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"keycloak-provisioner/internal/client"
 	"keycloak-provisioner/internal/config"
 )
 
@@ -121,7 +122,7 @@ func (p *Provisioner) ensureUserGroups(ctx context.Context, realm, userID, usern
 func (p *Provisioner) ensureUserRoles(ctx context.Context, realm, userID, username string, roles *config.UserRoles) error {
 	// Assign realm roles
 	if len(roles.Realm) > 0 {
-		existingRoles, err := p.client.GetUserRealmRoleMappings(ctx, realm, userID)
+		existingRoles, err := p.client.GetRealmRoleMappings(ctx, realm, client.RoleSubjectUsers, userID)
 		if err != nil {
 			return fmt.Errorf("getting realm role mappings for user %q: %w", username, err)
 		}
@@ -151,7 +152,7 @@ func (p *Provisioner) ensureUserRoles(ctx context.Context, realm, userID, userna
 
 		if len(toAdd) > 0 {
 			slog.Info("Assigning realm roles to user", "realm", realm, "username", username, "count", len(toAdd))
-			if err := p.client.AddUserRealmRoleMappings(ctx, realm, userID, toAdd); err != nil {
+			if err := p.client.AddRealmRoleMappings(ctx, realm, client.RoleSubjectUsers, userID, toAdd); err != nil {
 				return fmt.Errorf("assigning realm roles to user %q: %w", username, err)
 			}
 		}
@@ -175,7 +176,7 @@ func (p *Provisioner) ensureUserRoles(ctx context.Context, realm, userID, userna
 			return fmt.Errorf("client %q: missing or invalid id in response", clientID)
 		}
 
-		existingRoles, err := p.client.GetUserClientRoleMappings(ctx, realm, userID, clientUUID)
+		existingRoles, err := p.client.GetClientRoleMappings(ctx, realm, client.RoleSubjectUsers, userID, clientUUID)
 		if err != nil {
 			return fmt.Errorf("getting client role mappings for user %q on client %q: %w", username, clientID, err)
 		}
@@ -205,7 +206,7 @@ func (p *Provisioner) ensureUserRoles(ctx context.Context, realm, userID, userna
 
 		if len(toAdd) > 0 {
 			slog.Info("Assigning client roles to user", "realm", realm, "username", username, "client", clientID, "count", len(toAdd))
-			if err := p.client.AddUserClientRoleMappings(ctx, realm, userID, clientUUID, toAdd); err != nil {
+			if err := p.client.AddClientRoleMappings(ctx, realm, client.RoleSubjectUsers, userID, clientUUID, toAdd); err != nil {
 				return fmt.Errorf("assigning client roles to user %q on client %q: %w", username, clientID, err)
 			}
 		}

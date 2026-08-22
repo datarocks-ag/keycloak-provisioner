@@ -257,7 +257,7 @@ realms:
 	}
 
 	// Verify protocol mappers
-	mappers, err := kc.GetProtocolMappers(ctx, "test-realm", clientUUID)
+	mappers, err := kc.GetProtocolMappers(ctx, "test-realm", client.MapperContainerClients, clientUUID)
 	if err != nil {
 		t.Fatalf("getting protocol mappers: %v", err)
 	}
@@ -273,7 +273,7 @@ realms:
 	}
 
 	// Verify group exists with its attribute
-	groups, err := kc.GetGroups(ctx, "test-realm", "engineering")
+	groups, err := kc.GetGroups(ctx, "test-realm", "", "engineering")
 	if err != nil {
 		t.Fatalf("getting groups: %v", err)
 	}
@@ -299,7 +299,7 @@ realms:
 	}
 
 	// Verify subgroup exists
-	subGroups, err := kc.GetSubGroups(ctx, "test-realm", groupUUID, "backend")
+	subGroups, err := kc.GetGroups(ctx, "test-realm", groupUUID, "backend")
 	if err != nil {
 		t.Fatalf("getting subgroups: %v", err)
 	}
@@ -315,7 +315,7 @@ realms:
 	}
 
 	// Verify realm role mapping
-	realmMappings, err := kc.GetGroupRealmRoleMappings(ctx, "test-realm", groupUUID)
+	realmMappings, err := kc.GetRealmRoleMappings(ctx, "test-realm", client.RoleSubjectGroups, groupUUID)
 	if err != nil {
 		t.Fatalf("getting group realm role mappings: %v", err)
 	}
@@ -331,7 +331,7 @@ realms:
 	}
 
 	// Verify client role mapping
-	clientMappings, err := kc.GetGroupClientRoleMappings(ctx, "test-realm", groupUUID, clientUUID)
+	clientMappings, err := kc.GetClientRoleMappings(ctx, "test-realm", client.RoleSubjectGroups, groupUUID, clientUUID)
 	if err != nil {
 		t.Fatalf("getting group client role mappings: %v", err)
 	}
@@ -421,7 +421,7 @@ realms:
 	// After two runs, group state must be stable — no duplicate top-level group,
 	// subgroup, or realm-role mapping. This exercises the create/skip idempotency
 	// of ensureGroup, its subgroup recursion, and the additive role-mapping diff.
-	groups, err := kc.GetGroups(ctx, "idempotent-realm", "idempotent-group")
+	groups, err := kc.GetGroups(ctx, "idempotent-realm", "", "idempotent-group")
 	if err != nil {
 		t.Fatalf("getting groups: %v", err)
 	}
@@ -433,7 +433,7 @@ realms:
 		t.Fatal("expected group 'id' to be a string")
 	}
 
-	subGroups, err := kc.GetSubGroups(ctx, "idempotent-realm", groupUUID, "idempotent-subgroup")
+	subGroups, err := kc.GetGroups(ctx, "idempotent-realm", groupUUID, "idempotent-subgroup")
 	if err != nil {
 		t.Fatalf("getting subgroups: %v", err)
 	}
@@ -447,7 +447,7 @@ realms:
 		t.Errorf("expected exactly 1 'idempotent-subgroup' after two runs, got %d", subCount)
 	}
 
-	mappings, err := kc.GetGroupRealmRoleMappings(ctx, "idempotent-realm", groupUUID)
+	mappings, err := kc.GetRealmRoleMappings(ctx, "idempotent-realm", client.RoleSubjectGroups, groupUUID)
 	if err != nil {
 		t.Fatalf("getting group realm role mappings: %v", err)
 	}
@@ -596,7 +596,7 @@ realms:
 	}
 
 	// Verify protocol mapper was updated
-	mappers, err := kc.GetProtocolMappers(ctx, "update-realm", clientUUID)
+	mappers, err := kc.GetProtocolMappers(ctx, "update-realm", client.MapperContainerClients, clientUUID)
 	if err != nil {
 		t.Fatalf("getting protocol mappers: %v", err)
 	}
@@ -793,7 +793,7 @@ realms:
 		t.Fatal("expected client 'id' to be a string")
 	}
 
-	mappers, err := kc.GetProtocolMappers(ctx, "multi-client-realm", backendUUID)
+	mappers, err := kc.GetProtocolMappers(ctx, "multi-client-realm", client.MapperContainerClients, backendUUID)
 	if err != nil {
 		t.Fatalf("getting protocol mappers: %v", err)
 	}
@@ -1561,7 +1561,7 @@ realms:
 		t.Fatal("client scope orders:read was not created")
 	}
 
-	mappers, err := kc.GetClientScopeProtocolMappers(ctx, "scope-realm", scopeID)
+	mappers, err := kc.GetProtocolMappers(ctx, "scope-realm", client.MapperContainerClientScopes, scopeID)
 	if err != nil {
 		t.Fatalf("getting scope protocol mappers: %v", err)
 	}
@@ -1569,7 +1569,7 @@ realms:
 		t.Errorf("unexpected scope protocol mappers: %v", mappers)
 	}
 
-	realmOptional, err := kc.GetRealmOptionalClientScopes(ctx, "scope-realm")
+	realmOptional, err := kc.GetRealmClientScopes(ctx, "scope-realm", client.ClientScopeOptional)
 	if err != nil {
 		t.Fatalf("getting realm optional scopes: %v", err)
 	}
@@ -1583,7 +1583,7 @@ realms:
 	}
 	uuid, _ := clients[0]["id"].(string)
 
-	clientOptional, err := kc.GetClientOptionalScopes(ctx, "scope-realm", uuid)
+	clientOptional, err := kc.GetClientScopeAssignments(ctx, "scope-realm", uuid, client.ClientScopeOptional)
 	if err != nil {
 		t.Fatalf("getting client optional scopes: %v", err)
 	}
@@ -1647,7 +1647,7 @@ realms:
 	}
 	uuid, _ := clients[0]["id"].(string)
 
-	assigned, err := kc.GetClientDefaultScopes(ctx, "scope-update-realm", uuid)
+	assigned, err := kc.GetClientScopeAssignments(ctx, "scope-update-realm", uuid, client.ClientScopeDefault)
 	if err != nil {
 		t.Fatalf("getting client default scopes: %v", err)
 	}
@@ -1825,7 +1825,7 @@ realms:
 	}
 	orgID, _ := orgs[0]["id"].(string)
 
-	groups, err := kc.GetOrganizationGroups(ctx, "orggroups-realm", orgID)
+	groups, err := kc.GetOrganizationGroups(ctx, "orggroups-realm", orgID, "")
 	if err != nil {
 		t.Fatalf("getting organization groups: %v", err)
 	}
@@ -1840,7 +1840,7 @@ realms:
 	}
 
 	// Organization groups must not leak into the realm's own groups.
-	realmGroups, err := kc.GetGroups(ctx, "orggroups-realm", "engineering")
+	realmGroups, err := kc.GetGroups(ctx, "orggroups-realm", "", "engineering")
 	if err != nil {
 		t.Fatalf("getting realm groups: %v", err)
 	}
@@ -1848,7 +1848,7 @@ realms:
 		t.Errorf("organization group leaked into realm groups: %v", realmGroups)
 	}
 
-	children, err := kc.GetOrganizationSubGroups(ctx, "orggroups-realm", orgID, engID)
+	children, err := kc.GetOrganizationGroups(ctx, "orggroups-realm", orgID, engID)
 	if err != nil {
 		t.Fatalf("getting subgroups: %v", err)
 	}
@@ -1878,7 +1878,7 @@ realms:
 		t.Fatalf("second run: %v", err)
 	}
 
-	groups, err = kc.GetOrganizationGroups(ctx, "orggroups-realm", orgID)
+	groups, err = kc.GetOrganizationGroups(ctx, "orggroups-realm", orgID, "")
 	if err != nil {
 		t.Fatalf("getting groups after second run: %v", err)
 	}
@@ -1892,7 +1892,7 @@ realms:
 		t.Errorf("expected exactly 1 engineering group after two runs, got %d", count)
 	}
 
-	children, err = kc.GetOrganizationSubGroups(ctx, "orggroups-realm", orgID, engID)
+	children, err = kc.GetOrganizationGroups(ctx, "orggroups-realm", orgID, engID)
 	if err != nil {
 		t.Fatalf("getting subgroups after second run: %v", err)
 	}

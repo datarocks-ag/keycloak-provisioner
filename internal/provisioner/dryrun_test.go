@@ -3,6 +3,8 @@ package provisioner
 import (
 	"context"
 	"testing"
+
+	"keycloak-provisioner/internal/client"
 )
 
 func TestDryRunSkipsAllMutations(t *testing.T) {
@@ -28,7 +30,7 @@ func TestDryRunSkipsAllMutations(t *testing.T) {
 	if err := d.CreateClientRole(ctx, "r", "u", map[string]any{"name": "cr"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.CreateProtocolMapper(ctx, "r", "u", map[string]any{"name": "m"}); err != nil {
+	if err := d.CreateProtocolMapper(ctx, "r", client.MapperContainerClients, "u", map[string]any{"name": "m"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.CreateUser(ctx, "r", map[string]any{"username": "u"}); err != nil {
@@ -37,7 +39,7 @@ func TestDryRunSkipsAllMutations(t *testing.T) {
 	if err := d.ResetUserPassword(ctx, "r", "uid", "pw", false); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.AddUserRealmRoleMappings(ctx, "r", "uid", nil); err != nil {
+	if err := d.AddRealmRoleMappings(ctx, "r", client.RoleSubjectUsers, "uid", nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -79,7 +81,7 @@ func TestDryRunSyntheticClientShortCircuitsSubResources(t *testing.T) {
 
 	uuid, _ := d.CreateClient(ctx, "r", map[string]any{"clientId": "c"})
 
-	mappers, err := d.GetProtocolMappers(ctx, "r", uuid)
+	mappers, err := d.GetProtocolMappers(ctx, "r", client.MapperContainerClients, uuid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,10 +165,10 @@ func TestDryRunSyntheticUserShortCircuitsRoleLookups(t *testing.T) {
 
 	uid, _ := d.CreateUser(ctx, "r", map[string]any{"username": "u"})
 
-	if mappings, _ := d.GetUserRealmRoleMappings(ctx, "r", uid); mappings != nil {
+	if mappings, _ := d.GetRealmRoleMappings(ctx, "r", client.RoleSubjectUsers, uid); mappings != nil {
 		t.Errorf("expected nil for synthetic user, got %v", mappings)
 	}
-	if mappings, _ := d.GetUserClientRoleMappings(ctx, "r", uid, "any"); mappings != nil {
+	if mappings, _ := d.GetClientRoleMappings(ctx, "r", client.RoleSubjectUsers, uid, "any"); mappings != nil {
 		t.Errorf("expected nil for synthetic user, got %v", mappings)
 	}
 }
@@ -180,7 +182,7 @@ func TestDryRunSyntheticClientShortCircuitsUserRoleMappings(t *testing.T) {
 
 	clientUUID, _ := d.CreateClient(ctx, "r", map[string]any{"clientId": "new-client"})
 
-	if mappings, _ := d.GetUserClientRoleMappings(ctx, "r", "real-user-uuid", clientUUID); mappings != nil {
+	if mappings, _ := d.GetClientRoleMappings(ctx, "r", client.RoleSubjectUsers, "real-user-uuid", clientUUID); mappings != nil {
 		t.Errorf("expected nil for synthetic client UUID, got %v", mappings)
 	}
 }
@@ -243,22 +245,22 @@ func TestDryRunSkipsClientScopeMutations(t *testing.T) {
 	if err := d.UpdateClientScope(ctx, "r", scopeID, map[string]any{"name": "orders:read"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.CreateClientScopeProtocolMapper(ctx, "r", scopeID, map[string]any{"name": "m"}); err != nil {
+	if err := d.CreateProtocolMapper(ctx, "r", client.MapperContainerClientScopes, scopeID, map[string]any{"name": "m"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.UpdateClientScopeProtocolMapper(ctx, "r", scopeID, "mid", map[string]any{"name": "m"}); err != nil {
+	if err := d.UpdateProtocolMapper(ctx, "r", client.MapperContainerClientScopes, scopeID, "mid", map[string]any{"name": "m"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.AddRealmDefaultClientScope(ctx, "r", scopeID); err != nil {
+	if err := d.AddRealmClientScope(ctx, "r", scopeID, client.ClientScopeDefault); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.AddRealmOptionalClientScope(ctx, "r", scopeID); err != nil {
+	if err := d.AddRealmClientScope(ctx, "r", scopeID, client.ClientScopeOptional); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.AddClientDefaultScope(ctx, "r", "uuid", scopeID); err != nil {
+	if err := d.AddClientScopeAssignment(ctx, "r", "uuid", scopeID, client.ClientScopeDefault); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.AddClientOptionalScope(ctx, "r", "uuid", scopeID); err != nil {
+	if err := d.AddClientScopeAssignment(ctx, "r", "uuid", scopeID, client.ClientScopeOptional); err != nil {
 		t.Fatal(err)
 	}
 
@@ -268,7 +270,7 @@ func TestDryRunSkipsClientScopeMutations(t *testing.T) {
 
 func TestDryRunSyntheticClientScopeShortCircuitsMappers(t *testing.T) {
 	inner := newFakeAPI()
-	inner.scopeMappers["r/real-scope"] = []map[string]any{{"name": "existing"}}
+	inner.protocolMappers["r/client-scopes/real-scope"] = []map[string]any{{"name": "existing"}}
 	d := NewDryRunAdapter(inner)
 	ctx := context.Background()
 
@@ -277,7 +279,7 @@ func TestDryRunSyntheticClientScopeShortCircuitsMappers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mappers, err := d.GetClientScopeProtocolMappers(ctx, "r", scopeID)
+	mappers, err := d.GetProtocolMappers(ctx, "r", client.MapperContainerClientScopes, scopeID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,7 +287,7 @@ func TestDryRunSyntheticClientScopeShortCircuitsMappers(t *testing.T) {
 		t.Errorf("expected nil for synthetic scope, got %v", mappers)
 	}
 
-	mappers, err = d.GetClientScopeProtocolMappers(ctx, "r", "real-scope")
+	mappers, err = d.GetProtocolMappers(ctx, "r", client.MapperContainerClientScopes, "real-scope")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"keycloak-provisioner/internal/client"
 	"keycloak-provisioner/internal/config"
 )
 
@@ -122,7 +123,7 @@ func buildClientScopeBody(cs config.ClientScope) map[string]any {
 // client scope. It mirrors ensureProtocolMapper, which does the same for the
 // mappers attached directly to a client.
 func (p *Provisioner) ensureClientScopeProtocolMapper(ctx context.Context, realm, scopeID, scopeName string, pm config.ProtocolMapper, strategy string) error {
-	existing, err := p.client.GetClientScopeProtocolMappers(ctx, realm, scopeID)
+	existing, err := p.client.GetProtocolMappers(ctx, realm, client.MapperContainerClientScopes, scopeID)
 	if err != nil {
 		return err
 	}
@@ -148,12 +149,12 @@ func (p *Provisioner) ensureClientScopeProtocolMapper(ctx context.Context, realm
 		slog.Info("Updating client scope protocol mapper", "realm", realm, "clientScope", scopeName, "mapper", pm.Name)
 		body["id"] = id
 
-		return p.client.UpdateClientScopeProtocolMapper(ctx, realm, scopeID, id, body)
+		return p.client.UpdateProtocolMapper(ctx, realm, client.MapperContainerClientScopes, scopeID, id, body)
 	}
 
 	slog.Info("Creating client scope protocol mapper", "realm", realm, "clientScope", scopeName, "mapper", pm.Name)
 
-	return p.client.CreateClientScopeProtocolMapper(ctx, realm, scopeID, body)
+	return p.client.CreateProtocolMapper(ctx, realm, client.MapperContainerClientScopes, scopeID, body)
 }
 
 // ensureRealmClientScopeType assigns a scope to the realm's default or optional
@@ -164,36 +165,24 @@ func (p *Provisioner) ensureRealmClientScopeType(ctx context.Context, realm, sco
 	switch cs.Type {
 	case "", "none":
 		return nil
-	case "default":
-		return p.assignRealmClientScope(ctx, realm, scopeID, cs.Name, "default",
-			p.client.GetRealmDefaultClientScopes, p.client.AddRealmDefaultClientScope)
-	case "optional":
-		return p.assignRealmClientScope(ctx, realm, scopeID, cs.Name, "optional",
-			p.client.GetRealmOptionalClientScopes, p.client.AddRealmOptionalClientScope)
+	case client.ClientScopeDefault, client.ClientScopeOptional:
 	default:
 		return fmt.Errorf("client scope %q: unknown type %q", cs.Name, cs.Type)
 	}
-}
 
-func (p *Provisioner) assignRealmClientScope(
-	ctx context.Context,
-	realm, scopeID, scopeName, scopeType string,
-	list func(context.Context, string) ([]map[string]any, error),
-	add func(context.Context, string, string) error,
-) error {
-	assigned, err := list(ctx, realm)
+	assigned, err := p.client.GetRealmClientScopes(ctx, realm, cs.Type)
 	if err != nil {
 		return err
 	}
 
-	if nameSet(assigned)[scopeName] {
-		slog.Debug("Client scope already assigned to realm", "realm", realm, "clientScope", scopeName, "type", scopeType)
+	if nameSet(assigned)[cs.Name] {
+		slog.Debug("Client scope already assigned to realm", "realm", realm, "clientScope", cs.Name, "type", cs.Type)
 		return nil
 	}
 
-	slog.Info("Assigning client scope to realm", "realm", realm, "clientScope", scopeName, "type", scopeType)
+	slog.Info("Assigning client scope to realm", "realm", realm, "clientScope", cs.Name, "type", cs.Type)
 
-	return add(ctx, realm, scopeID)
+	return p.client.AddRealmClientScope(ctx, realm, scopeID, cs.Type)
 }
 
 // ensureClientScopeAssignments attaches the client's configured default and
@@ -214,13 +203,13 @@ func (p *Provisioner) ensureClientScopeAssignments(
 		return nil
 	}
 
-	if err := p.assignClientScopes(ctx, realm, clientUUID, c.ClientID, "default", c.DefaultClientScopes, byName,
-		p.client.GetClientDefaultScopes, p.client.AddClientDefaultScope); err != nil {
+	if err := p.assignClientScopes(ctx, realm, clientUUID, c.ClientID,
+		client.ClientScopeDefault, c.DefaultClientScopes, byName); err != nil {
 		return err
 	}
 
-	return p.assignClientScopes(ctx, realm, clientUUID, c.ClientID, "optional", c.OptionalClientScopes, byName,
-		p.client.GetClientOptionalScopes, p.client.AddClientOptionalScope)
+	return p.assignClientScopes(ctx, realm, clientUUID, c.ClientID,
+		client.ClientScopeOptional, c.OptionalClientScopes, byName)
 }
 
 func (p *Provisioner) assignClientScopes(
@@ -228,14 +217,12 @@ func (p *Provisioner) assignClientScopes(
 	realm, clientUUID, clientID, scopeType string,
 	wanted []string,
 	byName clientScopeIndex,
-	list func(context.Context, string, string) ([]map[string]any, error),
-	add func(context.Context, string, string, string) error,
 ) error {
 	if len(wanted) == 0 {
 		return nil
 	}
 
-	assigned, err := list(ctx, realm, clientUUID)
+	assigned, err := p.client.GetClientScopeAssignments(ctx, realm, clientUUID, scopeType)
 	if err != nil {
 		return err
 	}
@@ -255,7 +242,7 @@ func (p *Provisioner) assignClientScopes(
 
 		slog.Info("Assigning client scope", "realm", realm, "clientId", clientID, "clientScope", name, "type", scopeType)
 
-		if err := add(ctx, realm, clientUUID, scopeID); err != nil {
+		if err := p.client.AddClientScopeAssignment(ctx, realm, clientUUID, scopeID, scopeType); err != nil {
 			return err
 		}
 

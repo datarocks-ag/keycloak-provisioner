@@ -21,25 +21,20 @@ type fakeAPI struct {
 	clientsByRealm  map[string][]map[string]any
 	realmRoles      map[string]map[string]any   // key: realm/name
 	clientRoles     map[string]map[string]any   // key: realm/uuid/name
-	protocolMappers map[string][]map[string]any // key: realm/uuid
+	protocolMappers map[string][]map[string]any // key: realm/container/containerID
 	usersByRealm    map[string][]map[string]any
 	saUsers         map[string]map[string]any   // key: realm/clientUUID
-	realmRoleMaps   map[string][]map[string]any // key: realm/userID
-	clientRoleMaps  map[string][]map[string]any // key: realm/userID/clientUUID
+	realmRoleMaps   map[string][]map[string]any // key: realm/subject/subjectID
+	clientRoleMaps  map[string][]map[string]any // key: realm/subject/subjectID/clientUUID
 	userGroups      map[string][]map[string]any // key: realm/userID
 
-	groupsByRealm       map[string][]map[string]any // key: realm
-	groupsByID          map[string]map[string]any   // key: realm/groupID
-	subGroupsByParent   map[string][]map[string]any // key: realm/parentID
-	groupRealmRoleMaps  map[string][]map[string]any // key: realm/groupID
-	groupClientRoleMaps map[string][]map[string]any // key: realm/groupID/clientUUID
+	groupsByRealm     map[string][]map[string]any // key: realm
+	groupsByID        map[string]map[string]any   // key: realm/groupID
+	subGroupsByParent map[string][]map[string]any // key: realm/parentID
 
-	clientScopes        map[string][]map[string]any // key: realm
-	scopeMappers        map[string][]map[string]any // key: realm/scopeID
-	realmDefaultScopes  map[string][]map[string]any // key: realm
-	realmOptionalScopes map[string][]map[string]any // key: realm
-	clientDefaultScopes map[string][]map[string]any // key: realm/clientUUID
-	clientOptionalScope map[string][]map[string]any // key: realm/clientUUID
+	clientScopes           map[string][]map[string]any // key: realm
+	realmScopeAssignments  map[string][]map[string]any // key: realm/kind
+	clientScopeAssignments map[string][]map[string]any // key: realm/clientUUID/kind
 
 	organizations map[string][]map[string]any // key: realm
 	orgMembers    map[string][]map[string]any // key: realm/orgID
@@ -64,18 +59,13 @@ func newFakeAPI() *fakeAPI {
 		clientRoleMaps:  make(map[string][]map[string]any),
 		userGroups:      make(map[string][]map[string]any),
 
-		groupsByRealm:       make(map[string][]map[string]any),
-		groupsByID:          make(map[string]map[string]any),
-		subGroupsByParent:   make(map[string][]map[string]any),
-		groupRealmRoleMaps:  make(map[string][]map[string]any),
-		groupClientRoleMaps: make(map[string][]map[string]any),
+		groupsByRealm:     make(map[string][]map[string]any),
+		groupsByID:        make(map[string]map[string]any),
+		subGroupsByParent: make(map[string][]map[string]any),
 
-		clientScopes:        make(map[string][]map[string]any),
-		scopeMappers:        make(map[string][]map[string]any),
-		realmDefaultScopes:  make(map[string][]map[string]any),
-		realmOptionalScopes: make(map[string][]map[string]any),
-		clientDefaultScopes: make(map[string][]map[string]any),
-		clientOptionalScope: make(map[string][]map[string]any),
+		clientScopes:           make(map[string][]map[string]any),
+		realmScopeAssignments:  make(map[string][]map[string]any),
+		clientScopeAssignments: make(map[string][]map[string]any),
 
 		organizations: make(map[string][]map[string]any),
 		orgMembers:    make(map[string][]map[string]any),
@@ -104,20 +94,12 @@ func (f *fakeAPI) GetClientRole(_ context.Context, realm, uuid, name string) (ma
 	return f.clientRoles[realm+"/"+uuid+"/"+name], nil
 }
 
-func (f *fakeAPI) GetProtocolMappers(_ context.Context, realm, uuid string) ([]map[string]any, error) {
-	return f.protocolMappers[realm+"/"+uuid], nil
+func (f *fakeAPI) GetProtocolMappers(_ context.Context, realm, container, containerID string) ([]map[string]any, error) {
+	return f.protocolMappers[realm+"/"+container+"/"+containerID], nil
 }
 
 func (f *fakeAPI) GetUsers(_ context.Context, realm, _ string) ([]map[string]any, error) {
 	return f.usersByRealm[realm], nil
-}
-
-func (f *fakeAPI) GetUserRealmRoleMappings(_ context.Context, realm, userID string) ([]map[string]any, error) {
-	return f.realmRoleMaps[realm+"/"+userID], nil
-}
-
-func (f *fakeAPI) GetUserClientRoleMappings(_ context.Context, realm, userID, uuid string) ([]map[string]any, error) {
-	return f.clientRoleMaps[realm+"/"+userID+"/"+uuid], nil
 }
 
 func (f *fakeAPI) GetUserGroups(_ context.Context, realm, userID string) ([]map[string]any, error) {
@@ -128,44 +110,16 @@ func (f *fakeAPI) GetServiceAccountUser(_ context.Context, realm, uuid string) (
 	return f.saUsers[realm+"/"+uuid], nil
 }
 
-func (f *fakeAPI) GetGroups(_ context.Context, realm, search string) ([]map[string]any, error) {
-	return f.groupsByRealm[realm], nil
-}
+func (f *fakeAPI) GetGroups(_ context.Context, realm, parentID, _ string) ([]map[string]any, error) {
+	if parentID == "" {
+		return f.groupsByRealm[realm], nil
+	}
 
-func (f *fakeAPI) GetSubGroups(_ context.Context, realm, parentID, search string) ([]map[string]any, error) {
 	return f.subGroupsByParent[realm+"/"+parentID], nil
-}
-
-func (f *fakeAPI) GetGroupRealmRoleMappings(_ context.Context, realm, groupID string) ([]map[string]any, error) {
-	return f.groupRealmRoleMaps[realm+"/"+groupID], nil
-}
-
-func (f *fakeAPI) GetGroupClientRoleMappings(_ context.Context, realm, groupID, uuid string) ([]map[string]any, error) {
-	return f.groupClientRoleMaps[realm+"/"+groupID+"/"+uuid], nil
 }
 
 func (f *fakeAPI) GetClientScopes(_ context.Context, realm string) ([]map[string]any, error) {
 	return f.clientScopes[realm], nil
-}
-
-func (f *fakeAPI) GetClientScopeProtocolMappers(_ context.Context, realm, scopeID string) ([]map[string]any, error) {
-	return f.scopeMappers[realm+"/"+scopeID], nil
-}
-
-func (f *fakeAPI) GetRealmDefaultClientScopes(_ context.Context, realm string) ([]map[string]any, error) {
-	return f.realmDefaultScopes[realm], nil
-}
-
-func (f *fakeAPI) GetRealmOptionalClientScopes(_ context.Context, realm string) ([]map[string]any, error) {
-	return f.realmOptionalScopes[realm], nil
-}
-
-func (f *fakeAPI) GetClientDefaultScopes(_ context.Context, realm, clientUUID string) ([]map[string]any, error) {
-	return f.clientDefaultScopes[realm+"/"+clientUUID], nil
-}
-
-func (f *fakeAPI) GetClientOptionalScopes(_ context.Context, realm, clientUUID string) ([]map[string]any, error) {
-	return f.clientOptionalScope[realm+"/"+clientUUID], nil
 }
 
 func (f *fakeAPI) GetOrganizations(_ context.Context, realm, _ string) ([]map[string]any, error) {
@@ -176,12 +130,12 @@ func (f *fakeAPI) GetOrganizationMembers(_ context.Context, realm, orgID string)
 	return f.orgMembers[realm+"/"+orgID], nil
 }
 
-func (f *fakeAPI) GetOrganizationGroups(_ context.Context, realm, orgID string) ([]map[string]any, error) {
-	return f.orgGroups[realm+"/"+orgID], nil
-}
+func (f *fakeAPI) GetOrganizationGroups(_ context.Context, realm, orgID, parentID string) ([]map[string]any, error) {
+	if parentID == "" {
+		return f.orgGroups[realm+"/"+orgID], nil
+	}
 
-func (f *fakeAPI) GetOrganizationSubGroups(_ context.Context, realm, orgID, groupID string) ([]map[string]any, error) {
-	return f.orgSubGroups[realm+"/"+orgID+"/"+groupID], nil
+	return f.orgSubGroups[realm+"/"+orgID+"/"+parentID], nil
 }
 
 func (f *fakeAPI) GetOrganizationGroupMembers(_ context.Context, realm, orgID, groupID string) ([]map[string]any, error) {
@@ -194,4 +148,20 @@ func (f *fakeAPI) GetAuthenticationFlows(_ context.Context, realm string) ([]map
 
 func (f *fakeAPI) GetAuthenticationFlowExecutions(_ context.Context, realm, flowAlias string) ([]map[string]any, error) {
 	return f.flowExecutions[realm+"/"+flowAlias], nil
+}
+
+func (f *fakeAPI) GetRealmClientScopes(_ context.Context, realm, kind string) ([]map[string]any, error) {
+	return f.realmScopeAssignments[realm+"/"+kind], nil
+}
+
+func (f *fakeAPI) GetClientScopeAssignments(_ context.Context, realm, clientUUID, kind string) ([]map[string]any, error) {
+	return f.clientScopeAssignments[realm+"/"+clientUUID+"/"+kind], nil
+}
+
+func (f *fakeAPI) GetRealmRoleMappings(_ context.Context, realm, subject, subjectID string) ([]map[string]any, error) {
+	return f.realmRoleMaps[realm+"/"+subject+"/"+subjectID], nil
+}
+
+func (f *fakeAPI) GetClientRoleMappings(_ context.Context, realm, subject, subjectID, clientUUID string) ([]map[string]any, error) {
+	return f.clientRoleMaps[realm+"/"+subject+"/"+subjectID+"/"+clientUUID], nil
 }

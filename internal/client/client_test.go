@@ -675,7 +675,7 @@ func TestGetProtocolMappers(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	result, err := c.GetProtocolMappers(context.Background(), "test", "uuid-1")
+	result, err := c.GetProtocolMappers(context.Background(), "test", MapperContainerClients, "uuid-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -694,7 +694,7 @@ func TestGetProtocolMappers_Error(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	_, err := c.GetProtocolMappers(context.Background(), "test", "uuid-1")
+	_, err := c.GetProtocolMappers(context.Background(), "test", MapperContainerClients, "uuid-1")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -709,7 +709,7 @@ func TestCreateProtocolMapper_Success(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	err := c.CreateProtocolMapper(context.Background(), "test", "uuid-1", map[string]any{"name": "mapper"})
+	err := c.CreateProtocolMapper(context.Background(), "test", MapperContainerClients, "uuid-1", map[string]any{"name": "mapper"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -725,7 +725,7 @@ func TestCreateProtocolMapper_Error(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	err := c.CreateProtocolMapper(context.Background(), "test", "uuid-1", map[string]any{"name": "dup"})
+	err := c.CreateProtocolMapper(context.Background(), "test", MapperContainerClients, "uuid-1", map[string]any{"name": "dup"})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -740,7 +740,7 @@ func TestUpdateProtocolMapper_Success(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	err := c.UpdateProtocolMapper(context.Background(), "test", "uuid-1", "pm-1", map[string]any{"name": "mapper"})
+	err := c.UpdateProtocolMapper(context.Background(), "test", MapperContainerClients, "uuid-1", "pm-1", map[string]any{"name": "mapper"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -756,7 +756,7 @@ func TestUpdateProtocolMapper_Error(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	err := c.UpdateProtocolMapper(context.Background(), "test", "uuid-1", "pm-1", map[string]any{})
+	err := c.UpdateProtocolMapper(context.Background(), "test", MapperContainerClients, "uuid-1", "pm-1", map[string]any{})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -1020,7 +1020,7 @@ func TestGetUserRealmRoleMappings(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	result, err := c.GetUserRealmRoleMappings(context.Background(), "test", "user-uuid-1")
+	result, err := c.GetRealmRoleMappings(context.Background(), "test", RoleSubjectUsers, "user-uuid-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1038,7 +1038,7 @@ func TestAddUserRealmRoleMappings(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	err := c.AddUserRealmRoleMappings(context.Background(), "test", "user-uuid-1", []map[string]any{
+	err := c.AddRealmRoleMappings(context.Background(), "test", RoleSubjectUsers, "user-uuid-1", []map[string]any{
 		{"id": "role-1", "name": "admin"},
 	})
 	if err != nil {
@@ -1056,7 +1056,7 @@ func TestGetUserRealmRoleMappings_Error(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	_, err := c.GetUserRealmRoleMappings(context.Background(), "test", "user-uuid-1")
+	_, err := c.GetRealmRoleMappings(context.Background(), "test", RoleSubjectUsers, "user-uuid-1")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -1072,7 +1072,7 @@ func TestAddUserRealmRoleMappings_Error(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	err := c.AddUserRealmRoleMappings(context.Background(), "test", "user-uuid-1", []map[string]any{
+	err := c.AddRealmRoleMappings(context.Background(), "test", RoleSubjectUsers, "user-uuid-1", []map[string]any{
 		{"id": "role-1", "name": "admin"},
 	})
 	if err == nil {
@@ -1091,7 +1091,7 @@ func TestGetUserClientRoleMappings(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	result, err := c.GetUserClientRoleMappings(context.Background(), "test", "user-uuid-1", "client-uuid-1")
+	result, err := c.GetClientRoleMappings(context.Background(), "test", RoleSubjectUsers, "user-uuid-1", "client-uuid-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1109,7 +1109,7 @@ func TestAddUserClientRoleMappings(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	err := c.AddUserClientRoleMappings(context.Background(), "test", "user-uuid-1", "client-uuid-1", []map[string]any{
+	err := c.AddClientRoleMappings(context.Background(), "test", RoleSubjectUsers, "user-uuid-1", "client-uuid-1", []map[string]any{
 		{"id": "role-1", "name": "editor"},
 	})
 	if err != nil {
@@ -1127,7 +1127,7 @@ func TestGetUserClientRoleMappings_Error(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	_, err := c.GetUserClientRoleMappings(context.Background(), "test", "user-uuid-1", "client-uuid-1")
+	_, err := c.GetClientRoleMappings(context.Background(), "test", RoleSubjectUsers, "user-uuid-1", "client-uuid-1")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -1143,7 +1143,7 @@ func TestAddUserClientRoleMappings_Error(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	err := c.AddUserClientRoleMappings(context.Background(), "test", "user-uuid-1", "client-uuid-1", []map[string]any{
+	err := c.AddClientRoleMappings(context.Background(), "test", RoleSubjectUsers, "user-uuid-1", "client-uuid-1", []map[string]any{
 		{"id": "role-1", "name": "editor"},
 	})
 	if err == nil {
@@ -1324,7 +1324,7 @@ func TestGetGroups(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	result, err := c.GetGroups(context.Background(), "test", "engineering")
+	result, err := c.GetGroups(context.Background(), "test", "", "engineering")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1343,7 +1343,7 @@ func TestGetGroups_Error(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	_, err := c.GetGroups(context.Background(), "test", "eng")
+	_, err := c.GetGroups(context.Background(), "test", "", "eng")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -1425,7 +1425,7 @@ func TestGetSubGroups(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	result, err := c.GetSubGroups(context.Background(), "test", "parent-uuid", "backend")
+	result, err := c.GetGroups(context.Background(), "test", "parent-uuid", "backend")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1444,7 +1444,7 @@ func TestGetSubGroups_Error(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	_, err := c.GetSubGroups(context.Background(), "test", "parent-uuid", "backend")
+	_, err := c.GetGroups(context.Background(), "test", "parent-uuid", "backend")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -1460,7 +1460,7 @@ func TestCreateGroup_Success(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	uuid, err := c.CreateGroup(context.Background(), "test", map[string]any{"name": "eng"})
+	uuid, err := c.CreateGroup(context.Background(), "test", "", map[string]any{"name": "eng"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1478,7 +1478,7 @@ func TestCreateGroup_NoLocationHeader(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	_, err := c.CreateGroup(context.Background(), "test", map[string]any{"name": "eng"})
+	_, err := c.CreateGroup(context.Background(), "test", "", map[string]any{"name": "eng"})
 	if err == nil {
 		t.Fatal("expected error for missing Location header")
 	}
@@ -1494,7 +1494,7 @@ func TestCreateGroup_Error(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	_, err := c.CreateGroup(context.Background(), "test", map[string]any{"name": "eng"})
+	_, err := c.CreateGroup(context.Background(), "test", "", map[string]any{"name": "eng"})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -1513,7 +1513,7 @@ func TestCreateSubGroup_Success(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	uuid, err := c.CreateSubGroup(context.Background(), "test", "parent-uuid", map[string]any{"name": "backend"})
+	uuid, err := c.CreateGroup(context.Background(), "test", "parent-uuid", map[string]any{"name": "backend"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1532,7 +1532,7 @@ func TestCreateSubGroup_Error(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	_, err := c.CreateSubGroup(context.Background(), "test", "parent-uuid", map[string]any{"name": "backend"})
+	_, err := c.CreateGroup(context.Background(), "test", "parent-uuid", map[string]any{"name": "backend"})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -1577,7 +1577,7 @@ func TestGetGroupRealmRoleMappings(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	result, err := c.GetGroupRealmRoleMappings(context.Background(), "test", "g-1")
+	result, err := c.GetRealmRoleMappings(context.Background(), "test", RoleSubjectGroups, "g-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1598,7 +1598,7 @@ func TestAddGroupRealmRoleMappings_Success(t *testing.T) {
 
 	c := connectClient(t, server.URL)
 	roles := []map[string]any{{"id": "r-1", "name": "developer"}}
-	if err := c.AddGroupRealmRoleMappings(context.Background(), "test", "g-1", roles); err != nil {
+	if err := c.AddRealmRoleMappings(context.Background(), "test", RoleSubjectGroups, "g-1", roles); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(received) != 1 || received[0]["name"] != "developer" {
@@ -1616,7 +1616,7 @@ func TestAddGroupRealmRoleMappings_Error(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	err := c.AddGroupRealmRoleMappings(context.Background(), "test", "g-1", []map[string]any{{"id": "r-1"}})
+	err := c.AddRealmRoleMappings(context.Background(), "test", RoleSubjectGroups, "g-1", []map[string]any{{"id": "r-1"}})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -1634,7 +1634,7 @@ func TestGetGroupClientRoleMappings(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	result, err := c.GetGroupClientRoleMappings(context.Background(), "test", "g-1", "c-uuid")
+	result, err := c.GetClientRoleMappings(context.Background(), "test", RoleSubjectGroups, "g-1", "c-uuid")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1655,7 +1655,7 @@ func TestAddGroupClientRoleMappings_Success(t *testing.T) {
 
 	c := connectClient(t, server.URL)
 	roles := []map[string]any{{"id": "cr-1", "name": "admin"}}
-	if err := c.AddGroupClientRoleMappings(context.Background(), "test", "g-1", "c-uuid", roles); err != nil {
+	if err := c.AddClientRoleMappings(context.Background(), "test", RoleSubjectGroups, "g-1", "c-uuid", roles); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(received) != 1 || received[0]["name"] != "admin" {
@@ -1673,7 +1673,7 @@ func TestAddGroupClientRoleMappings_Error(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	err := c.AddGroupClientRoleMappings(context.Background(), "test", "g-1", "c-uuid", []map[string]any{{"id": "cr-1"}})
+	err := c.AddClientRoleMappings(context.Background(), "test", RoleSubjectGroups, "g-1", "c-uuid", []map[string]any{{"id": "cr-1"}})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -1769,14 +1769,14 @@ func TestClientScopeProtocolMappers(t *testing.T) {
 	c := connectClient(t, server.URL)
 	ctx := context.Background()
 
-	mappers, err := c.GetClientScopeProtocolMappers(ctx, "test", "cs-1")
+	mappers, err := c.GetProtocolMappers(ctx, "test", MapperContainerClientScopes, "cs-1")
 	if err != nil || len(mappers) != 1 {
 		t.Fatalf("get: %v %v", mappers, err)
 	}
-	if err := c.CreateClientScopeProtocolMapper(ctx, "test", "cs-1", map[string]any{"name": "audience"}); err != nil {
+	if err := c.CreateProtocolMapper(ctx, "test", MapperContainerClientScopes, "cs-1", map[string]any{"name": "audience"}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if err := c.UpdateClientScopeProtocolMapper(ctx, "test", "cs-1", "m-1", map[string]any{"name": "audience"}); err != nil {
+	if err := c.UpdateProtocolMapper(ctx, "test", MapperContainerClientScopes, "cs-1", "m-1", map[string]any{"name": "audience"}); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 }
@@ -1814,28 +1814,28 @@ func TestClientScopeAssignmentEndpoints(t *testing.T) {
 	c := connectClient(t, server.URL)
 	ctx := context.Background()
 
-	if _, err := c.GetRealmDefaultClientScopes(ctx, "test"); err != nil {
+	if _, err := c.GetRealmClientScopes(ctx, "test", ClientScopeDefault); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.AddRealmDefaultClientScope(ctx, "test", "cs-1"); err != nil {
+	if err := c.AddRealmClientScope(ctx, "test", "cs-1", ClientScopeDefault); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.GetRealmOptionalClientScopes(ctx, "test"); err != nil {
+	if _, err := c.GetRealmClientScopes(ctx, "test", ClientScopeOptional); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.AddRealmOptionalClientScope(ctx, "test", "cs-2"); err != nil {
+	if err := c.AddRealmClientScope(ctx, "test", "cs-2", ClientScopeOptional); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.GetClientDefaultScopes(ctx, "test", "uuid-1"); err != nil {
+	if _, err := c.GetClientScopeAssignments(ctx, "test", "uuid-1", ClientScopeDefault); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.AddClientDefaultScope(ctx, "test", "uuid-1", "cs-3"); err != nil {
+	if err := c.AddClientScopeAssignment(ctx, "test", "uuid-1", "cs-3", ClientScopeDefault); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.GetClientOptionalScopes(ctx, "test", "uuid-1"); err != nil {
+	if _, err := c.GetClientScopeAssignments(ctx, "test", "uuid-1", ClientScopeOptional); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.AddClientOptionalScope(ctx, "test", "uuid-1", "cs-4"); err != nil {
+	if err := c.AddClientScopeAssignment(ctx, "test", "uuid-1", "cs-4", ClientScopeOptional); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1996,19 +1996,19 @@ func TestOrganizationGroupEndpoints(t *testing.T) {
 	c := connectClient(t, server.URL)
 	ctx := context.Background()
 
-	groups, err := c.GetOrganizationGroups(ctx, "test", "org-1")
+	groups, err := c.GetOrganizationGroups(ctx, "test", "org-1", "")
 	if err != nil || len(groups) != 1 {
 		t.Fatalf("get groups: %v %v", groups, err)
 	}
-	children, err := c.GetOrganizationSubGroups(ctx, "test", "org-1", "g-1")
+	children, err := c.GetOrganizationGroups(ctx, "test", "org-1", "g-1")
 	if err != nil || len(children) != 1 || children[0]["name"] != "backend" {
 		t.Fatalf("get children: %v %v", children, err)
 	}
-	id, err := c.CreateOrganizationGroup(ctx, "test", "org-1", map[string]any{"name": "sales"})
+	id, err := c.CreateOrganizationGroup(ctx, "test", "org-1", "", map[string]any{"name": "sales"})
 	if err != nil || id != "g-9" {
 		t.Fatalf("create group: %q %v", id, err)
 	}
-	subID, err := c.CreateOrganizationSubGroup(ctx, "test", "org-1", "g-1", map[string]any{"name": "backend"})
+	subID, err := c.CreateOrganizationGroup(ctx, "test", "org-1", "g-1", map[string]any{"name": "backend"})
 	if err != nil || subID != "g-10" {
 		t.Fatalf("create subgroup: %q %v", subID, err)
 	}

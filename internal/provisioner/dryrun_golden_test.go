@@ -147,6 +147,16 @@ realms:
 
 // TestDryRunGoldenLog pins the whole dry-run surface.
 //
+// Some messages lost a word as method families were collapsed: the
+// discriminator moved out of the message text and into an attribute — "type"
+// for default vs optional client scopes, "container" for a mapper on a client
+// vs on a client scope, "subject" for a role granted to a user vs a group. The message is now stable and the variance is
+// structured. No information was lost, and the golden is the record of it.
+//
+// Note the two identical "would create protocol mapper" entries: one is the
+// mapper on the client scope, one is the mapper on the client. They are
+// distinguished by the container attribute, not the message.
+//
 // Dry-run's behaviour *is* what it logs: nothing is written, so the log is the
 // only observable output. Asserting the ordered message list is therefore the
 // only way to prove a refactor of the adapter or the port changed nothing. A
@@ -161,16 +171,16 @@ func TestDryRunGoldenLog(t *testing.T) {
 		"would add authentication execution",
 		"would update realm",
 		"would create client scope",
-		"would create client scope protocol mapper",
-		"would assign client scope to realm optionals",
+		"would create protocol mapper",
+		"would assign client scope to realm",
 		"would create client",
 		"would create protocol mapper",
 		"would create client role",
-		"would assign optional client scope",
+		"would assign client scope",
 		"would create realm role",
 		"would assign realm roles",
 		"would create group",
-		"would assign realm roles to group",
+		"would assign realm roles",
 		"would create subgroup",
 		"would create user",
 		"would reset user password",

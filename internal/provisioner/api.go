@@ -58,11 +58,13 @@ type ClientRoleAPI interface {
 	UpdateClientRole(ctx context.Context, realm, clientUUID, name string, body map[string]any) error
 }
 
-// ProtocolMapperAPI covers the protocol mappers attached to a client.
+// ProtocolMapperAPI covers protocol mappers. They hang off either a client or a
+// client scope, which container selects; both expose the identical
+// /protocol-mappers/models sub-resource.
 type ProtocolMapperAPI interface {
-	GetProtocolMappers(ctx context.Context, realm, clientUUID string) ([]map[string]any, error)
-	CreateProtocolMapper(ctx context.Context, realm, clientUUID string, body map[string]any) error
-	UpdateProtocolMapper(ctx context.Context, realm, clientUUID, mapperID string, body map[string]any) error
+	GetProtocolMappers(ctx context.Context, realm, container, containerID string) ([]map[string]any, error)
+	CreateProtocolMapper(ctx context.Context, realm, container, containerID string, body map[string]any) error
+	UpdateProtocolMapper(ctx context.Context, realm, container, containerID, mapperID string, body map[string]any) error
 }
 
 // ClientScopeAPI covers client scopes and their protocol mappers.
@@ -70,22 +72,15 @@ type ClientScopeAPI interface {
 	GetClientScopes(ctx context.Context, realm string) ([]map[string]any, error)
 	CreateClientScope(ctx context.Context, realm string, body map[string]any) (string, error)
 	UpdateClientScope(ctx context.Context, realm, scopeID string, body map[string]any) error
-	GetClientScopeProtocolMappers(ctx context.Context, realm, scopeID string) ([]map[string]any, error)
-	CreateClientScopeProtocolMapper(ctx context.Context, realm, scopeID string, body map[string]any) error
-	UpdateClientScopeProtocolMapper(ctx context.Context, realm, scopeID, mapperID string, body map[string]any) error
 }
 
-// ClientScopeAssignmentAPI covers attaching client scopes, both as
-// realm defaults and to an individual client.
+// ClientScopeAssignmentAPI covers attaching client scopes, both as realm
+// defaults and to an individual client. kind is "default" or "optional".
 type ClientScopeAssignmentAPI interface {
-	GetRealmDefaultClientScopes(ctx context.Context, realm string) ([]map[string]any, error)
-	AddRealmDefaultClientScope(ctx context.Context, realm, scopeID string) error
-	GetRealmOptionalClientScopes(ctx context.Context, realm string) ([]map[string]any, error)
-	AddRealmOptionalClientScope(ctx context.Context, realm, scopeID string) error
-	GetClientDefaultScopes(ctx context.Context, realm, clientUUID string) ([]map[string]any, error)
-	AddClientDefaultScope(ctx context.Context, realm, clientUUID, scopeID string) error
-	GetClientOptionalScopes(ctx context.Context, realm, clientUUID string) ([]map[string]any, error)
-	AddClientOptionalScope(ctx context.Context, realm, clientUUID, scopeID string) error
+	GetRealmClientScopes(ctx context.Context, realm, kind string) ([]map[string]any, error)
+	AddRealmClientScope(ctx context.Context, realm, scopeID, kind string) error
+	GetClientScopeAssignments(ctx context.Context, realm, clientUUID, kind string) ([]map[string]any, error)
+	AddClientScopeAssignment(ctx context.Context, realm, clientUUID, scopeID, kind string) error
 }
 
 // UserAPI covers users and their credentials.
@@ -96,12 +91,14 @@ type UserAPI interface {
 	ResetUserPassword(ctx context.Context, realm, userID, password string, temporary bool) error
 }
 
-// RoleMappingAPI covers granting roles to users and groups.
+// RoleMappingAPI covers granting roles to users and groups. Keycloak's endpoint
+// is the same shape for both, so subject selects which: client.RoleSubjectUsers
+// or client.RoleSubjectGroups.
 type RoleMappingAPI interface {
-	GetUserRealmRoleMappings(ctx context.Context, realm, userID string) ([]map[string]any, error)
-	AddUserRealmRoleMappings(ctx context.Context, realm, userID string, roles []map[string]any) error
-	GetUserClientRoleMappings(ctx context.Context, realm, userID, clientUUID string) ([]map[string]any, error)
-	AddUserClientRoleMappings(ctx context.Context, realm, userID, clientUUID string, roles []map[string]any) error
+	GetRealmRoleMappings(ctx context.Context, realm, subject, subjectID string) ([]map[string]any, error)
+	AddRealmRoleMappings(ctx context.Context, realm, subject, subjectID string, roles []map[string]any) error
+	GetClientRoleMappings(ctx context.Context, realm, subject, subjectID, clientUUID string) ([]map[string]any, error)
+	AddClientRoleMappings(ctx context.Context, realm, subject, subjectID, clientUUID string, roles []map[string]any) error
 }
 
 // GroupMembershipAPI covers a user's group memberships.
@@ -115,17 +112,14 @@ type ServiceAccountAPI interface {
 	GetServiceAccountUser(ctx context.Context, realm, clientUUID string) (map[string]any, error)
 }
 
-// GroupAPI covers groups, their subgroups and their role mappings.
+// GroupAPI covers groups and their subgroups. Their role mappings live in
+// RoleMappingAPI, which serves users and groups alike.
 type GroupAPI interface {
-	GetGroups(ctx context.Context, realm, search string) ([]map[string]any, error)
-	GetSubGroups(ctx context.Context, realm, parentID, search string) ([]map[string]any, error)
-	CreateGroup(ctx context.Context, realm string, body map[string]any) (string, error)
-	CreateSubGroup(ctx context.Context, realm, parentID string, body map[string]any) (string, error)
+	// GetGroups searches one level: parentID is "" for top-level groups.
+	GetGroups(ctx context.Context, realm, parentID, search string) ([]map[string]any, error)
+	// CreateGroup creates at one level: parentID is "" for a top-level group.
+	CreateGroup(ctx context.Context, realm, parentID string, body map[string]any) (string, error)
 	UpdateGroup(ctx context.Context, realm, id string, body map[string]any) error
-	GetGroupRealmRoleMappings(ctx context.Context, realm, groupID string) ([]map[string]any, error)
-	AddGroupRealmRoleMappings(ctx context.Context, realm, groupID string, roles []map[string]any) error
-	GetGroupClientRoleMappings(ctx context.Context, realm, groupID, clientUUID string) ([]map[string]any, error)
-	AddGroupClientRoleMappings(ctx context.Context, realm, groupID, clientUUID string, roles []map[string]any) error
 }
 
 // AuthenticationFlowAPI covers authentication flows, their executions and
@@ -153,10 +147,10 @@ type OrganizationAPI interface {
 // OrganizationGroupAPI covers the groups an organization owns. They are a
 // separate namespace from realm groups and cannot be reached through GroupAPI.
 type OrganizationGroupAPI interface {
-	GetOrganizationGroups(ctx context.Context, realm, orgID string) ([]map[string]any, error)
-	GetOrganizationSubGroups(ctx context.Context, realm, orgID, groupID string) ([]map[string]any, error)
-	CreateOrganizationGroup(ctx context.Context, realm, orgID string, body map[string]any) (string, error)
-	CreateOrganizationSubGroup(ctx context.Context, realm, orgID, parentID string, body map[string]any) (string, error)
+	// GetOrganizationGroups searches one level: parentID is "" for top level.
+	GetOrganizationGroups(ctx context.Context, realm, orgID, parentID string) ([]map[string]any, error)
+	// CreateOrganizationGroup creates at one level: parentID is "" for top level.
+	CreateOrganizationGroup(ctx context.Context, realm, orgID, parentID string, body map[string]any) (string, error)
 	UpdateOrganizationGroup(ctx context.Context, realm, orgID, groupID string, body map[string]any) error
 	GetOrganizationGroupMembers(ctx context.Context, realm, orgID, groupID string) ([]map[string]any, error)
 	AddOrganizationGroupMember(ctx context.Context, realm, orgID, groupID, userID string) error

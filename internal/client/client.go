@@ -465,10 +465,23 @@ func (c *Client) UpdateClientRole(ctx context.Context, realm, clientUUID, name s
 	return nil
 }
 
-// GetProtocolMappers returns all protocol mappers for a client.
-func (c *Client) GetProtocolMappers(ctx context.Context, realm, clientUUID string) ([]map[string]any, error) {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/clients/" + url.PathEscape(clientUUID) + "/protocol-mappers/models"
-	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+// Protocol mapper containers. Mappers hang off a client or a client scope, and
+// both expose the identical /protocol-mappers/models sub-resource; only the
+// parent segment of the URL differs.
+const (
+	MapperContainerClients      = "clients"
+	MapperContainerClientScopes = "client-scopes"
+)
+
+func protocolMapperPath(realm, container, containerID string) string {
+	return "/admin/realms/" + url.PathEscape(realm) + "/" + url.PathEscape(container) +
+		"/" + url.PathEscape(containerID) + "/protocol-mappers/models"
+}
+
+// GetProtocolMappers returns the protocol mappers of a client or client scope.
+// container is MapperContainerClients or MapperContainerClientScopes.
+func (c *Client) GetProtocolMappers(ctx context.Context, realm, container, containerID string) ([]map[string]any, error) {
+	resp, err := c.doRequest(ctx, http.MethodGet, protocolMapperPath(realm, container, containerID), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -485,10 +498,9 @@ func (c *Client) GetProtocolMappers(ctx context.Context, realm, clientUUID strin
 	return result, nil
 }
 
-// CreateProtocolMapper creates a new protocol mapper for a client.
-func (c *Client) CreateProtocolMapper(ctx context.Context, realm, clientUUID string, body map[string]any) error {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/clients/" + url.PathEscape(clientUUID) + "/protocol-mappers/models"
-	resp, err := c.doRequest(ctx, http.MethodPost, path, body)
+// CreateProtocolMapper creates a protocol mapper on a client or client scope.
+func (c *Client) CreateProtocolMapper(ctx context.Context, realm, container, containerID string, body map[string]any) error {
+	resp, err := c.doRequest(ctx, http.MethodPost, protocolMapperPath(realm, container, containerID), body)
 	if err != nil {
 		return err
 	}
@@ -501,8 +513,9 @@ func (c *Client) CreateProtocolMapper(ctx context.Context, realm, clientUUID str
 }
 
 // UpdateProtocolMapper updates a protocol mapper by ID.
-func (c *Client) UpdateProtocolMapper(ctx context.Context, realm, clientUUID, mapperID string, body map[string]any) error {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/clients/" + url.PathEscape(clientUUID) + "/protocol-mappers/models/" + url.PathEscape(mapperID)
+func (c *Client) UpdateProtocolMapper(ctx context.Context, realm, container, containerID, mapperID string, body map[string]any) error {
+	path := protocolMapperPath(realm, container, containerID) + "/" + url.PathEscape(mapperID)
+
 	resp, err := c.doRequest(ctx, http.MethodPut, path, body)
 	if err != nil {
 		return err
@@ -596,76 +609,6 @@ func (c *Client) ResetUserPassword(ctx context.Context, realm, userID, password 
 	return nil
 }
 
-// GetUserRealmRoleMappings returns the realm role mappings for a user.
-func (c *Client) GetUserRealmRoleMappings(ctx context.Context, realm, userID string) ([]map[string]any, error) {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/users/" + url.PathEscape(userID) + "/role-mappings/realm"
-	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, readError(resp)
-	}
-
-	var result []map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decoding realm role mappings: %w", err)
-	}
-	return result, nil
-}
-
-// AddUserRealmRoleMappings adds realm role mappings to a user.
-func (c *Client) AddUserRealmRoleMappings(ctx context.Context, realm, userID string, roles []map[string]any) error {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/users/" + url.PathEscape(userID) + "/role-mappings/realm"
-	resp, err := c.doRequest(ctx, http.MethodPost, path, roles)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNoContent {
-		return readError(resp)
-	}
-	return nil
-}
-
-// GetUserClientRoleMappings returns the client role mappings for a user.
-func (c *Client) GetUserClientRoleMappings(ctx context.Context, realm, userID, clientUUID string) ([]map[string]any, error) {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/users/" + url.PathEscape(userID) + "/role-mappings/clients/" + url.PathEscape(clientUUID)
-	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, readError(resp)
-	}
-
-	var result []map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decoding client role mappings: %w", err)
-	}
-	return result, nil
-}
-
-// AddUserClientRoleMappings adds client role mappings to a user.
-func (c *Client) AddUserClientRoleMappings(ctx context.Context, realm, userID, clientUUID string, roles []map[string]any) error {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/users/" + url.PathEscape(userID) + "/role-mappings/clients/" + url.PathEscape(clientUUID)
-	resp, err := c.doRequest(ctx, http.MethodPost, path, roles)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNoContent {
-		return readError(resp)
-	}
-	return nil
-}
-
 // GetUserGroups returns the groups the user is a direct member of.
 func (c *Client) GetUserGroups(ctx context.Context, realm, userID string) ([]map[string]any, error) {
 	path := "/admin/realms/" + url.PathEscape(realm) + "/users/" + url.PathEscape(userID) + "/groups"
@@ -702,6 +645,74 @@ func (c *Client) AddUserToGroup(ctx context.Context, realm, userID, groupID stri
 	return nil
 }
 
+// Role mapping subjects. Keycloak's role-mapping endpoint is the same shape for
+// both: /{users|groups}/{id}/role-mappings/...
+const (
+	RoleSubjectUsers  = "users"
+	RoleSubjectGroups = "groups"
+)
+
+func roleMappingPath(realm, subject, subjectID string) string {
+	return "/admin/realms/" + url.PathEscape(realm) + "/" + url.PathEscape(subject) +
+		"/" + url.PathEscape(subjectID) + "/role-mappings"
+}
+
+func (c *Client) getRoleMappings(ctx context.Context, path, what string) ([]map[string]any, error) {
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding %s: %w", what, err)
+	}
+	return result, nil
+}
+
+func (c *Client) addRoleMappings(ctx context.Context, path string, roles []map[string]any) error {
+	resp, err := c.doRequest(ctx, http.MethodPost, path, roles)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return readError(resp)
+	}
+	return nil
+}
+
+// GetRealmRoleMappings returns the realm roles mapped to a user or group.
+// subject is RoleSubjectUsers or RoleSubjectGroups.
+func (c *Client) GetRealmRoleMappings(ctx context.Context, realm, subject, subjectID string) ([]map[string]any, error) {
+	return c.getRoleMappings(ctx, roleMappingPath(realm, subject, subjectID)+"/realm", "realm role mappings")
+}
+
+// AddRealmRoleMappings grants realm roles to a user or group.
+func (c *Client) AddRealmRoleMappings(ctx context.Context, realm, subject, subjectID string, roles []map[string]any) error {
+	return c.addRoleMappings(ctx, roleMappingPath(realm, subject, subjectID)+"/realm", roles)
+}
+
+// GetClientRoleMappings returns the roles of one client mapped to a user or group.
+func (c *Client) GetClientRoleMappings(ctx context.Context, realm, subject, subjectID, clientUUID string) ([]map[string]any, error) {
+	path := roleMappingPath(realm, subject, subjectID) + "/clients/" + url.PathEscape(clientUUID)
+
+	return c.getRoleMappings(ctx, path, "client role mappings")
+}
+
+// AddClientRoleMappings grants roles of one client to a user or group.
+func (c *Client) AddClientRoleMappings(ctx context.Context, realm, subject, subjectID, clientUUID string, roles []map[string]any) error {
+	path := roleMappingPath(realm, subject, subjectID) + "/clients/" + url.PathEscape(clientUUID)
+
+	return c.addRoleMappings(ctx, path, roles)
+}
+
 // GetServiceAccountUser returns the service account user for a client.
 func (c *Client) GetServiceAccountUser(ctx context.Context, realm, clientUUID string) (map[string]any, error) {
 	path := "/admin/realms/" + url.PathEscape(realm) + "/clients/" + url.PathEscape(clientUUID) + "/service-account-user"
@@ -736,9 +747,19 @@ func parseLocationID(resp *http.Response, op string) (string, error) {
 	return location[idx+1:], nil
 }
 
-// GetGroups returns top-level groups matching the given name (exact match).
-func (c *Client) GetGroups(ctx context.Context, realm, search string) ([]map[string]any, error) {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/groups?search=" + url.QueryEscape(search) + "&exact=true"
+// GetGroups returns groups matching the given name (exact match).
+//
+// parentID is "" for top-level groups; otherwise the children of that group are
+// searched. Keycloak exposes the two as different paths, but they answer the
+// same question and callers already track which level they are at.
+func (c *Client) GetGroups(ctx context.Context, realm, parentID, search string) ([]map[string]any, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/groups"
+	if parentID != "" {
+		path += "/" + url.PathEscape(parentID) + "/children"
+	}
+
+	path += "?search=" + url.QueryEscape(search) + "&exact=true"
+
 	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
@@ -780,32 +801,15 @@ func (c *Client) GetGroup(ctx context.Context, realm, id string) (map[string]any
 	return result, nil
 }
 
-// GetSubGroups returns the direct children of the given parent group matching
-// the given name (exact match). Querying by name avoids the server's default
-// child-page cap (Keycloak paginates /children with a small default max).
-func (c *Client) GetSubGroups(ctx context.Context, realm, parentID, search string) ([]map[string]any, error) {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/groups/" + url.PathEscape(parentID) + "/children?search=" + url.QueryEscape(search) + "&exact=true"
-	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, readError(resp)
-	}
-
-	var result []map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decoding subgroups: %w", err)
-	}
-	return result, nil
-}
-
-// CreateGroup creates a new top-level group in the given realm.
-// Returns the UUID of the newly created group, extracted from the Location header.
-func (c *Client) CreateGroup(ctx context.Context, realm string, body map[string]any) (string, error) {
+// CreateGroup creates a group and returns its UUID, taken from the Location
+// header. parentID is "" for a top-level group; otherwise the group is created
+// as a child of it.
+func (c *Client) CreateGroup(ctx context.Context, realm, parentID string, body map[string]any) (string, error) {
 	path := "/admin/realms/" + url.PathEscape(realm) + "/groups"
+	if parentID != "" {
+		path += "/" + url.PathEscape(parentID) + "/children"
+	}
+
 	resp, err := c.doRequest(ctx, http.MethodPost, path, body)
 	if err != nil {
 		return "", err
@@ -818,98 +822,10 @@ func (c *Client) CreateGroup(ctx context.Context, realm string, body map[string]
 	return parseLocationID(resp, "creating group")
 }
 
-// CreateSubGroup creates a new group nested under the given parent group.
-// Returns the UUID of the newly created subgroup, extracted from the Location header.
-func (c *Client) CreateSubGroup(ctx context.Context, realm, parentID string, body map[string]any) (string, error) {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/groups/" + url.PathEscape(parentID) + "/children"
-	resp, err := c.doRequest(ctx, http.MethodPost, path, body)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusCreated {
-		return "", readError(resp)
-	}
-	return parseLocationID(resp, "creating subgroup")
-}
-
 // UpdateGroup updates an existing group by UUID.
 func (c *Client) UpdateGroup(ctx context.Context, realm, id string, body map[string]any) error {
 	path := "/admin/realms/" + url.PathEscape(realm) + "/groups/" + url.PathEscape(id)
 	resp, err := c.doRequest(ctx, http.MethodPut, path, body)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNoContent {
-		return readError(resp)
-	}
-	return nil
-}
-
-// GetGroupRealmRoleMappings returns the realm roles currently mapped to a group.
-func (c *Client) GetGroupRealmRoleMappings(ctx context.Context, realm, groupID string) ([]map[string]any, error) {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/groups/" + url.PathEscape(groupID) + "/role-mappings/realm"
-	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, readError(resp)
-	}
-
-	var result []map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decoding group realm role mappings: %w", err)
-	}
-	return result, nil
-}
-
-// AddGroupRealmRoleMappings grants the given realm roles to a group.
-// Each entry must contain at least the role "id" and "name".
-func (c *Client) AddGroupRealmRoleMappings(ctx context.Context, realm, groupID string, roles []map[string]any) error {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/groups/" + url.PathEscape(groupID) + "/role-mappings/realm"
-	resp, err := c.doRequest(ctx, http.MethodPost, path, roles)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNoContent {
-		return readError(resp)
-	}
-	return nil
-}
-
-// GetGroupClientRoleMappings returns the client roles of the given client currently mapped to a group.
-func (c *Client) GetGroupClientRoleMappings(ctx context.Context, realm, groupID, clientUUID string) ([]map[string]any, error) {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/groups/" + url.PathEscape(groupID) + "/role-mappings/clients/" + url.PathEscape(clientUUID)
-	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, readError(resp)
-	}
-
-	var result []map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decoding group client role mappings: %w", err)
-	}
-	return result, nil
-}
-
-// AddGroupClientRoleMappings grants the given client roles to a group.
-// Each entry must contain at least the role "id" and "name".
-func (c *Client) AddGroupClientRoleMappings(ctx context.Context, realm, groupID, clientUUID string, roles []map[string]any) error {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/groups/" + url.PathEscape(groupID) + "/role-mappings/clients/" + url.PathEscape(clientUUID)
-	resp, err := c.doRequest(ctx, http.MethodPost, path, roles)
 	if err != nil {
 		return err
 	}
@@ -973,56 +889,6 @@ func (c *Client) UpdateClientScope(ctx context.Context, realm, scopeID string, b
 	return nil
 }
 
-// GetClientScopeProtocolMappers returns the protocol mappers of a client scope.
-func (c *Client) GetClientScopeProtocolMappers(ctx context.Context, realm, scopeID string) ([]map[string]any, error) {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/client-scopes/" + url.PathEscape(scopeID) + "/protocol-mappers/models"
-	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, readError(resp)
-	}
-
-	var result []map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decoding client scope protocol mappers: %w", err)
-	}
-	return result, nil
-}
-
-// CreateClientScopeProtocolMapper creates a protocol mapper on a client scope.
-func (c *Client) CreateClientScopeProtocolMapper(ctx context.Context, realm, scopeID string, body map[string]any) error {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/client-scopes/" + url.PathEscape(scopeID) + "/protocol-mappers/models"
-	resp, err := c.doRequest(ctx, http.MethodPost, path, body)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusCreated {
-		return readError(resp)
-	}
-	return nil
-}
-
-// UpdateClientScopeProtocolMapper updates a protocol mapper on a client scope by ID.
-func (c *Client) UpdateClientScopeProtocolMapper(ctx context.Context, realm, scopeID, mapperID string, body map[string]any) error {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/client-scopes/" + url.PathEscape(scopeID) + "/protocol-mappers/models/" + url.PathEscape(mapperID)
-	resp, err := c.doRequest(ctx, http.MethodPut, path, body)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNoContent {
-		return readError(resp)
-	}
-	return nil
-}
-
 // listClientScopeAssignments is the shared reader for the four endpoints that
 // return a list of client scopes assigned somewhere (realm-wide defaults and
 // optionals, and a single client's defaults and optionals).
@@ -1059,53 +925,46 @@ func (c *Client) putClientScopeAssignment(ctx context.Context, path string) erro
 	return nil
 }
 
-// GetRealmDefaultClientScopes returns the realm's default client scopes, which
-// Keycloak assigns to every newly created client.
-func (c *Client) GetRealmDefaultClientScopes(ctx context.Context, realm string) ([]map[string]any, error) {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/default-default-client-scopes"
-	return c.listClientScopeAssignments(ctx, path, "realm default client scopes")
+// Client scope assignment kinds. Keycloak spells the realm-level and
+// client-level endpoints differently, but both distinguish the same two kinds,
+// and they are the values config.ClientScope.Type already carries.
+const (
+	ClientScopeDefault  = "default"
+	ClientScopeOptional = "optional"
+)
+
+// realmClientScopePath is the realm-level default/optional scope endpoint.
+// Keycloak names these "default-default-" and "default-optional-".
+func realmClientScopePath(realm, kind string) string {
+	return "/admin/realms/" + url.PathEscape(realm) + "/default-" + url.PathEscape(kind) + "-client-scopes"
 }
 
-// AddRealmDefaultClientScope adds a client scope to the realm's defaults.
-func (c *Client) AddRealmDefaultClientScope(ctx context.Context, realm, scopeID string) error {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/default-default-client-scopes/" + url.PathEscape(scopeID)
-	return c.putClientScopeAssignment(ctx, path)
+func clientScopePath(realm, clientUUID, kind string) string {
+	return "/admin/realms/" + url.PathEscape(realm) + "/clients/" + url.PathEscape(clientUUID) +
+		"/" + url.PathEscape(kind) + "-client-scopes"
 }
 
-// GetRealmOptionalClientScopes returns the realm's optional client scopes.
-func (c *Client) GetRealmOptionalClientScopes(ctx context.Context, realm string) ([]map[string]any, error) {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/default-optional-client-scopes"
-	return c.listClientScopeAssignments(ctx, path, "realm optional client scopes")
+// GetRealmClientScopes returns the realm's default or optional client scopes.
+// Default scopes are the ones Keycloak assigns to every newly created client.
+func (c *Client) GetRealmClientScopes(ctx context.Context, realm, kind string) ([]map[string]any, error) {
+	return c.listClientScopeAssignments(ctx, realmClientScopePath(realm, kind), "realm "+kind+" client scopes")
 }
 
-// AddRealmOptionalClientScope adds a client scope to the realm's optionals.
-func (c *Client) AddRealmOptionalClientScope(ctx context.Context, realm, scopeID string) error {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/default-optional-client-scopes/" + url.PathEscape(scopeID)
-	return c.putClientScopeAssignment(ctx, path)
+// AddRealmClientScope adds a client scope to the realm's defaults or optionals.
+func (c *Client) AddRealmClientScope(ctx context.Context, realm, scopeID, kind string) error {
+	return c.putClientScopeAssignment(ctx, realmClientScopePath(realm, kind)+"/"+url.PathEscape(scopeID))
 }
 
-// GetClientDefaultScopes returns the default client scopes assigned to a client.
-func (c *Client) GetClientDefaultScopes(ctx context.Context, realm, clientUUID string) ([]map[string]any, error) {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/clients/" + url.PathEscape(clientUUID) + "/default-client-scopes"
-	return c.listClientScopeAssignments(ctx, path, "client default scopes")
+// GetClientScopeAssignments returns the default or optional scopes assigned to
+// a client.
+func (c *Client) GetClientScopeAssignments(ctx context.Context, realm, clientUUID, kind string) ([]map[string]any, error) {
+	return c.listClientScopeAssignments(ctx, clientScopePath(realm, clientUUID, kind), "client "+kind+" scopes")
 }
 
-// AddClientDefaultScope assigns a client scope to a client as a default scope.
-func (c *Client) AddClientDefaultScope(ctx context.Context, realm, clientUUID, scopeID string) error {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/clients/" + url.PathEscape(clientUUID) + "/default-client-scopes/" + url.PathEscape(scopeID)
-	return c.putClientScopeAssignment(ctx, path)
-}
-
-// GetClientOptionalScopes returns the optional client scopes assigned to a client.
-func (c *Client) GetClientOptionalScopes(ctx context.Context, realm, clientUUID string) ([]map[string]any, error) {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/clients/" + url.PathEscape(clientUUID) + "/optional-client-scopes"
-	return c.listClientScopeAssignments(ctx, path, "client optional scopes")
-}
-
-// AddClientOptionalScope assigns a client scope to a client as an optional scope.
-func (c *Client) AddClientOptionalScope(ctx context.Context, realm, clientUUID, scopeID string) error {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/clients/" + url.PathEscape(clientUUID) + "/optional-client-scopes/" + url.PathEscape(scopeID)
-	return c.putClientScopeAssignment(ctx, path)
+// AddClientScopeAssignment assigns a client scope to a client as a default or
+// optional scope.
+func (c *Client) AddClientScopeAssignment(ctx context.Context, realm, clientUUID, scopeID, kind string) error {
+	return c.putClientScopeAssignment(ctx, clientScopePath(realm, clientUUID, kind)+"/"+url.PathEscape(scopeID))
 }
 
 // GetOrganizations returns organizations in the realm matching the given name
@@ -1199,21 +1058,20 @@ func (c *Client) AddOrganizationMember(ctx context.Context, realm, orgID, userID
 	return nil
 }
 
-// GetOrganizationGroups returns the top-level groups of an organization.
+// GetOrganizationGroups returns the groups of an organization at one level.
+// parentID is "" for top-level groups; otherwise the children of that group are
+// returned.
 //
 // Organization groups live in a namespace of their own: they do not appear
 // under the realm's groups, and Keycloak refuses to manage them through the
-// normal group API. The returned entries never populate "subGroups" — use
-// GetOrganizationSubGroups to descend.
-func (c *Client) GetOrganizationGroups(ctx context.Context, realm, orgID string) ([]map[string]any, error) {
+// normal group API. The listing never populates "subGroups", which is why
+// descending needs a call per level.
+func (c *Client) GetOrganizationGroups(ctx context.Context, realm, orgID, parentID string) ([]map[string]any, error) {
 	path := "/admin/realms/" + url.PathEscape(realm) + "/organizations/" + url.PathEscape(orgID) + "/groups"
-	return c.listOrganizationGroups(ctx, path)
-}
+	if parentID != "" {
+		path += "/" + url.PathEscape(parentID) + "/children"
+	}
 
-// GetOrganizationSubGroups returns the direct children of an organization group.
-func (c *Client) GetOrganizationSubGroups(ctx context.Context, realm, orgID, groupID string) ([]map[string]any, error) {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/organizations/" + url.PathEscape(orgID) +
-		"/groups/" + url.PathEscape(groupID) + "/children"
 	return c.listOrganizationGroups(ctx, path)
 }
 
@@ -1235,11 +1093,17 @@ func (c *Client) listOrganizationGroups(ctx context.Context, path string) ([]map
 	return result, nil
 }
 
-// CreateOrganizationGroup creates a top-level group in an organization.
-// Returns the UUID from the Location header. Keycloak rejects a duplicate name
-// with 409, so callers must check for an existing group first.
-func (c *Client) CreateOrganizationGroup(ctx context.Context, realm, orgID string, body map[string]any) (string, error) {
+// CreateOrganizationGroup creates a group in an organization and returns its
+// UUID from the Location header. parentID is "" for a top-level group.
+//
+// Keycloak rejects a duplicate name with 409, so callers must check the listing
+// first.
+func (c *Client) CreateOrganizationGroup(ctx context.Context, realm, orgID, parentID string, body map[string]any) (string, error) {
 	path := "/admin/realms/" + url.PathEscape(realm) + "/organizations/" + url.PathEscape(orgID) + "/groups"
+	if parentID != "" {
+		path += "/" + url.PathEscape(parentID) + "/children"
+	}
+
 	resp, err := c.doRequest(ctx, http.MethodPost, path, body)
 	if err != nil {
 		return "", err
@@ -1250,22 +1114,6 @@ func (c *Client) CreateOrganizationGroup(ctx context.Context, realm, orgID strin
 		return "", readError(resp)
 	}
 	return parseLocationID(resp, "creating organization group")
-}
-
-// CreateOrganizationSubGroup creates a group nested under an organization group.
-func (c *Client) CreateOrganizationSubGroup(ctx context.Context, realm, orgID, parentID string, body map[string]any) (string, error) {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/organizations/" + url.PathEscape(orgID) +
-		"/groups/" + url.PathEscape(parentID) + "/children"
-	resp, err := c.doRequest(ctx, http.MethodPost, path, body)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusCreated {
-		return "", readError(resp)
-	}
-	return parseLocationID(resp, "creating organization subgroup")
 }
 
 // UpdateOrganizationGroup updates an organization group by ID.
