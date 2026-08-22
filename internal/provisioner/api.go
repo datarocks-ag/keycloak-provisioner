@@ -117,10 +117,10 @@ type ServiceAccountAPI interface {
 
 // GroupAPI covers groups, their subgroups and their role mappings.
 type GroupAPI interface {
-	GetGroups(ctx context.Context, realm, search string) ([]map[string]any, error)
-	GetSubGroups(ctx context.Context, realm, parentID, search string) ([]map[string]any, error)
-	CreateGroup(ctx context.Context, realm string, body map[string]any) (string, error)
-	CreateSubGroup(ctx context.Context, realm, parentID string, body map[string]any) (string, error)
+	// GetGroups searches one level: parentID is "" for top-level groups.
+	GetGroups(ctx context.Context, realm, parentID, search string) ([]map[string]any, error)
+	// CreateGroup creates at one level: parentID is "" for a top-level group.
+	CreateGroup(ctx context.Context, realm, parentID string, body map[string]any) (string, error)
 	UpdateGroup(ctx context.Context, realm, id string, body map[string]any) error
 	GetGroupRealmRoleMappings(ctx context.Context, realm, groupID string) ([]map[string]any, error)
 	AddGroupRealmRoleMappings(ctx context.Context, realm, groupID string, roles []map[string]any) error

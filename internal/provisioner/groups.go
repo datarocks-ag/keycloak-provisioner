@@ -47,10 +47,11 @@ func (p *Provisioner) reconcileGroup(ctx context.Context, realm, parentID string
 	if existing == nil {
 		if parentID == "" {
 			slog.Info("Creating group", "realm", realm, "group", g.Name)
-			return p.client.CreateGroup(ctx, realm, body)
+		} else {
+			slog.Info("Creating subgroup", "realm", realm, "group", g.Name, "parent", parentID)
 		}
-		slog.Info("Creating subgroup", "realm", realm, "group", g.Name, "parent", parentID)
-		return p.client.CreateSubGroup(ctx, realm, parentID, body)
+
+		return p.client.CreateGroup(ctx, realm, parentID, body)
 	}
 
 	uuid, ok := existing["id"].(string)
@@ -75,13 +76,7 @@ func (p *Provisioner) reconcileGroup(ctx context.Context, realm, parentID string
 
 // findGroup looks up an existing group by exact name at the given level, or nil.
 func (p *Provisioner) findGroup(ctx context.Context, realm, parentID, name string) (map[string]any, error) {
-	var candidates []map[string]any
-	var err error
-	if parentID == "" {
-		candidates, err = p.client.GetGroups(ctx, realm, name)
-	} else {
-		candidates, err = p.client.GetSubGroups(ctx, realm, parentID, name)
-	}
+	candidates, err := p.client.GetGroups(ctx, realm, parentID, name)
 	if err != nil {
 		return nil, err
 	}

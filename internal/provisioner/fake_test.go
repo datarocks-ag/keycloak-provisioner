@@ -128,11 +128,11 @@ func (f *fakeAPI) GetServiceAccountUser(_ context.Context, realm, uuid string) (
 	return f.saUsers[realm+"/"+uuid], nil
 }
 
-func (f *fakeAPI) GetGroups(_ context.Context, realm, search string) ([]map[string]any, error) {
-	return f.groupsByRealm[realm], nil
-}
+func (f *fakeAPI) GetGroups(_ context.Context, realm, parentID, _ string) ([]map[string]any, error) {
+	if parentID == "" {
+		return f.groupsByRealm[realm], nil
+	}
 
-func (f *fakeAPI) GetSubGroups(_ context.Context, realm, parentID, search string) ([]map[string]any, error) {
 	return f.subGroupsByParent[realm+"/"+parentID], nil
 }
 

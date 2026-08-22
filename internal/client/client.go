@@ -732,9 +732,19 @@ func parseLocationID(resp *http.Response, op string) (string, error) {
 	return location[idx+1:], nil
 }
 
-// GetGroups returns top-level groups matching the given name (exact match).
-func (c *Client) GetGroups(ctx context.Context, realm, search string) ([]map[string]any, error) {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/groups?search=" + url.QueryEscape(search) + "&exact=true"
+// GetGroups returns groups matching the given name (exact match).
+//
+// parentID is "" for top-level groups; otherwise the children of that group are
+// searched. Keycloak exposes the two as different paths, but they answer the
+// same question and callers already track which level they are at.
+func (c *Client) GetGroups(ctx context.Context, realm, parentID, search string) ([]map[string]any, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/groups"
+	if parentID != "" {
+		path += "/" + url.PathEscape(parentID) + "/children"
+	}
+
+	path += "?search=" + url.QueryEscape(search) + "&exact=true"
+
 	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
@@ -776,32 +786,15 @@ func (c *Client) GetGroup(ctx context.Context, realm, id string) (map[string]any
 	return result, nil
 }
 
-// GetSubGroups returns the direct children of the given parent group matching
-// the given name (exact match). Querying by name avoids the server's default
-// child-page cap (Keycloak paginates /children with a small default max).
-func (c *Client) GetSubGroups(ctx context.Context, realm, parentID, search string) ([]map[string]any, error) {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/groups/" + url.PathEscape(parentID) + "/children?search=" + url.QueryEscape(search) + "&exact=true"
-	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, readError(resp)
-	}
-
-	var result []map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decoding subgroups: %w", err)
-	}
-	return result, nil
-}
-
-// CreateGroup creates a new top-level group in the given realm.
-// Returns the UUID of the newly created group, extracted from the Location header.
-func (c *Client) CreateGroup(ctx context.Context, realm string, body map[string]any) (string, error) {
+// CreateGroup creates a group and returns its UUID, taken from the Location
+// header. parentID is "" for a top-level group; otherwise the group is created
+// as a child of it.
+func (c *Client) CreateGroup(ctx context.Context, realm, parentID string, body map[string]any) (string, error) {
 	path := "/admin/realms/" + url.PathEscape(realm) + "/groups"
+	if parentID != "" {
+		path += "/" + url.PathEscape(parentID) + "/children"
+	}
+
 	resp, err := c.doRequest(ctx, http.MethodPost, path, body)
 	if err != nil {
 		return "", err
@@ -812,22 +805,6 @@ func (c *Client) CreateGroup(ctx context.Context, realm string, body map[string]
 		return "", readError(resp)
 	}
 	return parseLocationID(resp, "creating group")
-}
-
-// CreateSubGroup creates a new group nested under the given parent group.
-// Returns the UUID of the newly created subgroup, extracted from the Location header.
-func (c *Client) CreateSubGroup(ctx context.Context, realm, parentID string, body map[string]any) (string, error) {
-	path := "/admin/realms/" + url.PathEscape(realm) + "/groups/" + url.PathEscape(parentID) + "/children"
-	resp, err := c.doRequest(ctx, http.MethodPost, path, body)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusCreated {
-		return "", readError(resp)
-	}
-	return parseLocationID(resp, "creating subgroup")
 }
 
 // UpdateGroup updates an existing group by UUID.

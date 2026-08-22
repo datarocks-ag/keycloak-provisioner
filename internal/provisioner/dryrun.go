@@ -337,49 +337,42 @@ func (d *dryRunAPI) GetServiceAccountUser(ctx context.Context, realm, clientUUID
 
 // Groups.
 
-func (d *dryRunAPI) GetGroups(ctx context.Context, realm, search string) ([]map[string]any, error) {
-	d.mu.Lock()
-	id, found := d.createdGroups[groupKey{realm, "", search}]
-	d.mu.Unlock()
-	if found {
-		return []map[string]any{{"id": id, "name": search}}, nil
-	}
-	if d.realmIsSynthetic(realm) {
-		return nil, nil
-	}
-	return d.inner.GetGroups(ctx, realm, search)
-}
-
-func (d *dryRunAPI) GetSubGroups(ctx context.Context, realm, parentID, search string) ([]map[string]any, error) {
+// GetGroups reports a group created earlier in this dry-run when one matches,
+// so a later step — a user joining a group, or a subgroup being nested under
+// it — resolves it instead of treating it as missing.
+//
+// The lookup is keyed on parentID, which is "" at the top level, so one method
+// serves both levels exactly as the two it replaced did.
+func (d *dryRunAPI) GetGroups(ctx context.Context, realm, parentID, search string) ([]map[string]any, error) {
 	d.mu.Lock()
 	id, found := d.createdGroups[groupKey{realm, parentID, search}]
 	d.mu.Unlock()
+
 	if found {
 		return []map[string]any{{"id": id, "name": search}}, nil
 	}
+
 	if isSyntheticID(parentID) || d.realmIsSynthetic(realm) {
 		return nil, nil
 	}
-	return d.inner.GetSubGroups(ctx, realm, parentID, search)
+
+	return d.inner.GetGroups(ctx, realm, parentID, search)
 }
 
-func (d *dryRunAPI) CreateGroup(_ context.Context, realm string, body map[string]any) (string, error) {
+func (d *dryRunAPI) CreateGroup(_ context.Context, realm, parentID string, body map[string]any) (string, error) {
 	name, _ := body["name"].(string)
-	slog.Info("DRY-RUN: would create group", "realm", realm, "group", name)
-	id := d.newID("group")
-	d.mu.Lock()
-	d.createdGroups[groupKey{realm, "", name}] = id
-	d.mu.Unlock()
-	return id, nil
-}
+	if parentID == "" {
+		slog.Info("DRY-RUN: would create group", "realm", realm, "group", name)
+	} else {
+		slog.Info("DRY-RUN: would create subgroup", "realm", realm, "group", name, "parent", parentID)
+	}
 
-func (d *dryRunAPI) CreateSubGroup(_ context.Context, realm, parentID string, body map[string]any) (string, error) {
-	name, _ := body["name"].(string)
-	slog.Info("DRY-RUN: would create subgroup", "realm", realm, "group", name, "parent", parentID)
 	id := d.newID("group")
+
 	d.mu.Lock()
 	d.createdGroups[groupKey{realm, parentID, name}] = id
 	d.mu.Unlock()
+
 	return id, nil
 }
 

@@ -273,7 +273,7 @@ realms:
 	}
 
 	// Verify group exists with its attribute
-	groups, err := kc.GetGroups(ctx, "test-realm", "engineering")
+	groups, err := kc.GetGroups(ctx, "test-realm", "", "engineering")
 	if err != nil {
 		t.Fatalf("getting groups: %v", err)
 	}
@@ -299,7 +299,7 @@ realms:
 	}
 
 	// Verify subgroup exists
-	subGroups, err := kc.GetSubGroups(ctx, "test-realm", groupUUID, "backend")
+	subGroups, err := kc.GetGroups(ctx, "test-realm", groupUUID, "backend")
 	if err != nil {
 		t.Fatalf("getting subgroups: %v", err)
 	}
@@ -421,7 +421,7 @@ realms:
 	// After two runs, group state must be stable — no duplicate top-level group,
 	// subgroup, or realm-role mapping. This exercises the create/skip idempotency
 	// of ensureGroup, its subgroup recursion, and the additive role-mapping diff.
-	groups, err := kc.GetGroups(ctx, "idempotent-realm", "idempotent-group")
+	groups, err := kc.GetGroups(ctx, "idempotent-realm", "", "idempotent-group")
 	if err != nil {
 		t.Fatalf("getting groups: %v", err)
 	}
@@ -433,7 +433,7 @@ realms:
 		t.Fatal("expected group 'id' to be a string")
 	}
 
-	subGroups, err := kc.GetSubGroups(ctx, "idempotent-realm", groupUUID, "idempotent-subgroup")
+	subGroups, err := kc.GetGroups(ctx, "idempotent-realm", groupUUID, "idempotent-subgroup")
 	if err != nil {
 		t.Fatalf("getting subgroups: %v", err)
 	}
@@ -1840,7 +1840,7 @@ realms:
 	}
 
 	// Organization groups must not leak into the realm's own groups.
-	realmGroups, err := kc.GetGroups(ctx, "orggroups-realm", "engineering")
+	realmGroups, err := kc.GetGroups(ctx, "orggroups-realm", "", "engineering")
 	if err != nil {
 		t.Fatalf("getting realm groups: %v", err)
 	}

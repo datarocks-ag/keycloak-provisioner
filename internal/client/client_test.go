@@ -1324,7 +1324,7 @@ func TestGetGroups(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	result, err := c.GetGroups(context.Background(), "test", "engineering")
+	result, err := c.GetGroups(context.Background(), "test", "", "engineering")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1343,7 +1343,7 @@ func TestGetGroups_Error(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	_, err := c.GetGroups(context.Background(), "test", "eng")
+	_, err := c.GetGroups(context.Background(), "test", "", "eng")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -1425,7 +1425,7 @@ func TestGetSubGroups(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	result, err := c.GetSubGroups(context.Background(), "test", "parent-uuid", "backend")
+	result, err := c.GetGroups(context.Background(), "test", "parent-uuid", "backend")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1444,7 +1444,7 @@ func TestGetSubGroups_Error(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	_, err := c.GetSubGroups(context.Background(), "test", "parent-uuid", "backend")
+	_, err := c.GetGroups(context.Background(), "test", "parent-uuid", "backend")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -1460,7 +1460,7 @@ func TestCreateGroup_Success(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	uuid, err := c.CreateGroup(context.Background(), "test", map[string]any{"name": "eng"})
+	uuid, err := c.CreateGroup(context.Background(), "test", "", map[string]any{"name": "eng"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1478,7 +1478,7 @@ func TestCreateGroup_NoLocationHeader(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	_, err := c.CreateGroup(context.Background(), "test", map[string]any{"name": "eng"})
+	_, err := c.CreateGroup(context.Background(), "test", "", map[string]any{"name": "eng"})
 	if err == nil {
 		t.Fatal("expected error for missing Location header")
 	}
@@ -1494,7 +1494,7 @@ func TestCreateGroup_Error(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	_, err := c.CreateGroup(context.Background(), "test", map[string]any{"name": "eng"})
+	_, err := c.CreateGroup(context.Background(), "test", "", map[string]any{"name": "eng"})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -1513,7 +1513,7 @@ func TestCreateSubGroup_Success(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	uuid, err := c.CreateSubGroup(context.Background(), "test", "parent-uuid", map[string]any{"name": "backend"})
+	uuid, err := c.CreateGroup(context.Background(), "test", "parent-uuid", map[string]any{"name": "backend"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1532,7 +1532,7 @@ func TestCreateSubGroup_Error(t *testing.T) {
 	defer server.Close()
 
 	c := connectClient(t, server.URL)
-	_, err := c.CreateSubGroup(context.Background(), "test", "parent-uuid", map[string]any{"name": "backend"})
+	_, err := c.CreateGroup(context.Background(), "test", "parent-uuid", map[string]any{"name": "backend"})
 	if err == nil {
 		t.Fatal("expected error")
 	}
