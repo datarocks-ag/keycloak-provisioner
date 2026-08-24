@@ -7,7 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No unreleased changes._
+### Added
+
+- `loginWithEmailAllowed` and `bruteForceProtected` on a realm. Both are
+  standard realm settings that the config could not express, so a realm needing
+  them had to be adjusted by hand after every provisioning run. Like the other
+  realm fields they are optional: omit them and Keycloak keeps its current
+  value. `bruteForceProtected` is the toggle only — the detection thresholds
+  (failure factor, wait times) are left where they are.
 
 ## [1.10.0] — 2026-08-22
 

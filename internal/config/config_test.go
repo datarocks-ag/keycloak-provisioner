@@ -1542,6 +1542,46 @@ realms:
 	}
 }
 
+func TestRealmLoginAndBruteForceSettings(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    loginWithEmailAllowed: true
+    bruteForceProtected: true
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if v := cfg.Realms[0].LoginWithEmailAllowed; v == nil || !*v {
+		t.Errorf("expected loginWithEmailAllowed=true, got %v", v)
+	}
+	if v := cfg.Realms[0].BruteForceProtected; v == nil || !*v {
+		t.Errorf("expected bruteForceProtected=true, got %v", v)
+	}
+}
+
+func TestRealmLoginAndBruteForceSettingsUnsetStayNil(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.Realms[0].LoginWithEmailAllowed != nil {
+		t.Error("expected loginWithEmailAllowed to stay nil when unset")
+	}
+	if cfg.Realms[0].BruteForceProtected != nil {
+		t.Error("expected bruteForceProtected to stay nil when unset")
+	}
+}
+
 func TestOrganizations(t *testing.T) {
 	yaml := `
 realms:

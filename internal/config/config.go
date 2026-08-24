@@ -70,6 +70,14 @@ type Realm struct {
 	LoginTheme           string `yaml:"loginTheme"`
 	RegistrationAllowed  *bool  `yaml:"registrationAllowed"`
 	ResetPasswordAllowed *bool  `yaml:"resetPasswordAllowed"`
+	// LoginWithEmailAllowed lets users log in with their email address as well
+	// as their username. Keycloak forces duplicateEmailsAllowed off while this
+	// is on.
+	LoginWithEmailAllowed *bool `yaml:"loginWithEmailAllowed"`
+	// BruteForceProtected enables Keycloak's brute force detection, which
+	// temporarily locks an account after repeated failed logins. The detection
+	// thresholds keep their current values; only the toggle is configurable.
+	BruteForceProtected *bool `yaml:"bruteForceProtected"`
 	// OrganizationsEnabled toggles Keycloak Organizations for this realm.
 	// Keycloak 26+. Leave unset to keep the realm's current value.
 	OrganizationsEnabled *bool `yaml:"organizationsEnabled"`
