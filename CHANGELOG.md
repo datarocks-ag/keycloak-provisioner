@@ -7,14 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_No unreleased changes._
+
+## [1.11.0] — 2026-08-24
+
+Two standard realm settings that the config could not express:
+`loginWithEmailAllowed` and `bruteForceProtected`. A realm needing either had to
+be adjusted by hand after every provisioning run, and — since 1.6.0 rejects
+unknown fields — declaring them failed the run outright rather than being
+ignored.
+
+One thing to know:
+
+- **`bruteForceProtected` is the toggle only.** It turns Keycloak's brute force
+  detection on with whatever thresholds the realm already has; the failure
+  factor, wait times, and lockout strategy are not configurable here and are
+  left untouched. If your realm needs tuned thresholds, set them once in
+  Keycloak — the provisioner will not overwrite them.
+
+Both fields are optional, like every other realm field: omit them and Keycloak
+keeps its current value, so nothing about an existing config changes on its own.
+
 ### Added
 
-- `loginWithEmailAllowed` and `bruteForceProtected` on a realm. Both are
-  standard realm settings that the config could not express, so a realm needing
-  them had to be adjusted by hand after every provisioning run. Like the other
-  realm fields they are optional: omit them and Keycloak keeps its current
-  value. `bruteForceProtected` is the toggle only — the detection thresholds
-  (failure factor, wait times) are left where they are.
+- `loginWithEmailAllowed` and `bruteForceProtected` on a realm.
 
 ## [1.10.0] — 2026-08-22
 
@@ -667,7 +683,9 @@ Initial release.
   (testcontainers-based Keycloak), Trivy scan, GHCR publish, GoReleaser.
 - LICENSE.
 
-[Unreleased]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.9.0...HEAD
+[Unreleased]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.11.0...HEAD
+[1.11.0]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.10.0...v1.11.0
+[1.10.0]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.8.1...v1.9.0
 [1.8.1]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.7.0...v1.8.0
