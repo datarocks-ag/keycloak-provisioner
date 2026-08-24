@@ -55,6 +55,12 @@ func buildRealmBody(realm config.Realm, existing map[string]any) map[string]any 
 	if realm.ResetPasswordAllowed != nil {
 		body["resetPasswordAllowed"] = *realm.ResetPasswordAllowed
 	}
+	if realm.LoginWithEmailAllowed != nil {
+		body["loginWithEmailAllowed"] = *realm.LoginWithEmailAllowed
+	}
+	if realm.BruteForceProtected != nil {
+		body["bruteForceProtected"] = *realm.BruteForceProtected
+	}
 	if realm.OrganizationsEnabled != nil {
 		body["organizationsEnabled"] = *realm.OrganizationsEnabled
 	}

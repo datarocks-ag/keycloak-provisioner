@@ -239,6 +239,8 @@ Every field is optional except `realm`. A field left out is not sent, so Keycloa
 | `loginTheme` | string | Login theme name |
 | `registrationAllowed` | bool | Whether self-registration is open |
 | `resetPasswordAllowed` | bool | Whether users may reset their own password |
+| `loginWithEmailAllowed` | bool | Whether users may log in with their email address |
+| `bruteForceProtected` | bool | Enable brute force detection (temporary lockout after repeated failed logins) |
 | `organizationsEnabled` | bool | Enable Keycloak Organizations (26+) |
 | `attributes` | map | Realm attributes, merged over the current ones |
 | `acrLoaMap` | map | ACR value to Level of Authentication (see Step-Up Authentication) |

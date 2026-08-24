@@ -128,25 +128,31 @@ func TestBuildRealmBodyAllFields(t *testing.T) {
 	enabled := true
 	regAllowed := false
 	resetPw := true
+	loginWithEmail := true
+	bruteForce := true
 
 	realm := config.Realm{
-		Realm:                "test",
-		DisplayName:          "Test Realm",
-		Enabled:              &enabled,
-		LoginTheme:           "keycloak",
-		RegistrationAllowed:  &regAllowed,
-		ResetPasswordAllowed: &resetPw,
+		Realm:                 "test",
+		DisplayName:           "Test Realm",
+		Enabled:               &enabled,
+		LoginTheme:            "keycloak",
+		RegistrationAllowed:   &regAllowed,
+		ResetPasswordAllowed:  &resetPw,
+		LoginWithEmailAllowed: &loginWithEmail,
+		BruteForceProtected:   &bruteForce,
 	}
 
 	body := buildRealmBody(realm, nil)
 
 	checks := map[string]any{
-		"realm":                "test",
-		"displayName":          "Test Realm",
-		"enabled":              true,
-		"loginTheme":           "keycloak",
-		"registrationAllowed":  false,
-		"resetPasswordAllowed": true,
+		"realm":                 "test",
+		"displayName":           "Test Realm",
+		"enabled":               true,
+		"loginTheme":            "keycloak",
+		"registrationAllowed":   false,
+		"resetPasswordAllowed":  true,
+		"loginWithEmailAllowed": true,
+		"bruteForceProtected":   true,
 	}
 
 	for key, want := range checks {
@@ -408,6 +414,31 @@ func TestBuildRealmBodyOrganizationsEnabledUnsetOmitsKey(t *testing.T) {
 
 	if _, ok := body["organizationsEnabled"]; ok {
 		t.Error("organizationsEnabled should not be set when unset")
+	}
+}
+
+func TestBuildRealmBodyLoginAndBruteForceFalse(t *testing.T) {
+	off := false
+	realm := config.Realm{Realm: "test", LoginWithEmailAllowed: &off, BruteForceProtected: &off}
+
+	body := buildRealmBody(realm, nil)
+
+	if body["loginWithEmailAllowed"] != false {
+		t.Errorf("expected loginWithEmailAllowed=false, got %v", body["loginWithEmailAllowed"])
+	}
+	if body["bruteForceProtected"] != false {
+		t.Errorf("expected bruteForceProtected=false, got %v", body["bruteForceProtected"])
+	}
+}
+
+func TestBuildRealmBodyLoginAndBruteForceUnsetOmitsKeys(t *testing.T) {
+	body := buildRealmBody(config.Realm{Realm: "test"}, nil)
+
+	if _, ok := body["loginWithEmailAllowed"]; ok {
+		t.Error("loginWithEmailAllowed should not be set when unset")
+	}
+	if _, ok := body["bruteForceProtected"]; ok {
+		t.Error("bruteForceProtected should not be set when unset")
 	}
 }
 

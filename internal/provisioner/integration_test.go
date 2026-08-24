@@ -170,6 +170,8 @@ realms:
   - realm: "test-realm"
     displayName: "Test Realm"
     enabled: true
+    loginWithEmailAllowed: false  # Keycloak defaults this to true
+    bruteForceProtected: true     # Keycloak defaults this to false
     clients:
       - clientId: "test-app"
         secret: "test-secret"
@@ -237,6 +239,12 @@ realms:
 	}
 	if realm["displayName"] != "Test Realm" {
 		t.Errorf("expected displayName 'Test Realm', got %v", realm["displayName"])
+	}
+	if realm["loginWithEmailAllowed"] != false {
+		t.Errorf("expected loginWithEmailAllowed false, got %v", realm["loginWithEmailAllowed"])
+	}
+	if realm["bruteForceProtected"] != true {
+		t.Errorf("expected bruteForceProtected true, got %v", realm["bruteForceProtected"])
 	}
 
 	// Verify client exists

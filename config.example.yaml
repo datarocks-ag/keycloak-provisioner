@@ -25,6 +25,11 @@ realms:
     loginTheme: "keycloak"
     registrationAllowed: false
     resetPasswordAllowed: true
+    loginWithEmailAllowed: true
+
+    # Brute force detection: lock an account temporarily after repeated failed
+    # logins. The thresholds keep Keycloak's current values.
+    bruteForceProtected: true
 
     # Override the global strategy for this realm only.
     # strategy: "update"
