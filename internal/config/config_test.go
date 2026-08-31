@@ -186,6 +186,24 @@ realms:
 	}
 }
 
+func TestValidationClientScopeInBothLists(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    clients:
+      - clientId: "app"
+        defaultClientScopes:
+          - "clearing"
+        optionalClientScopes:
+          - "clearing"
+`
+	path := writeTempConfig(t, yaml)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for a scope listed as both default and optional")
+	}
+}
+
 func TestValidationMissingProtocolMapperName(t *testing.T) {
 	yaml := `
 realms:
@@ -846,6 +864,8 @@ func TestEnvVarExpansionInSlicesAndMaps(t *testing.T) {
 	t.Setenv("TEST_REDIRECT", "https://app.example.com/*")
 	t.Setenv("TEST_ORIGIN", "https://app.example.com")
 	t.Setenv("TEST_SCOPE", "openid")
+	// A distinct scope: one name cannot be both default and optional.
+	t.Setenv("TEST_OPTIONAL_SCOPE", "offline_access")
 	t.Setenv("TEST_ATTR_VAL", "attr_value")
 	t.Setenv("TEST_PM_CONFIG", "my-audience")
 	t.Setenv("TEST_CR_NAME", "admin-role")
@@ -866,7 +886,7 @@ realms:
         defaultClientScopes:
           - "${TEST_SCOPE}"
         optionalClientScopes:
-          - "${TEST_SCOPE}"
+          - "${TEST_OPTIONAL_SCOPE}"
         attributes:
           key: "${TEST_ATTR_VAL}"
         protocolMappers:
@@ -898,7 +918,7 @@ realms:
 	if c.DefaultClientScopes[0] != "openid" {
 		t.Errorf("defaultClientScopes not expanded: %s", c.DefaultClientScopes[0])
 	}
-	if c.OptionalClientScopes[0] != "openid" {
+	if c.OptionalClientScopes[0] != "offline_access" {
 		t.Errorf("optionalClientScopes not expanded: %s", c.OptionalClientScopes[0])
 	}
 	if c.Attributes["key"] != "attr_value" {

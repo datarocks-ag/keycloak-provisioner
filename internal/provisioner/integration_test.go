@@ -1678,6 +1678,132 @@ realms:
 	}
 }
 
+// TestIntegrationClientScopeTypeChange pins the fix for silent optional/default
+// drift on a client. Keycloak answers an assignment that conflicts with the
+// existing one with 204 and keeps the old type, so moving a scope from
+// optionalClientScopes to defaultClientScopes used to produce a green run and
+// an unchanged client — the dangerous direction, since a default scope rides in
+// every token whether the client asked for it or not.
+//
+// The scope carries no realm-level type here, to isolate the client-level
+// behaviour from the realm-level one, which fails loudly instead — see
+// TestIntegrationRealmClientScopeTypeChange.
+func TestIntegrationClientScopeTypeChange(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	const realm = "scope-type-realm"
+
+	optional := `
+realms:
+  - realm: "scope-type-realm"
+    enabled: true
+    clientScopes:
+      - name: "clearing"
+    clients:
+      - clientId: "bff"
+        enabled: true
+        optionalClientScopes:
+          - "clearing"
+`
+	asDefault := `
+realms:
+  - realm: "scope-type-realm"
+    enabled: true
+    clientScopes:
+      - name: "clearing"
+    clients:
+      - clientId: "bff"
+        enabled: true
+        defaultClientScopes:
+          - "clearing"
+`
+	ctx := context.Background()
+
+	for _, yaml := range []string{optional, asDefault} {
+		cfg, err := config.Load(writeTestConfig(t, yaml))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+			t.Fatalf("run: %v", err)
+		}
+	}
+
+	uuid := clientUUID(t, kc, realm, "bff")
+
+	assigned, err := kc.GetClientScopeAssignments(ctx, realm, uuid, client.ClientScopeDefault)
+	if err != nil {
+		t.Fatalf("getting client default scopes: %v", err)
+	}
+	if !containsScopeNamed(assigned, "clearing") {
+		t.Errorf("scope moved to defaultClientScopes is not a default scope of the client: %v", assigned)
+	}
+
+	assigned, err = kc.GetClientScopeAssignments(ctx, realm, uuid, client.ClientScopeOptional)
+	if err != nil {
+		t.Fatalf("getting client optional scopes: %v", err)
+	}
+	if containsScopeNamed(assigned, "clearing") {
+		t.Errorf("scope moved to defaultClientScopes is still optional on the client: %v", assigned)
+	}
+}
+
+// TestIntegrationRealmClientScopeTypeChange covers the realm-level half of the
+// same change. Keycloak is not silent here: it answers the conflicting
+// assignment with 409 Duplicate resource error, so changing a scope's type used
+// to abort the run outright. Detaching first makes the change converge.
+func TestIntegrationRealmClientScopeTypeChange(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	const realm = "realm-scope-type-realm"
+
+	optional := `
+realms:
+  - realm: "realm-scope-type-realm"
+    enabled: true
+    clientScopes:
+      - name: "clearing"
+        type: "optional"
+`
+	asDefault := `
+realms:
+  - realm: "realm-scope-type-realm"
+    enabled: true
+    clientScopes:
+      - name: "clearing"
+        type: "default"
+`
+	ctx := context.Background()
+
+	for _, yaml := range []string{optional, asDefault} {
+		cfg, err := config.Load(writeTestConfig(t, yaml))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+			t.Fatalf("run: %v", err)
+		}
+	}
+
+	assigned, err := kc.GetRealmClientScopes(ctx, realm, client.ClientScopeDefault)
+	if err != nil {
+		t.Fatalf("getting realm default scopes: %v", err)
+	}
+	if !containsScopeNamed(assigned, "clearing") {
+		t.Errorf("scope with type default is not a realm default scope: %v", assigned)
+	}
+
+	assigned, err = kc.GetRealmClientScopes(ctx, realm, client.ClientScopeOptional)
+	if err != nil {
+		t.Fatalf("getting realm optional scopes: %v", err)
+	}
+	if containsScopeNamed(assigned, "clearing") {
+		t.Errorf("scope with type default is still a realm optional scope: %v", assigned)
+	}
+}
+
 func containsScopeNamed(scopes []map[string]any, name string) bool {
 	for _, s := range scopes {
 		if s["name"] == name {

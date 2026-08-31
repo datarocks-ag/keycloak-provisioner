@@ -573,6 +573,11 @@ func (d *dryRunAPI) AddRealmClientScope(_ context.Context, realm, scopeID, kind 
 	return nil
 }
 
+func (d *dryRunAPI) RemoveRealmClientScope(_ context.Context, realm, scopeID, kind string) error {
+	slog.Info("DRY-RUN: would detach client scope from realm", "realm", realm, "scopeUUID", scopeID, "type", kind)
+	return nil
+}
+
 func (d *dryRunAPI) GetClientScopeAssignments(ctx context.Context, realm, clientUUID, kind string) ([]map[string]any, error) {
 	if d.realmIsSynthetic(realm) || isSyntheticID(clientUUID) {
 		return nil, nil
@@ -583,6 +588,13 @@ func (d *dryRunAPI) GetClientScopeAssignments(ctx context.Context, realm, client
 
 func (d *dryRunAPI) AddClientScopeAssignment(_ context.Context, realm, clientUUID, scopeID, kind string) error {
 	slog.Info("DRY-RUN: would assign client scope",
+		"realm", realm, "clientUUID", clientUUID, "scopeUUID", scopeID, "type", kind)
+
+	return nil
+}
+
+func (d *dryRunAPI) RemoveClientScopeAssignment(_ context.Context, realm, clientUUID, scopeID, kind string) error {
+	slog.Info("DRY-RUN: would detach client scope",
 		"realm", realm, "clientUUID", clientUUID, "scopeUUID", scopeID, "type", kind)
 
 	return nil

@@ -1854,6 +1854,60 @@ func TestClientScopeAssignmentEndpoints(t *testing.T) {
 	}
 }
 
+// TestClientScopeDetachEndpoints covers the DELETEs that make a scope change
+// type: without them a conflicting PUT is answered 204 and the old type stays.
+func TestClientScopeDetachEndpoints(t *testing.T) {
+	var mu sync.Mutex
+	seen := map[string]string{}
+
+	record := func(key string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			defer mu.Unlock()
+			seen[key] = r.PathValue("scopeId")
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"DELETE /admin/realms/{realm}/default-default-client-scopes/{scopeId}":         record("realmDefault"),
+		"DELETE /admin/realms/{realm}/default-optional-client-scopes/{scopeId}":        record("realmOptional"),
+		"DELETE /admin/realms/{realm}/clients/{uuid}/default-client-scopes/{scopeId}":  record("clientDefault"),
+		"DELETE /admin/realms/{realm}/clients/{uuid}/optional-client-scopes/{scopeId}": record("clientOptional"),
+	})
+	defer server.Close()
+
+	c := connectClient(t, server.URL)
+	ctx := context.Background()
+
+	if err := c.RemoveRealmClientScope(ctx, "test", "cs-1", ClientScopeDefault); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.RemoveRealmClientScope(ctx, "test", "cs-2", ClientScopeOptional); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.RemoveClientScopeAssignment(ctx, "test", "uuid-1", "cs-3", ClientScopeDefault); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.RemoveClientScopeAssignment(ctx, "test", "uuid-1", "cs-4", ClientScopeOptional); err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	want := map[string]string{
+		"realmDefault":   "cs-1",
+		"realmOptional":  "cs-2",
+		"clientDefault":  "cs-3",
+		"clientOptional": "cs-4",
+	}
+	for k, v := range want {
+		if seen[k] != v {
+			t.Errorf("%s: expected %q, got %q", k, v, seen[k])
+		}
+	}
+}
+
 // --- Organization tests ---
 
 func TestOrganizationEndpoints(t *testing.T) {

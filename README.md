@@ -112,11 +112,11 @@ In dry-run mode, every mutating call logs a `DRY-RUN:` message and is skipped. R
    3. **Realm authentication bindings** — applied as a second realm update, after flows exist
    4. **Client scopes** — created or updated (matched by `name`)
       - **Protocol mappers** — created or updated (matched by `name`)
-      - **Realm-level assignment** — added if `type` is `default` or `optional` (additive)
+      - **Realm-level assignment** — added if `type` is `default` or `optional`, moved if the scope currently carries the other type
    5. **Clients** — created or updated (matched by `clientId`)
       - **Protocol mappers** — created or updated (matched by `name`)
       - **Client roles** — created or updated
-      - **Client scope assignment** — configured default/optional scopes attached (additive)
+      - **Client scope assignment** — configured default/optional scopes attached, moved if attached with the other type
    6. **Realm roles** — created or updated
    7. **Service account roles** — assigned (additive, after roles exist)
       - **Scope mappings** — roles declared on a client or client scope added to its scope (additive, after roles exist)
@@ -531,11 +531,11 @@ realms:
           - "orders:read"
 ```
 
-`type` controls realm-level assignment: `default` adds the scope to every newly created client, `optional` makes it requestable through the `scope` parameter, and `none` (the default) assigns it nowhere. Realm-level assignment is additive — changing a scope's `type` adds the new assignment but does not remove the old one.
+`type` controls realm-level assignment: `default` adds the scope to every newly created client, `optional` makes it requestable through the `scope` parameter, and `none` (the default) assigns it nowhere. Changing `type` between `default` and `optional` moves the scope: it is detached from the list it is on before it is added to the other. Setting `type` to `none` does not detach it from either — it only stops the provisioner from managing the realm-level assignment.
 
 Scopes are matched by `name`. Protocol mappers on a scope follow the same rules as protocol mappers on a client.
 
-`defaultClientScopes` and `optionalClientScopes` on a client attach existing scopes to that client. Assignment is additive: configured scopes that are not yet attached are added, and nothing is ever detached — including Keycloak's own default scopes, which a client declaring a scope keeps. A referenced scope that does not exist is logged as a warning and skipped.
+`defaultClientScopes` and `optionalClientScopes` on a client attach existing scopes to that client. Configured scopes that are not yet attached are added, and a configured scope currently attached with the other type is moved — listing an optional scope under `defaultClientScopes` detaches it from the optional list first, because Keycloak answers the conflicting assignment with 204 and would otherwise keep the old type. Scopes the config does not mention are never detached, including Keycloak's own default scopes, which a client declaring a scope keeps. A referenced scope that does not exist is logged as a warning and skipped, and naming the same scope in both lists is rejected at load time — the two types are mutually exclusive.
 
 ## Role Scope Mappings
 

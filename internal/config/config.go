@@ -1543,6 +1543,10 @@ func validateClients(realmIdx int, clients []Client, realmAcrLoaMap map[string]i
 			return err
 		}
 
+		if err := validateDistinctClientScopes(prefix, c); err != nil {
+			return err
+		}
+
 		if err := validateAttributes(prefix+".attributes", c.Attributes); err != nil {
 			return err
 		}
@@ -1599,6 +1603,25 @@ func validateClients(realmIdx int, clients []Client, realmAcrLoaMap map[string]i
 			if c.BearerOnly != nil && *c.BearerOnly {
 				return fmt.Errorf("%s.standardTokenExchangeEnabled: not supported on a bearer-only client (it cannot call the token endpoint)", prefix)
 			}
+		}
+	}
+
+	return nil
+}
+
+// validateDistinctClientScopes rejects a scope named as both default and
+// optional on one client. The two are mutually exclusive in Keycloak, and the
+// provisioner moves a scope to the type the config asks for, so a scope in both
+// lists would be detached and re-attached on every run.
+func validateDistinctClientScopes(prefix string, c Client) error {
+	defaults := make(map[string]bool, len(c.DefaultClientScopes))
+	for _, name := range c.DefaultClientScopes {
+		defaults[name] = true
+	}
+
+	for _, name := range c.OptionalClientScopes {
+		if defaults[name] {
+			return fmt.Errorf("%s: client scope %q is listed as both default and optional", prefix, name)
 		}
 	}
 
