@@ -1019,6 +1019,22 @@ func (c *Client) putClientScopeAssignment(ctx context.Context, path string) erro
 	return nil
 }
 
+// deleteClientScopeAssignment is the shared writer for detaching a client
+// scope from one of those four lists. Like the PUTs it is idempotent, and
+// Keycloak answers 204 whether or not the scope was attached.
+func (c *Client) deleteClientScopeAssignment(ctx context.Context, path string) error {
+	resp, err := c.doRequest(ctx, http.MethodDelete, path, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return readError(resp)
+	}
+	return nil
+}
+
 // Client scope assignment kinds. Keycloak spells the realm-level and
 // client-level endpoints differently, but both distinguish the same two kinds,
 // and they are the values config.ClientScope.Type already carries.
@@ -1049,6 +1065,14 @@ func (c *Client) AddRealmClientScope(ctx context.Context, realm, scopeID, kind s
 	return c.putClientScopeAssignment(ctx, realmClientScopePath(realm, kind)+"/"+url.PathEscape(scopeID))
 }
 
+// RemoveRealmClientScope detaches a client scope from the realm's defaults or
+// optionals. It is needed to change a scope's type: an assignment conflicting
+// with the existing one is rejected with 409, so the scope has to leave the
+// other list first.
+func (c *Client) RemoveRealmClientScope(ctx context.Context, realm, scopeID, kind string) error {
+	return c.deleteClientScopeAssignment(ctx, realmClientScopePath(realm, kind)+"/"+url.PathEscape(scopeID))
+}
+
 // GetClientScopeAssignments returns the default or optional scopes assigned to
 // a client.
 func (c *Client) GetClientScopeAssignments(ctx context.Context, realm, clientUUID, kind string) ([]map[string]any, error) {
@@ -1059,6 +1083,12 @@ func (c *Client) GetClientScopeAssignments(ctx context.Context, realm, clientUUI
 // optional scope.
 func (c *Client) AddClientScopeAssignment(ctx context.Context, realm, clientUUID, scopeID, kind string) error {
 	return c.putClientScopeAssignment(ctx, clientScopePath(realm, clientUUID, kind)+"/"+url.PathEscape(scopeID))
+}
+
+// RemoveClientScopeAssignment detaches a client scope from a client's defaults
+// or optionals, for the same reason RemoveRealmClientScope exists.
+func (c *Client) RemoveClientScopeAssignment(ctx context.Context, realm, clientUUID, scopeID, kind string) error {
+	return c.deleteClientScopeAssignment(ctx, clientScopePath(realm, clientUUID, kind)+"/"+url.PathEscape(scopeID))
 }
 
 // GetOrganizations returns organizations in the realm matching the given name

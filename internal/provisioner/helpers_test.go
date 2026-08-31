@@ -10,6 +10,12 @@ import (
 	"keycloak-provisioner/internal/client"
 )
 
+// emptyList answers with an empty JSON array, for a read a test has to serve
+// but does not care about.
+func emptyList(w http.ResponseWriter, _ *http.Request) {
+	json.NewEncoder(w).Encode([]map[string]any{})
+}
+
 // testServer creates an httptest.Server with a token endpoint and custom handlers.
 func testServer(t *testing.T, handlers map[string]http.HandlerFunc) *httptest.Server {
 	t.Helper()

@@ -78,11 +78,19 @@ type ClientScopeAPI interface {
 
 // ClientScopeAssignmentAPI covers attaching client scopes, both as realm
 // defaults and to an individual client. kind is "default" or "optional".
+//
+// The Remove calls exist only so a scope can change kind: an assignment that
+// conflicts with the existing one does not change it — on a client Keycloak
+// answers 204 and silently keeps the old kind, at realm level it answers 409 —
+// so the scope has to be detached from the other list first. Nothing here
+// detaches a scope the config no longer mentions.
 type ClientScopeAssignmentAPI interface {
 	GetRealmClientScopes(ctx context.Context, realm, kind string) ([]map[string]any, error)
 	AddRealmClientScope(ctx context.Context, realm, scopeID, kind string) error
+	RemoveRealmClientScope(ctx context.Context, realm, scopeID, kind string) error
 	GetClientScopeAssignments(ctx context.Context, realm, clientUUID, kind string) ([]map[string]any, error)
 	AddClientScopeAssignment(ctx context.Context, realm, clientUUID, scopeID, kind string) error
+	RemoveClientScopeAssignment(ctx context.Context, realm, clientUUID, scopeID, kind string) error
 }
 
 // UserAPI covers users and their credentials.

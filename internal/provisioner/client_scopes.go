@@ -120,9 +120,10 @@ func buildClientScopeBody(cs config.ClientScope) map[string]any {
 }
 
 // ensureRealmClientScopeType assigns a scope to the realm's default or optional
-// client scopes. Assignment is additive: a scope is added when missing and
-// never removed, so switching a scope's type in config does not detach it from
-// the type it previously had.
+// client scopes. A scope carrying the other type is moved: it is detached from
+// that list first, because Keycloak rejects the conflicting assignment with 409
+// rather than replacing it. Type "none" and the empty type leave both lists as
+// they are, so a scope assigned by hand is not torn off.
 func (p *Provisioner) ensureRealmClientScopeType(ctx context.Context, realm, scopeID string, cs config.ClientScope) error {
 	switch cs.Type {
 	case "", "none":
@@ -142,9 +143,44 @@ func (p *Provisioner) ensureRealmClientScopeType(ctx context.Context, realm, sco
 		return nil
 	}
 
+	if err := p.detachRealmClientScope(ctx, realm, scopeID, cs); err != nil {
+		return err
+	}
+
 	slog.Info("Assigning client scope to realm", "realm", realm, "clientScope", cs.Name, "type", cs.Type)
 
 	return p.client.AddRealmClientScope(ctx, realm, scopeID, cs.Type)
+}
+
+// detachRealmClientScope removes the scope from the realm list it does not
+// belong in, so the assignment that follows takes effect. It is a no-op when
+// the scope is not on that list.
+func (p *Provisioner) detachRealmClientScope(ctx context.Context, realm, scopeID string, cs config.ClientScope) error {
+	other := otherClientScopeType(cs.Type)
+
+	assigned, err := p.client.GetRealmClientScopes(ctx, realm, other)
+	if err != nil {
+		return err
+	}
+
+	if !nameSet(assigned)[cs.Name] {
+		return nil
+	}
+
+	slog.Info("Detaching client scope from realm to change its type",
+		"realm", realm, "clientScope", cs.Name, "type", other)
+
+	return p.client.RemoveRealmClientScope(ctx, realm, scopeID, other)
+}
+
+// otherClientScopeType returns the assignment list a scope must leave to take
+// the given type.
+func otherClientScopeType(scopeType string) string {
+	if scopeType == client.ClientScopeDefault {
+		return client.ClientScopeOptional
+	}
+
+	return client.ClientScopeDefault
 }
 
 // ensureClientScopeAssignments attaches the client's configured default and
@@ -154,8 +190,12 @@ func (p *Provisioner) ensureRealmClientScopeType(ctx context.Context, realm, sco
 // defaultClientScopes/optionalClientScopes fields of the client representation
 // are ignored by Keycloak on update, and on create they replace the realm's
 // default scopes rather than adding to them, so buildClientBody omits them
-// entirely. Assignment here is additive — scopes already attached to the client
-// are left alone, and none are ever detached.
+// entirely. A configured scope currently attached with the other type is moved
+// to the configured one; anything the config does not mention is left alone,
+// including Keycloak's own defaults.
+//
+// Both lists are read up front, since moving a scope needs to know what the
+// other one holds.
 func (p *Provisioner) ensureClientScopeAssignments(
 	ctx context.Context,
 	realm, clientUUID string,
@@ -166,33 +206,40 @@ func (p *Provisioner) ensureClientScopeAssignments(
 		return nil
 	}
 
+	current := make(map[string]map[string]bool, 2)
+
+	for _, scopeType := range []string{client.ClientScopeDefault, client.ClientScopeOptional} {
+		assigned, err := p.client.GetClientScopeAssignments(ctx, realm, clientUUID, scopeType)
+		if err != nil {
+			return err
+		}
+
+		current[scopeType] = nameSet(assigned)
+	}
+
 	if err := p.assignClientScopes(ctx, realm, clientUUID, c.ClientID,
-		client.ClientScopeDefault, c.DefaultClientScopes, byName); err != nil {
+		client.ClientScopeDefault, c.DefaultClientScopes, byName, current); err != nil {
 		return err
 	}
 
 	return p.assignClientScopes(ctx, realm, clientUUID, c.ClientID,
-		client.ClientScopeOptional, c.OptionalClientScopes, byName)
+		client.ClientScopeOptional, c.OptionalClientScopes, byName, current)
 }
 
+// assignClientScopes attaches wanted to the client with the given type.
+// current holds the client's attached scope names for both types and is kept up
+// to date as scopes move, so the second call sees what the first one did.
 func (p *Provisioner) assignClientScopes(
 	ctx context.Context,
 	realm, clientUUID, clientID, scopeType string,
 	wanted []string,
 	byName clientScopeIndex,
+	current map[string]map[string]bool,
 ) error {
-	if len(wanted) == 0 {
-		return nil
-	}
-
-	assigned, err := p.client.GetClientScopeAssignments(ctx, realm, clientUUID, scopeType)
-	if err != nil {
-		return err
-	}
-	current := nameSet(assigned)
+	other := otherClientScopeType(scopeType)
 
 	for _, name := range wanted {
-		if current[name] {
+		if current[scopeType][name] {
 			slog.Debug("Client scope already assigned", "realm", realm, "clientId", clientID, "clientScope", name, "type", scopeType)
 			continue
 		}
@@ -203,6 +250,20 @@ func (p *Provisioner) assignClientScopes(
 			continue
 		}
 
+		// Keycloak answers an assignment that conflicts with the existing one
+		// with 204 and keeps the old type, so a scope changing type has to
+		// leave the other list first.
+		if current[other][name] {
+			slog.Info("Detaching client scope to change its type",
+				"realm", realm, "clientId", clientID, "clientScope", name, "type", other)
+
+			if err := p.client.RemoveClientScopeAssignment(ctx, realm, clientUUID, scopeID, other); err != nil {
+				return err
+			}
+
+			delete(current[other], name)
+		}
+
 		slog.Info("Assigning client scope", "realm", realm, "clientId", clientID, "clientScope", name, "type", scopeType)
 
 		if err := p.client.AddClientScopeAssignment(ctx, realm, clientUUID, scopeID, scopeType); err != nil {
@@ -211,7 +272,7 @@ func (p *Provisioner) assignClientScopes(
 
 		// Keep the local view in step so a name repeated in the config does not
 		// produce a second, redundant assignment.
-		current[name] = true
+		current[scopeType][name] = true
 	}
 
 	return nil

@@ -7,7 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No unreleased changes._
+### Fixed
+
+- A client scope that changes between `default` and `optional` is moved instead
+  of staying where it was.
+
+  Keycloak does not replace a conflicting assignment. On a client it answers the
+  PUT with `204 No Content` and silently keeps the old type, so moving a scope
+  from `optionalClientScopes` to `defaultClientScopes` logged `Assigning client
+  scope … type=default`, exited 0, and left the scope optional. At realm level
+  the same change answers `409 Duplicate resource error` and aborted the run.
+
+  The status code gives the provisioner nothing to detect, so it no longer
+  relies on one: a configured scope found on the other list is detached from it
+  before it is assigned. Both directions are covered, at realm level and on a
+  client.
+
+  This matters beyond convergence. `defaultClientScopes` is the stronger
+  setting — a default scope rides in every token whether the client asks for it
+  or not — so an operator correcting an over-broad config saw a green run and
+  kept the old behaviour.
+
+  Nothing else is detached: a scope the config does not mention is still left
+  alone, including Keycloak's own defaults, and `type: none` still means "do not
+  manage the realm-level assignment" rather than "remove it".
+
+### Added
+
+- Config validation rejects a client naming the same scope in both
+  `defaultClientScopes` and `optionalClientScopes`. The two types are mutually
+  exclusive, and now that a scope is moved to the configured type, a scope in
+  both lists would be detached and re-attached on every run.
 
 ## [1.11.0] — 2026-08-24
 

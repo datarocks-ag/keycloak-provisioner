@@ -120,6 +120,7 @@ func TestEnsureClientScopeAssignmentsAddsMissingScope(t *testing.T) {
 				{"id": "scope-2", "name": "profile"},
 			})
 		},
+		"GET /admin/realms/{realm}/clients/{uuid}/optional-client-scopes": emptyList,
 		"GET /admin/realms/{realm}/clients/{uuid}/default-client-scopes": func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode([]map[string]any{{"id": "scope-2", "name": "profile"}})
 		},
@@ -156,6 +157,7 @@ func TestEnsureClientScopeAssignmentsWarnsOnUnknownScope(t *testing.T) {
 		"GET /admin/realms/{realm}/client-scopes": func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode([]map[string]any{})
 		},
+		"GET /admin/realms/{realm}/clients/{uuid}/optional-client-scopes": emptyList,
 		"GET /admin/realms/{realm}/clients/{uuid}/default-client-scopes": func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode([]map[string]any{})
 		},
@@ -176,6 +178,188 @@ func TestEnsureClientScopeAssignmentsWarnsOnUnknownScope(t *testing.T) {
 
 	if err := p.ensureClientScopeAssignments(context.Background(), "test", "uuid-1", c, scopes); err != nil {
 		t.Fatalf("expected unknown scope to be skipped, got error: %v", err)
+	}
+}
+
+// TestEnsureClientScopeAssignmentsMovesScopeToConfiguredType pins the fix for
+// silent optional-to-default drift: Keycloak answers an assignment that
+// conflicts with the existing one with 204 and keeps the old type, so the scope
+// has to be detached from the other list before it is re-assigned.
+func TestEnsureClientScopeAssignmentsMovesScopeToConfiguredType(t *testing.T) {
+	var mu sync.Mutex
+	var calls []string
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/client-scopes": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{{"id": "scope-1", "name": "clearing"}})
+		},
+		"GET /admin/realms/{realm}/clients/{uuid}/default-client-scopes": emptyList,
+		"GET /admin/realms/{realm}/clients/{uuid}/optional-client-scopes": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{{"id": "scope-1", "name": "clearing"}})
+		},
+		"DELETE /admin/realms/{realm}/clients/{uuid}/optional-client-scopes/{scopeId}": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			defer mu.Unlock()
+			calls = append(calls, "DELETE optional/"+r.PathValue("scopeId"))
+			w.WriteHeader(http.StatusNoContent)
+		},
+		"PUT /admin/realms/{realm}/clients/{uuid}/default-client-scopes/{scopeId}": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			defer mu.Unlock()
+			calls = append(calls, "PUT default/"+r.PathValue("scopeId"))
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	p := New(newTestClient(t, server.URL), &config.Config{})
+	c := config.Client{ClientID: "app", DefaultClientScopes: []string{"clearing"}}
+
+	scopes, err := p.loadClientScopeIndex(context.Background(), "test")
+	if err != nil {
+		t.Fatalf("loadClientScopeIndex: %v", err)
+	}
+
+	if err := p.ensureClientScopeAssignments(context.Background(), "test", "uuid-1", c, scopes); err != nil {
+		t.Fatalf("ensureClientScopeAssignments: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	want := []string{"DELETE optional/scope-1", "PUT default/scope-1"}
+	if len(calls) != len(want) || calls[0] != want[0] || calls[1] != want[1] {
+		t.Errorf("expected the scope to be detached before it is re-assigned, got %v", calls)
+	}
+}
+
+// TestEnsureClientScopeAssignmentsMovesScopeFromDefaultToOptional is the
+// mirror: the move works in both directions.
+func TestEnsureClientScopeAssignmentsMovesScopeFromDefaultToOptional(t *testing.T) {
+	var mu sync.Mutex
+	var calls []string
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/client-scopes": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{{"id": "scope-1", "name": "clearing"}})
+		},
+		"GET /admin/realms/{realm}/clients/{uuid}/default-client-scopes": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{{"id": "scope-1", "name": "clearing"}})
+		},
+		"GET /admin/realms/{realm}/clients/{uuid}/optional-client-scopes": emptyList,
+		"DELETE /admin/realms/{realm}/clients/{uuid}/default-client-scopes/{scopeId}": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			defer mu.Unlock()
+			calls = append(calls, "DELETE default/"+r.PathValue("scopeId"))
+			w.WriteHeader(http.StatusNoContent)
+		},
+		"PUT /admin/realms/{realm}/clients/{uuid}/optional-client-scopes/{scopeId}": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			defer mu.Unlock()
+			calls = append(calls, "PUT optional/"+r.PathValue("scopeId"))
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	p := New(newTestClient(t, server.URL), &config.Config{})
+	c := config.Client{ClientID: "app", OptionalClientScopes: []string{"clearing"}}
+
+	scopes, err := p.loadClientScopeIndex(context.Background(), "test")
+	if err != nil {
+		t.Fatalf("loadClientScopeIndex: %v", err)
+	}
+
+	if err := p.ensureClientScopeAssignments(context.Background(), "test", "uuid-1", c, scopes); err != nil {
+		t.Fatalf("ensureClientScopeAssignments: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	want := []string{"DELETE default/scope-1", "PUT optional/scope-1"}
+	if len(calls) != len(want) || calls[0] != want[0] || calls[1] != want[1] {
+		t.Errorf("expected the scope to be detached before it is re-assigned, got %v", calls)
+	}
+}
+
+// TestEnsureClientScopeAssignmentsKeepsUnconfiguredScopes holds the line on the
+// rest of the behaviour: only a scope the config names with the other type
+// moves, and Keycloak's own defaults are left where they are.
+func TestEnsureClientScopeAssignmentsKeepsUnconfiguredScopes(t *testing.T) {
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/client-scopes": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"id": "scope-1", "name": "clearing"},
+				{"id": "scope-2", "name": "profile"},
+			})
+		},
+		"GET /admin/realms/{realm}/clients/{uuid}/default-client-scopes": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{{"id": "scope-1", "name": "clearing"}})
+		},
+		"GET /admin/realms/{realm}/clients/{uuid}/optional-client-scopes": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{{"id": "scope-2", "name": "profile"}})
+		},
+		"DELETE /admin/realms/{realm}/clients/{uuid}/default-client-scopes/{scopeId}": func(w http.ResponseWriter, r *http.Request) {
+			t.Errorf("must not detach %q: it is not configured with the other type", r.PathValue("scopeId"))
+			w.WriteHeader(http.StatusNoContent)
+		},
+		"DELETE /admin/realms/{realm}/clients/{uuid}/optional-client-scopes/{scopeId}": func(w http.ResponseWriter, r *http.Request) {
+			t.Errorf("must not detach %q: it is not configured with the other type", r.PathValue("scopeId"))
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	p := New(newTestClient(t, server.URL), &config.Config{})
+	c := config.Client{ClientID: "app", DefaultClientScopes: []string{"clearing"}}
+
+	scopes, err := p.loadClientScopeIndex(context.Background(), "test")
+	if err != nil {
+		t.Fatalf("loadClientScopeIndex: %v", err)
+	}
+
+	if err := p.ensureClientScopeAssignments(context.Background(), "test", "uuid-1", c, scopes); err != nil {
+		t.Fatalf("ensureClientScopeAssignments: %v", err)
+	}
+}
+
+// TestEnsureRealmClientScopeTypeMovesScopeToConfiguredType is the realm-level
+// counterpart: the same 204 hides the same drift there.
+func TestEnsureRealmClientScopeTypeMovesScopeToConfiguredType(t *testing.T) {
+	var mu sync.Mutex
+	var calls []string
+
+	server := testServer(t, map[string]http.HandlerFunc{
+		"GET /admin/realms/{realm}/default-default-client-scopes": emptyList,
+		"GET /admin/realms/{realm}/default-optional-client-scopes": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]map[string]any{{"id": "scope-1", "name": "clearing"}})
+		},
+		"DELETE /admin/realms/{realm}/default-optional-client-scopes/{scopeId}": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			defer mu.Unlock()
+			calls = append(calls, "DELETE optional/"+r.PathValue("scopeId"))
+			w.WriteHeader(http.StatusNoContent)
+		},
+		"PUT /admin/realms/{realm}/default-default-client-scopes/{scopeId}": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			defer mu.Unlock()
+			calls = append(calls, "PUT default/"+r.PathValue("scopeId"))
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	defer server.Close()
+
+	p := New(newTestClient(t, server.URL), &config.Config{})
+	cs := config.ClientScope{Name: "clearing", Type: "default"}
+
+	if err := p.ensureRealmClientScopeType(context.Background(), "test", "scope-1", cs); err != nil {
+		t.Fatalf("ensureRealmClientScopeType: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	want := []string{"DELETE optional/scope-1", "PUT default/scope-1"}
+	if len(calls) != len(want) || calls[0] != want[0] || calls[1] != want[1] {
+		t.Errorf("expected the scope to be detached before it is re-assigned, got %v", calls)
 	}
 }
 
@@ -205,6 +389,7 @@ func TestEnsureRealmClientScopeTypeDefaultAssignsWhenMissing(t *testing.T) {
 		"GET /admin/realms/{realm}/default-default-client-scopes": func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode([]map[string]any{{"id": "other", "name": "profile"}})
 		},
+		"GET /admin/realms/{realm}/default-optional-client-scopes": emptyList,
 		"PUT /admin/realms/{realm}/default-default-client-scopes/{scopeId}": func(w http.ResponseWriter, r *http.Request) {
 			mu.Lock()
 			defer mu.Unlock()
@@ -256,6 +441,7 @@ func TestEnsureClientScopeAssignmentsSkipsDuplicateNames(t *testing.T) {
 		"GET /admin/realms/{realm}/client-scopes": func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode([]map[string]any{{"id": "scope-1", "name": "orders:read"}})
 		},
+		"GET /admin/realms/{realm}/clients/{uuid}/optional-client-scopes": emptyList,
 		"GET /admin/realms/{realm}/clients/{uuid}/default-client-scopes": func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode([]map[string]any{})
 		},
@@ -323,6 +509,7 @@ func TestProvisionRealmListsClientScopesOnce(t *testing.T) {
 		"PUT /admin/realms/{realm}/clients/{uuid}": func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
 		},
+		"GET /admin/realms/{realm}/clients/{uuid}/optional-client-scopes": emptyList,
 		"GET /admin/realms/{realm}/clients/{uuid}/default-client-scopes": func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode([]map[string]any{})
 		},
