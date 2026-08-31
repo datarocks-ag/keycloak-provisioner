@@ -7,37 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_No unreleased changes._
+
+## [1.12.0] — 2026-08-31
+
+Moving a client scope between `defaultClientScopes` and `optionalClientScopes`
+now takes effect. It did not before, and the run reported that it had:
+
+```
+"msg":"Assigning client scope","clientId":"bff","clientScope":"clearing","type":"default"
+```
+
+Keycloak does not replace a conflicting assignment. On a client it answers the
+PUT with `204 No Content` and silently keeps the old type; at realm level the
+same change answers `409 Duplicate resource error`, which aborted the run. No
+error was swallowed — the status code gives the provisioner nothing to detect,
+so it no longer relies on one: a configured scope found on the other list is
+detached from it before it is assigned.
+
+Two things to know:
+
+- **Re-check any realm where you changed a scope's type and saw a green run.**
+  Narrowing is the direction that matters: a scope moved from
+  `defaultClientScopes` to `optionalClientScopes` stayed default, and a default
+  scope rides in every token whether the client asks for it or not — so a config
+  that reads as narrowed is not. This release makes the next run converge; it
+  cannot tell you which realms drifted, so the current state is worth reading
+  off Keycloak rather than off the config.
+- **A scope named in both of a client's lists is now a config error.** The two
+  types are mutually exclusive, and now that a scope is moved to the type the
+  config asks for, one in both lists would be detached and re-attached on every
+  run. A config doing that loaded before and will now fail at load; pick a list.
+
+Nothing else is detached: a scope the config does not mention is left alone,
+including Keycloak's own default scopes, and `type: none` still means "do not
+manage the realm-level assignment" rather than "remove it".
+
 ### Fixed
 
-- A client scope that changes between `default` and `optional` is moved instead
-  of staying where it was.
-
-  Keycloak does not replace a conflicting assignment. On a client it answers the
-  PUT with `204 No Content` and silently keeps the old type, so moving a scope
-  from `optionalClientScopes` to `defaultClientScopes` logged `Assigning client
-  scope … type=default`, exited 0, and left the scope optional. At realm level
-  the same change answers `409 Duplicate resource error` and aborted the run.
-
-  The status code gives the provisioner nothing to detect, so it no longer
-  relies on one: a configured scope found on the other list is detached from it
-  before it is assigned. Both directions are covered, at realm level and on a
-  client.
-
-  This matters beyond convergence. `defaultClientScopes` is the stronger
-  setting — a default scope rides in every token whether the client asks for it
-  or not — so an operator correcting an over-broad config saw a green run and
-  kept the old behaviour.
-
-  Nothing else is detached: a scope the config does not mention is still left
-  alone, including Keycloak's own defaults, and `type: none` still means "do not
-  manage the realm-level assignment" rather than "remove it".
+- A client scope changing between `default` and `optional` is moved instead of
+  staying where it was, both at realm level and on a client.
 
 ### Added
 
 - Config validation rejects a client naming the same scope in both
-  `defaultClientScopes` and `optionalClientScopes`. The two types are mutually
-  exclusive, and now that a scope is moved to the configured type, a scope in
-  both lists would be detached and re-attached on every run.
+  `defaultClientScopes` and `optionalClientScopes`.
 
 ## [1.11.0] — 2026-08-24
 
@@ -713,7 +727,8 @@ Initial release.
   (testcontainers-based Keycloak), Trivy scan, GHCR publish, GoReleaser.
 - LICENSE.
 
-[Unreleased]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.11.0...HEAD
+[Unreleased]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.12.0...HEAD
+[1.12.0]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.11.0...v1.12.0
 [1.11.0]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.10.0...v1.11.0
 [1.10.0]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.8.1...v1.9.0
