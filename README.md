@@ -558,34 +558,37 @@ The `token-exchange` scope permission is one of four things v1 impersonation nee
 
 1. **Both server features**, not just this one: `--features=token-exchange:v1,admin-fine-grained-authz:v1`. They are independent flags, and `admin-fine-grained-authz:v1` does not enable the v1 exchange provider.
 2. **The `token-exchange` permission on the audience client** — the client being exchanged *to*, not the requesting one. That is what this section configures.
-3. **The `impersonation` role** from `realm-management`, on the requesting client's service account (`serviceAccountRoles`).
-4. **That role actually reaching the token** — see below.
+3. **`realm-management`'s `impersonation` role held by the identity in the subject token** — see below. This is the one that is easy to put in the wrong place.
 
-Removing any one of them fails the exchange.
+Removing either of 2 or 3 fails the exchange.
 
-#### The trap: a granted role that never reaches the token
+#### The trap: the role belongs to the operator, not to the client
 
-If the requesting client sets `fullScopeAllowed: false`, the `impersonation` role must also be in its [scope mappings](#role-scope-mappings), or the exchange is refused even though the role is genuinely granted. Measured on 26.6, varying only the scope while the service account holds the role throughout:
+The natural assumption is that the *requesting client* needs permission to impersonate, so the role goes on its service account. That is wrong for the ordinary flow, and it fails in a way that looks like everything is configured.
 
-| `fullScopeAllowed` | `impersonation` in `scopeMappings` | roles in the client's token | exchange |
-|---|---|---|---|
-| `true` | — | `["impersonation"]` | succeeds |
-| `false` | no | `[]` | **`access_denied: Client not allowed to exchange`** |
-| `false` | yes | `["impersonation"]` | succeeds |
+Keycloak checks the identity the `subject_token` represents. In a real impersonation that is the **operator** — the human whose session the exchange is performed under — so the operator's own account needs the role. Measured on 26.7.2 against a realm with a service-account grant already in place, removing one thing at a time:
 
-The middle row is the one that costs time. The role is on the service-account user and the admin console shows it there, so it reads as granted — but `fullScopeAllowed: false` keeps it out of the token, and the exchange sees a client without it. Declare it:
+| removed | exchange |
+|---|---|
+| — (all present) | succeeds |
+| `token-exchange` permission on the audience client | **refused** |
+| `impersonation` on the requesting client's **service account** | succeeds — not required |
+| that role in the client's **scope mappings** | succeeds — not required |
+| `impersonation` on the **operator's user account** | **refused** |
+
+So a realm can grant the role to the client's service account, verify it is present there, and still be refused — which is exactly what the role's absence on the operator looks like:
 
 ```yaml
-- clientId: "sandbox-bff"
-  serviceAccountsEnabled: true
-  fullScopeAllowed: false
-  serviceAccountRoles:
-    clients:
-      realm-management: ["impersonation"]
-  scopeMappings:
-    clients:
-      realm-management: ["impersonation"]
+users:
+  - username: "bob"          # an operator who may impersonate
+    roles:
+      clients:
+        realm-management: ["impersonation"]
 ```
+
+The service-account grant matters only when a client exchanges **its own** token — then the service account *is* the identity in the subject token, and the usual rule applies: with `fullScopeAllowed: false` the role must also be in the client's [scope mappings](#role-scope-mappings) or it never reaches the token.
+
+Note what this role is: `realm-management:impersonation` lets its holder impersonate through Keycloak's admin API as well, not only through the exchange. Granting it to operator accounts is a real privilege decision, not a formality.
 
 #### Telling the two failures apart
 

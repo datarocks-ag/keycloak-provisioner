@@ -52,14 +52,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     rejected: Keycloak deletes the client's whole scope permission set when
     fine-grained permissions are switched off.
 
-  Granting `token-exchange` is one of four things v1 impersonation needs, and
+  Granting `token-exchange` is one of three things v1 impersonation needs, and
   the README now documents the whole verified recipe: both server features
   (`token-exchange:v1` and `admin-fine-grained-authz:v1` are independent flags),
-  this permission on the *audience* client, the `realm-management`
-  `impersonation` role on the requesting client's service account, and — the
-  part that costs time — that role actually reaching the token, which
-  `fullScopeAllowed: false` prevents unless it is also in the client's
-  `scopeMappings`.
+  this permission on the *audience* client, and `realm-management`'s
+  `impersonation` role held by the identity in the subject token — which in a
+  real impersonation is the **operator's own account**, not the requesting
+  client's service account. Granting it to the service account and verifying it
+  there is the failure that looks like success, and it is measured: removing the
+  service-account grant changes nothing, removing the operator's refuses the
+  exchange.
 
 - Compatibility errors now name the command-line flag for a disabled server
   feature where the flag differs from the feature name, rather than only the
