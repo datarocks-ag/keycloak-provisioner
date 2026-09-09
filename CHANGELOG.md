@@ -7,7 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No unreleased changes._
+### Added
+
+- `managementPermissions` on a client, expressing Keycloak's **v1** fine-grained
+  admin permissions — which other clients may exercise a given admin capability
+  on it:
+
+  ```yaml
+  clients:
+    - clientId: "sandbox-router"
+      managementPermissions:
+        scopes:
+          token-exchange:
+            clients: ["sandbox-bff"]
+  ```
+
+  This is the only way to express a v1 `token-exchange` permission, which gates
+  impersonation — the exchange that accepts `requested_subject`. Previously it
+  had to be applied by hand after every run, so a realm needing impersonation
+  could not be rebuilt from its configuration.
+
+  Any scope the server offers works as a key. Names are validated against the
+  `scopePermissions` map Keycloak itself returns, so a typo is named rather than
+  ignored and no release is needed when Keycloak adds a scope. On 26.6 and 26.7:
+  `view`, `manage`, `configure`, `map-roles`, `map-roles-client-scope`,
+  `map-roles-composite`, `token-exchange`.
+
+  Three things to know:
+
+  - **Requires `--features=admin-fine-grained-authz:v1`.** Without it the admin
+    API answers `501` with `{"error": "Feature not enabled"}`, naming neither
+    the feature nor the flag. The pre-flight check now refuses such a run with a
+    message that names the flag, before anything is written.
+  - **Enabling v1 switches the v2 permission model off.** Keycloak reports
+    `ADMIN_FINE_GRAINED_AUTHZ` and `ADMIN_FINE_GRAINED_AUTHZ_V2` as separate
+    features and only one is active — a realm-wide consequence of a per-client
+    setting.
+  - **The client list is authoritative.** This is the one place the provisioner
+    replaces state rather than only adding to it. It owns a policy per
+    `(client, scope)` named `keycloak-provisioner.<scope>.<clientId>` and
+    rewrites its client list, so removing a `clientId` withdraws that grant on
+    the next run. The permission's own policy list stays additive, so a policy
+    attached by hand keeps working. Nothing is deleted, and `enabled: false` is
+    rejected: Keycloak deletes the client's whole scope permission set when
+    fine-grained permissions are switched off.
+
+  Granting `token-exchange` is necessary for v1 impersonation but is not on its
+  own known to be sufficient — the v1 exchange provider sits behind a separate
+  `token-exchange:v1` flag. This makes the permission reproducible; it is not a
+  complete impersonation recipe.
+
+- Compatibility errors now name the command-line flag for a disabled server
+  feature where the flag differs from the feature name, rather than only the
+  name reported in server info.
 
 ## [1.12.0] — 2026-08-31
 

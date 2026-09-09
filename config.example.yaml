@@ -202,6 +202,25 @@ realms:
       #   secret: "${EXCHANGE_SERVICE_SECRET}"
       #   standardTokenExchangeEnabled: true
 
+      # Fine-grained admin permissions on a client (the v1 permission model).
+      # Grants named clients an admin capability on this one; token-exchange is
+      # what gates v1 impersonation.
+      #
+      # Requires Keycloak started with --features=admin-fine-grained-authz:v1.
+      # Note that enabling v1 switches the v2 permission model off realm-wide.
+      #
+      # The client list is authoritative: removing a clientId withdraws that
+      # grant on the next run. Scope names are checked against what the server
+      # offers — on 26.6/26.7: view, manage, configure, map-roles,
+      # map-roles-client-scope, map-roles-composite, token-exchange.
+      # - clientId: "sandbox-router"
+      #   managementPermissions:
+      #     enabled: true
+      #     scopes:
+      #       token-exchange:
+      #         clients:
+      #           - "sandbox-bff"
+
     roles:
       - name: "app-admin"
         description: "Application administrator"

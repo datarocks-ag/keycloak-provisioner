@@ -26,6 +26,12 @@ type Requirement struct {
 	// always sufficient: a feature can be supported by the release and still
 	// be switched off on the server.
 	Feature string
+	// Flag is the command-line spelling of Feature, when the two differ enough
+	// that knowing the feature name does not tell you what to type. Keycloak
+	// reports features in server info as ADMIN_FINE_GRAINED_AUTHZ but enables
+	// them as --features=admin-fine-grained-authz:v1, and the error is only
+	// actionable if it names the second. Empty when there is nothing to add.
+	Flag string
 	// Since records where the floor comes from, so a future reader can check
 	// it rather than trust it.
 	Since string
@@ -57,6 +63,16 @@ var Requirements = []Requirement{
 		Feature:    "TOKEN_EXCHANGE_STANDARD_V2",
 		Since:      "Standard Token Exchange (RFC 8693) is supported from Keycloak 26.2. It is governed by TOKEN_EXCHANGE_STANDARD_V2, not by the legacy TOKEN_EXCHANGE preview feature, which is off by default and unrelated",
 		Uses:       usesStandardTokenExchange,
+	},
+	{
+		Name: "client management permissions",
+		// No version floor: measured identical on 26.6 (this tool's floor) and
+		// 26.7.2. Only the feature flag decides whether the API exists.
+		MinVersion: "",
+		Feature:    "ADMIN_FINE_GRAINED_AUTHZ",
+		Flag:       "admin-fine-grained-authz:v1",
+		Since:      "The v1 fine-grained admin permission API (clients/{id}/management/permissions) is gated on ADMIN_FINE_GRAINED_AUTHZ, which is off by default and reported separately from ADMIN_FINE_GRAINED_AUTHZ_V2. Without it the endpoint answers 501 with a body naming neither the feature nor the flag. Enabling it also turns the v2 model off",
+		Uses:       usesManagementPermissions,
 	},
 	{
 		Name: "step-up authentication",
@@ -133,6 +149,24 @@ func usesStandardTokenExchange(cfg *config.Config) []string {
 		for j, c := range realm.Clients {
 			if c.StandardTokenExchangeEnabled != nil && *c.StandardTokenExchangeEnabled {
 				paths = append(paths, fmt.Sprintf("realms[%d].clients[%d].standardTokenExchangeEnabled", i, j))
+			}
+		}
+	}
+
+	return paths
+}
+
+// usesManagementPermissions reports the clients that declare fine-grained
+// admin permissions. Unlike the token-exchange toggle there is no "off" form to
+// tolerate: config validation already refuses enabled:false, so any block
+// present needs the feature.
+func usesManagementPermissions(cfg *config.Config) []string {
+	var paths []string
+
+	for i, realm := range cfg.Realms {
+		for j, c := range realm.Clients {
+			if c.ManagementPermissions != nil {
+				paths = append(paths, fmt.Sprintf("realms[%d].clients[%d].managementPermissions", i, j))
 			}
 		}
 	}

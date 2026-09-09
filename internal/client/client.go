@@ -1716,3 +1716,198 @@ func (c *Client) AddOrganizationIdentityProvider(ctx context.Context, realm, org
 	}
 	return nil
 }
+
+// Fine-grained admin permissions (the v1 model).
+//
+// Two resources are involved and they live on different clients. The
+// enable/disable switch and the scope permission ids hang off the *target*
+// client, at /management/permissions. The permissions themselves, and the
+// policies that satisfy them, are authorization objects on the
+// *realm-management* client's resource server. Every method below takes the
+// UUID of whichever client owns the object it touches.
+
+// authzPath builds a path under a resource server owned by resourceServerUUID,
+// which is always the realm-management client for fine-grained admin
+// permissions.
+func authzPath(realm, resourceServerUUID, suffix string) string {
+	return "/admin/realms/" + url.PathEscape(realm) +
+		"/clients/" + url.PathEscape(resourceServerUUID) +
+		"/authz/resource-server" + suffix
+}
+
+// GetClientManagementPermissions returns the client's fine-grained permission
+// state. When they are disabled the representation is just {"enabled": false};
+// when enabled it also carries "scopePermissions", mapping each scope name to
+// the id of the scope permission that implements it.
+func (c *Client) GetClientManagementPermissions(ctx context.Context, realm, clientUUID string) (map[string]any, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/clients/" + url.PathEscape(clientUUID) + "/management/permissions"
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding client management permissions: %w", err)
+	}
+	return result, nil
+}
+
+// SetClientManagementPermissions enables fine-grained permissions on the client
+// and returns the resulting representation, including the scope permission ids.
+//
+// It is idempotent: enabling permissions that are already enabled returns the
+// same ids rather than creating new ones.
+func (c *Client) SetClientManagementPermissions(ctx context.Context, realm, clientUUID string, enabled bool) (map[string]any, error) {
+	path := "/admin/realms/" + url.PathEscape(realm) + "/clients/" + url.PathEscape(clientUUID) + "/management/permissions"
+	resp, err := c.doRequest(ctx, http.MethodPut, path, map[string]any{"enabled": enabled})
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding client management permissions: %w", err)
+	}
+	return result, nil
+}
+
+// GetAuthzClientPolicies searches the resource server's client policies by
+// name.
+//
+// Keycloak matches the name as a substring, so a search for "a.b" also returns
+// "x.a.b.y". Callers that need one policy must compare names themselves.
+func (c *Client) GetAuthzClientPolicies(ctx context.Context, realm, resourceServerUUID, name string) ([]map[string]any, error) {
+	path := authzPath(realm, resourceServerUUID, "/policy/client?name="+url.QueryEscape(name))
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding client policies: %w", err)
+	}
+	return result, nil
+}
+
+// CreateAuthzClientPolicy creates a client policy and returns its id.
+//
+// Unlike most create endpoints here the id comes from the response body, not a
+// Location header. A name already in use is rejected with 409.
+func (c *Client) CreateAuthzClientPolicy(ctx context.Context, realm, resourceServerUUID string, body map[string]any) (string, error) {
+	path := authzPath(realm, resourceServerUUID, "/policy/client")
+	resp, err := c.doRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		return "", readError(resp)
+	}
+
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decoding created client policy: %w", err)
+	}
+
+	id, ok := result["id"].(string)
+	if !ok || id == "" {
+		return "", fmt.Errorf("creating client policy: response carried no id")
+	}
+	return id, nil
+}
+
+// UpdateAuthzClientPolicy replaces a client policy. The "clients" list it
+// carries is authoritative: the policy afterwards names exactly those clients.
+func (c *Client) UpdateAuthzClientPolicy(ctx context.Context, realm, resourceServerUUID, policyID string, body map[string]any) error {
+	path := authzPath(realm, resourceServerUUID, "/policy/client/"+url.PathEscape(policyID))
+	return c.doAuthzWrite(ctx, http.MethodPut, path, body, "updating client policy")
+}
+
+// GetAuthzScopePermission returns one scope permission.
+//
+// The representation does NOT include the policies attached to it — "policies"
+// is accepted on write and absent on read. Use GetAuthzAssociatedPolicies to
+// find out what is currently attached.
+func (c *Client) GetAuthzScopePermission(ctx context.Context, realm, resourceServerUUID, permissionID string) (map[string]any, error) {
+	path := authzPath(realm, resourceServerUUID, "/permission/scope/"+url.PathEscape(permissionID))
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding scope permission: %w", err)
+	}
+	return result, nil
+}
+
+// GetAuthzAssociatedPolicies returns the policies currently attached to a
+// permission. It is the only way to read them: the permission's own
+// representation omits them.
+func (c *Client) GetAuthzAssociatedPolicies(ctx context.Context, realm, resourceServerUUID, permissionID string) ([]map[string]any, error) {
+	path := authzPath(realm, resourceServerUUID, "/policy/"+url.PathEscape(permissionID)+"/associatedPolicies")
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding associated policies: %w", err)
+	}
+	return result, nil
+}
+
+// UpdateAuthzScopePermission replaces a scope permission. The "policies" list
+// it carries is authoritative — a policy left out is detached — so callers must
+// send the full intended set, not just the one they are adding.
+func (c *Client) UpdateAuthzScopePermission(ctx context.Context, realm, resourceServerUUID, permissionID string, body map[string]any) error {
+	path := authzPath(realm, resourceServerUUID, "/permission/scope/"+url.PathEscape(permissionID))
+	return c.doAuthzWrite(ctx, http.MethodPut, path, body, "updating scope permission")
+}
+
+// doAuthzWrite performs a write against the authorization endpoints, which do
+// not agree with the rest of the admin API on what a successful write returns:
+// these answer 201 where 204 is conventional elsewhere. Any 2xx is accepted
+// rather than pinning one, since the choice varies by endpoint and release.
+func (c *Client) doAuthzWrite(ctx context.Context, method, path string, body any, what string) error {
+	resp, err := c.doRequest(ctx, method, path, body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return fmt.Errorf("%s: %w", what, readError(resp))
+	}
+	return nil
+}

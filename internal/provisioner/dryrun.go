@@ -45,6 +45,7 @@ func NewDryRunAdapter(inner KeycloakAPI) KeycloakAPI {
 		createdUsers:       make(map[userKey]string),
 		createdOrgMembers:  make(map[orgMemberKey]bool),
 		createdIdPs:        make(map[idpKey]map[string]any),
+		createdPolicies:    make(map[policyKey]map[string]any),
 	}
 }
 
@@ -59,6 +60,7 @@ type (
 	userKey        struct{ realm, username string }
 	orgMemberKey   struct{ realm, orgID, userID string }
 	idpKey         struct{ realm, alias string }
+	policyKey      struct{ realm, resourceServerUUID, name string }
 )
 
 type dryRunAPI struct {
@@ -69,14 +71,15 @@ type dryRunAPI struct {
 	createdRealms      map[string]bool
 	createdClients     map[clientKey]string
 	createdSA          map[saKey]string
-	createdRealmRoles  map[realmRoleKey]string   // -> synthetic role id
-	createdClientRoles map[clientRoleKey]string  // -> synthetic role id
-	createdGroups      map[groupKey]string       // -> synthetic group id
-	createdScopes      map[clientScopeKey]string // -> synthetic client scope id
-	createdFlows       map[flowKey]string        // -> synthetic authentication flow id
-	createdUsers       map[userKey]string        // -> synthetic user id
-	createdOrgMembers  map[orgMemberKey]bool     // organization memberships added this run
-	createdIdPs        map[idpKey]map[string]any // -> the representation that would have been created
+	createdRealmRoles  map[realmRoleKey]string      // -> synthetic role id
+	createdClientRoles map[clientRoleKey]string     // -> synthetic role id
+	createdGroups      map[groupKey]string          // -> synthetic group id
+	createdScopes      map[clientScopeKey]string    // -> synthetic client scope id
+	createdFlows       map[flowKey]string           // -> synthetic authentication flow id
+	createdUsers       map[userKey]string           // -> synthetic user id
+	createdOrgMembers  map[orgMemberKey]bool        // organization memberships added this run
+	createdIdPs        map[idpKey]map[string]any    // -> the representation that would have been created
+	createdPolicies    map[policyKey]map[string]any // management permission policies created this run
 }
 
 func (d *dryRunAPI) realmIsSynthetic(realm string) bool {
@@ -123,9 +126,34 @@ func (d *dryRunAPI) GetClients(ctx context.Context, realm, clientID string) ([]m
 		return []map[string]any{{"id": uuid, "clientId": clientID}}, nil
 	}
 	if d.realmIsSynthetic(realm) {
+		// Keycloak creates realm-management with every realm, so it exists in
+		// a realm that would be created here. Without this, fine-grained
+		// management permissions could not be reported for a new realm: the
+		// resource server they hang off would look absent.
+		if clientID == realmManagementClientID {
+			return []map[string]any{{"id": d.syntheticRealmManagement(realm), "clientId": clientID}}, nil
+		}
+
 		return nil, nil
 	}
 	return d.inner.GetClients(ctx, realm, clientID)
+}
+
+// syntheticRealmManagement returns a stable synthetic UUID for a realm's
+// realm-management client, so repeated lookups within one dry-run agree.
+func (d *dryRunAPI) syntheticRealmManagement(realm string) string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	key := clientKey{realm, realmManagementClientID}
+	if uuid, ok := d.createdClients[key]; ok {
+		return uuid
+	}
+
+	uuid := d.newID("client")
+	d.createdClients[key] = uuid
+
+	return uuid
 }
 
 func (d *dryRunAPI) CreateClient(_ context.Context, realm string, body map[string]any) (string, error) {
@@ -976,5 +1004,108 @@ func (d *dryRunAPI) GetOrganizationIdentityProviders(ctx context.Context, realm,
 
 func (d *dryRunAPI) AddOrganizationIdentityProvider(_ context.Context, realm, orgID, alias string) error {
 	slog.Info("DRY-RUN: would link identity provider to organization", "realm", realm, "organizationUuid", orgID, "identityProvider", alias)
+	return nil
+}
+
+// Fine-grained management permissions.
+
+// managementPermissionScopes are the scope names Keycloak creates when
+// fine-grained permissions are enabled on a client. Measured on 26.6 and
+// 26.7.2; identical on both.
+//
+// The reconciler normally validates configured scope names against what the
+// server returns. This list is the one place that cannot: a client that would
+// be created has no permissions to read, so a dry-run has to say what enabling
+// them would produce. It is only ever used for that synthetic case.
+var managementPermissionScopes = []string{
+	"view", "manage", "configure",
+	"map-roles", "map-roles-client-scope", "map-roles-composite",
+	"token-exchange",
+}
+
+func (d *dryRunAPI) GetClientManagementPermissions(ctx context.Context, realm, clientUUID string) (map[string]any, error) {
+	if d.realmIsSynthetic(realm) || isSyntheticID(clientUUID) {
+		return map[string]any{"enabled": false}, nil
+	}
+
+	return d.inner.GetClientManagementPermissions(ctx, realm, clientUUID)
+}
+
+func (d *dryRunAPI) SetClientManagementPermissions(_ context.Context, realm, clientUUID string, enabled bool) (map[string]any, error) {
+	slog.Info("DRY-RUN: would enable fine-grained management permissions", "realm", realm, "clientUUID", clientUUID)
+
+	scopePermissions := make(map[string]any, len(managementPermissionScopes))
+	for _, scope := range managementPermissionScopes {
+		scopePermissions[scope] = d.newID("scopeperm")
+	}
+
+	return map[string]any{
+		"enabled":          enabled,
+		"resource":         d.newID("resource"),
+		"scopePermissions": scopePermissions,
+	}, nil
+}
+
+func (d *dryRunAPI) GetAuthzClientPolicies(ctx context.Context, realm, resourceServerUUID, name string) ([]map[string]any, error) {
+	d.mu.Lock()
+	policy, found := d.createdPolicies[policyKey{realm, resourceServerUUID, name}]
+	d.mu.Unlock()
+
+	if found {
+		return []map[string]any{policy}, nil
+	}
+
+	if d.realmIsSynthetic(realm) || isSyntheticID(resourceServerUUID) {
+		return nil, nil
+	}
+
+	return d.inner.GetAuthzClientPolicies(ctx, realm, resourceServerUUID, name)
+}
+
+func (d *dryRunAPI) CreateAuthzClientPolicy(_ context.Context, realm, resourceServerUUID string, body map[string]any) (string, error) {
+	name, _ := body["name"].(string)
+	slog.Info("DRY-RUN: would create management permission policy", "realm", realm, "policy", name)
+
+	id := d.newID("policy")
+
+	// Remember it so a second scope reconciled in the same run sees the policy
+	// this one would have created, rather than reporting a duplicate create.
+	policy := map[string]any{"id": id, "name": name, "type": "client"}
+	if clients, ok := body["clients"]; ok {
+		policy["clients"] = clients
+	}
+
+	d.mu.Lock()
+	d.createdPolicies[policyKey{realm, resourceServerUUID, name}] = policy
+	d.mu.Unlock()
+
+	return id, nil
+}
+
+func (d *dryRunAPI) UpdateAuthzClientPolicy(_ context.Context, realm, resourceServerUUID, policyID string, body map[string]any) error {
+	slog.Info("DRY-RUN: would update management permission policy",
+		"realm", realm, "policy", body["name"], "uuid", policyID)
+	return nil
+}
+
+func (d *dryRunAPI) GetAuthzScopePermission(ctx context.Context, realm, resourceServerUUID, permissionID string) (map[string]any, error) {
+	if d.realmIsSynthetic(realm) || isSyntheticID(resourceServerUUID) || isSyntheticID(permissionID) {
+		return map[string]any{"id": permissionID, "type": "scope", "decisionStrategy": "UNANIMOUS"}, nil
+	}
+
+	return d.inner.GetAuthzScopePermission(ctx, realm, resourceServerUUID, permissionID)
+}
+
+func (d *dryRunAPI) GetAuthzAssociatedPolicies(ctx context.Context, realm, resourceServerUUID, permissionID string) ([]map[string]any, error) {
+	if d.realmIsSynthetic(realm) || isSyntheticID(resourceServerUUID) || isSyntheticID(permissionID) {
+		return nil, nil
+	}
+
+	return d.inner.GetAuthzAssociatedPolicies(ctx, realm, resourceServerUUID, permissionID)
+}
+
+func (d *dryRunAPI) UpdateAuthzScopePermission(_ context.Context, realm, resourceServerUUID, permissionID string, body map[string]any) error {
+	slog.Info("DRY-RUN: would attach policies to management permission",
+		"realm", realm, "permission", permissionID, "policies", body["policies"])
 	return nil
 }

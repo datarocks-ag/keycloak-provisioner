@@ -99,14 +99,35 @@ func setupKeycloakVersion(t *testing.T, image string) (*client.Client, func()) {
 	return kc, terminate
 }
 
-func startKeycloak(image string) (*client.Client, string, func(), error) {
+// setupKeycloakWithFeatures starts a container of its own with extra server
+// features enabled.
+//
+// It cannot share the suite's container: several of these features are not
+// additive. Enabling admin-fine-grained-authz:v1 switches
+// ADMIN_FINE_GRAINED_AUTHZ_V2 off, which would move every other test in the
+// package onto the deprecated permission model.
+func setupKeycloakWithFeatures(t *testing.T, features string) (*client.Client, func()) {
+	t.Helper()
+
+	kc, _, terminate, err := startKeycloak(keycloakImage, testcontainers.WithEnv(map[string]string{
+		"KC_FEATURES": features,
+	}))
+	if err != nil {
+		t.Fatalf("failed to start keycloak container with features %q: %v", features, err)
+	}
+
+	return kc, terminate
+}
+
+func startKeycloak(image string, customizers ...testcontainers.ContainerCustomizer) (*client.Client, string, func(), error) {
 	ctx := context.Background()
 
-	kcContainer, err := keycloak.Run(ctx,
-		image,
+	opts := append([]testcontainers.ContainerCustomizer{
 		keycloak.WithAdminUsername("admin"),
 		keycloak.WithAdminPassword("admin"),
-	)
+	}, customizers...)
+
+	kcContainer, err := keycloak.Run(ctx, image, opts...)
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("starting keycloak container: %w", err)
 	}
@@ -3786,4 +3807,247 @@ func sortedNames(set map[string]bool) []string {
 	sort.Strings(out)
 
 	return out
+}
+
+// TestIntegrationManagementPermissions applies a fine-grained token-exchange
+// permission against a real Keycloak and reads the result back through the
+// admin API.
+//
+// It needs a container of its own: admin-fine-grained-authz:v1 switches the v2
+// permission model off, which the rest of the suite must not run under.
+func TestIntegrationManagementPermissions(t *testing.T) {
+	kc, cleanup := setupKeycloakWithFeatures(t, "admin-fine-grained-authz:v1")
+	defer cleanup()
+
+	ctx := context.Background()
+	const realm = "fgap-realm"
+
+	configYAML := `
+realms:
+  - realm: "fgap-realm"
+    enabled: true
+    clients:
+      - clientId: "sandbox-router"
+        enabled: true
+        publicClient: false
+        secret: "router-secret"
+        managementPermissions:
+          enabled: true
+          scopes:
+            token-exchange:
+              clients:
+                - "sandbox-bff"
+      - clientId: "sandbox-bff"
+        enabled: true
+        publicClient: false
+        secret: "bff-secret"
+      - clientId: "sandbox-legacy"
+        enabled: true
+        publicClient: false
+        secret: "legacy-secret"
+`
+	cfgPath := writeTestConfig(t, configYAML)
+
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatalf("loading config: %v", err)
+	}
+
+	// The compat check must pass with the feature on; it is what would
+	// otherwise refuse the run.
+	if err := compat.Verify(ctx, kc, cfg); err != nil {
+		t.Fatalf("compat check refused a config the server supports: %v", err)
+	}
+
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("provisioning run failed: %v", err)
+	}
+
+	clientUUID := func(clientID string) string {
+		t.Helper()
+
+		clients, err := kc.GetClients(ctx, realm, clientID)
+		if err != nil {
+			t.Fatalf("getting client %q: %v", clientID, err)
+		}
+		if len(clients) == 0 {
+			t.Fatalf("client %q not found", clientID)
+		}
+
+		return clients[0]["id"].(string)
+	}
+
+	routerUUID := clientUUID("sandbox-router")
+	bffUUID := clientUUID("sandbox-bff")
+	legacyUUID := clientUUID("sandbox-legacy")
+	realmMgmtUUID := clientUUID("realm-management")
+
+	const policyName = "keycloak-provisioner.token-exchange.sandbox-router"
+
+	// grantedClients returns the clients the provisioner's policy names, read
+	// back from the server.
+	grantedClients := func() []string {
+		t.Helper()
+
+		policies, err := kc.GetAuthzClientPolicies(ctx, realm, realmMgmtUUID, policyName)
+		if err != nil {
+			t.Fatalf("searching policies: %v", err)
+		}
+
+		for _, p := range policies {
+			if p["name"] != policyName {
+				continue
+			}
+
+			var out []string
+			for _, c := range p["clients"].([]any) {
+				out = append(out, c.(string))
+			}
+
+			sort.Strings(out)
+
+			return out
+		}
+
+		t.Fatalf("policy %q not found; got %v", policyName, policies)
+
+		return nil
+	}
+
+	// tokenExchangePermissionID reads the permission the policy must be
+	// attached to.
+	tokenExchangePermissionID := func() string {
+		t.Helper()
+
+		perms, err := kc.GetClientManagementPermissions(ctx, realm, routerUUID)
+		if err != nil {
+			t.Fatalf("reading management permissions: %v", err)
+		}
+		if enabled, _ := perms["enabled"].(bool); !enabled {
+			t.Fatal("fine-grained permissions were not enabled on the target client")
+		}
+
+		scopes, ok := perms["scopePermissions"].(map[string]any)
+		if !ok {
+			t.Fatalf("no scopePermissions in %v", perms)
+		}
+
+		return scopes["token-exchange"].(string)
+	}
+
+	attachedPolicyNames := func() []string {
+		t.Helper()
+
+		associated, err := kc.GetAuthzAssociatedPolicies(ctx, realm, realmMgmtUUID, tokenExchangePermissionID())
+		if err != nil {
+			t.Fatalf("reading associated policies: %v", err)
+		}
+
+		var names []string
+		for _, a := range associated {
+			names = append(names, a["name"].(string))
+		}
+
+		sort.Strings(names)
+
+		return names
+	}
+
+	if got := grantedClients(); len(got) != 1 || got[0] != bffUUID {
+		t.Errorf("policy clients = %v, want [%s] (sandbox-bff)", got, bffUUID)
+	}
+
+	if got := attachedPolicyNames(); len(got) != 1 || got[0] != policyName {
+		t.Errorf("attached policies = %v, want [%s]", got, policyName)
+	}
+
+	// A permission carrying more than one policy grants only under AFFIRMATIVE.
+	perm, err := kc.GetAuthzScopePermission(ctx, realm, realmMgmtUUID, tokenExchangePermissionID())
+	if err != nil {
+		t.Fatalf("reading scope permission: %v", err)
+	}
+	if perm["decisionStrategy"] != "AFFIRMATIVE" {
+		t.Errorf("decisionStrategy = %v, want AFFIRMATIVE", perm["decisionStrategy"])
+	}
+
+	// Re-running must not change anything.
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("idempotent re-run failed: %v", err)
+	}
+
+	if got := grantedClients(); len(got) != 1 || got[0] != bffUUID {
+		t.Errorf("after re-run, policy clients = %v, want [%s]", got, bffUUID)
+	}
+	if got := attachedPolicyNames(); len(got) != 1 {
+		t.Errorf("after re-run, attached policies = %v, want exactly one", got)
+	}
+
+	// Widening the config adds a grantee.
+	widened := strings.Replace(configYAML,
+		"                - \"sandbox-bff\"",
+		"                - \"sandbox-bff\"\n                - \"sandbox-legacy\"", 1)
+
+	widenedCfg, err := config.Load(writeTestConfig(t, widened))
+	if err != nil {
+		t.Fatalf("loading widened config: %v", err)
+	}
+	if err := provisioner.New(kc, widenedCfg).Run(ctx); err != nil {
+		t.Fatalf("widened run failed: %v", err)
+	}
+
+	want := []string{bffUUID, legacyUUID}
+	sort.Strings(want)
+
+	if got := grantedClients(); len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("after widening, policy clients = %v, want %v", got, want)
+	}
+
+	// Narrowing it back withdraws the grant. This is the property the config
+	// shape exists for: a permission that could only grow would leave
+	// impersonation rights that no edit could take back.
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("narrowed run failed: %v", err)
+	}
+
+	if got := grantedClients(); len(got) != 1 || got[0] != bffUUID {
+		t.Errorf("after narrowing, policy clients = %v, want only [%s]", got, bffUUID)
+	}
+}
+
+// TestIntegrationManagementPermissionsRefusedWithoutFeature pins the pre-flight
+// check. Without admin-fine-grained-authz:v1 the API answers 501 with a body
+// naming neither the feature nor the flag, so the run must be refused before
+// anything is written rather than failing partway through.
+func TestIntegrationManagementPermissionsRefusedWithoutFeature(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	configYAML := `
+realms:
+  - realm: "fgap-refused-realm"
+    enabled: true
+    clients:
+      - clientId: "target"
+        enabled: true
+        managementPermissions:
+          scopes:
+            token-exchange:
+              clients:
+                - "target"
+`
+	cfg, err := config.Load(writeTestConfig(t, configYAML))
+	if err != nil {
+		t.Fatalf("loading config: %v", err)
+	}
+
+	err = compat.Verify(context.Background(), kc, cfg)
+	if err == nil {
+		t.Fatal("expected the config to be refused without the server feature")
+	}
+
+	// The message has to carry the flag: Keycloak's own error names neither the
+	// feature nor how to turn it on.
+	if !strings.Contains(err.Error(), "--features=admin-fine-grained-authz:v1") {
+		t.Errorf("error should name the flag to add, got: %v", err)
+	}
 }

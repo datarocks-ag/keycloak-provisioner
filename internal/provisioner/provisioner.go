@@ -34,7 +34,7 @@ func New(api KeycloakAPI, cfg *config.Config) *Provisioner {
 }
 
 // Run executes the full provisioning sequence:
-// Master realm (if configured) -> For each realm: Realm -> Authentication flows -> Client scopes -> Clients (+ protocol mappers + client roles + client scope assignment) -> Realm roles -> Service account roles -> Groups -> Users -> Identity providers -> Organizations
+// Master realm (if configured) -> For each realm: Realm -> Authentication flows -> Client scopes -> Clients (+ protocol mappers + client roles + client scope assignment) -> Realm roles -> Service account roles -> Management permissions -> Groups -> Users -> Identity providers -> Organizations
 func (p *Provisioner) Run(ctx context.Context) error {
 	slog.Info("Starting provisioning")
 
@@ -137,6 +137,15 @@ func (p *Provisioner) provisionRealm(ctx context.Context, realm config.Realm, st
 	}
 	var saClients []clientInfo
 
+	// Fine-grained management permissions name other clients as the grantees,
+	// so they are collected here and applied once every client in the realm
+	// exists — a client may grant a scope to one declared after it.
+	type permissionTarget struct {
+		uuid   string
+		client config.Client
+	}
+	var permissionTargets []permissionTarget
+
 	for _, c := range realm.Clients {
 		clientUUID, err := p.ensureClient(ctx, realm.Realm, c, strategy)
 		if err != nil {
@@ -169,6 +178,10 @@ func (p *Provisioner) provisionRealm(ctx context.Context, realm config.Realm, st
 				roles: c.ScopeMappings,
 			})
 		}
+
+		if c.ManagementPermissions != nil {
+			permissionTargets = append(permissionTargets, permissionTarget{uuid: clientUUID, client: c})
+		}
 	}
 
 	// 6. Realm roles
@@ -191,7 +204,16 @@ func (p *Provisioner) provisionRealm(ctx context.Context, realm config.Realm, st
 		}
 	}
 
-	// 8. Groups (+ attributes + subgroups + realm/client role assignments).
+	// 8. Fine-grained management permissions. After every client exists, since
+	// a permission grants a scope on one client to another, and either may be
+	// declared first.
+	for _, t := range permissionTargets {
+		if err := p.ensureManagementPermissions(ctx, realm.Realm, t.uuid, t.client); err != nil {
+			return fmt.Errorf("ensuring management permissions for client %q: %w", t.client.ClientID, err)
+		}
+	}
+
+	// 9. Groups (+ attributes + subgroups + realm/client role assignments).
 	// Runs after roles so that role assignments resolve to existing roles,
 	// and before users so users can join groups defined in the same config.
 	for _, g := range realm.Groups {
@@ -200,14 +222,14 @@ func (p *Provisioner) provisionRealm(ctx context.Context, realm config.Realm, st
 		}
 	}
 
-	// 9. Users (after all roles and groups exist)
+	// 10. Users (after all roles and groups exist)
 	for _, user := range realm.Users {
 		if err := p.ensureUser(ctx, realm.Realm, user, strategy); err != nil {
 			return fmt.Errorf("ensuring user %q: %w", user.Username, err)
 		}
 	}
 
-	// 10. Identity providers (+ mappers). After authentication flows, whose
+	// 11. Identity providers (+ mappers). After authentication flows, whose
 	// aliases the broker login fields reference, and after roles and groups,
 	// which a hardcoded-role or hardcoded-group mapper names. Before
 	// organizations, which link providers by alias.
@@ -215,7 +237,7 @@ func (p *Provisioner) provisionRealm(ctx context.Context, realm config.Realm, st
 		return fmt.Errorf("ensuring identity providers: %w", err)
 	}
 
-	// 11. Organizations (+ domains + members + identity provider links). Last,
+	// 12. Organizations (+ domains + members + identity provider links). Last,
 	// so members resolve to users created in the same run and links resolve to
 	// providers created above.
 	//

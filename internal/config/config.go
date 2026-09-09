@@ -402,6 +402,51 @@ type Client struct {
 	// present on the server but absent from the config is left alone, so this
 	// cannot take back a scope widened out of band.
 	ScopeMappings *UserRoles `yaml:"scopeMappings"`
+	// ManagementPermissions declares Keycloak's fine-grained admin permissions
+	// on this client — the v1 permission model, reached through
+	// clients/{id}/management/permissions.
+	//
+	// It is the only way to grant a v1 token-exchange permission, which gates
+	// impersonation (the exchange that accepts requested_subject). Declaring it
+	// requires the ADMIN_FINE_GRAINED_AUTHZ server feature; see
+	// internal/compat.
+	ManagementPermissions *ManagementPermissions `yaml:"managementPermissions"`
+}
+
+// ManagementPermissions declares the fine-grained admin permissions on one
+// client, and which other clients each permission scope is granted to.
+//
+// Keycloak models this as a scope permission per capability — view, manage,
+// configure, the map-roles family and token-exchange — on the realm-management
+// client's authorization resource server. Each scope permission is satisfied by
+// the policies attached to it. This type is the declarative form of that: name
+// a scope, list the clients allowed to exercise it.
+type ManagementPermissions struct {
+	// Enabled turns fine-grained permissions on for the client. It defaults to
+	// true when omitted, because declaring the block at all is the intent.
+	//
+	// Setting it to false is rejected rather than applied: Keycloak deletes the
+	// whole scope permission set, and the policies attached to it, when
+	// fine-grained permissions are switched off on a client. This provisioner
+	// does not delete. Remove the block to stop managing the client.
+	Enabled *bool `yaml:"enabled"`
+	// Scopes maps a permission scope name to who holds it. Scope names are not
+	// checked against a hardcoded list — they are validated against the
+	// scopePermissions map the server itself returns, so every scope the
+	// running Keycloak offers works, and a typo is named rather than silently
+	// ignored.
+	Scopes map[string]ManagementPermissionScope `yaml:"scopes"`
+}
+
+// ManagementPermissionScope is who holds one permission scope on a client.
+type ManagementPermissionScope struct {
+	// Clients are the clientIds allowed to exercise this scope on the target
+	// client, resolved to UUIDs when applied.
+	//
+	// The list is authoritative for the policy the provisioner owns: dropping a
+	// clientId from it withdraws that grant on the next run. It cannot shrink
+	// to nothing — see validateManagementPermissions.
+	Clients []string `yaml:"clients"`
 }
 
 // ProtocolMapper defines a protocol mapper for a Keycloak client.
@@ -602,6 +647,26 @@ func expandIdentityProvider(p *IdentityProvider) {
 	}
 }
 
+// expandManagementPermissions expands env vars in the clients each permission
+// scope is granted to, so a grantee can be supplied per environment like every
+// other name in the config.
+//
+// Scope names are not expanded: they are Keycloak's own vocabulary, not
+// deployment-specific.
+func expandManagementPermissions(mp *ManagementPermissions) {
+	if mp == nil {
+		return
+	}
+
+	for scope, granted := range mp.Scopes {
+		for i := range granted.Clients {
+			granted.Clients[i] = expandEnvVars(granted.Clients[i])
+		}
+
+		mp.Scopes[scope] = granted
+	}
+}
+
 // expandAuthenticationBindings expands env vars in the realm flow bindings.
 func expandAuthenticationBindings(b *AuthenticationBindings) {
 	if b == nil {
@@ -780,6 +845,7 @@ func expandConfig(cfg *Config) {
 			}
 			expandUserRoles(c.ServiceAccountRoles)
 			expandUserRoles(c.ScopeMappings)
+			expandManagementPermissions(c.ManagementPermissions)
 		}
 
 		for j := range r.Roles {
@@ -1603,6 +1669,74 @@ func validateClients(realmIdx int, clients []Client, realmAcrLoaMap map[string]i
 			if c.BearerOnly != nil && *c.BearerOnly {
 				return fmt.Errorf("%s.standardTokenExchangeEnabled: not supported on a bearer-only client (it cannot call the token endpoint)", prefix)
 			}
+		}
+
+		if err := validateManagementPermissions(prefix, c.ManagementPermissions); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateManagementPermissions checks a client's fine-grained admin
+// permission block.
+//
+// Scope names are deliberately not checked against a list here: the set is the
+// server's to define, and the reconciler validates each name against the
+// scopePermissions map Keycloak returns. Only the shape is checked.
+func validateManagementPermissions(clientPrefix string, mp *ManagementPermissions) error {
+	if mp == nil {
+		return nil
+	}
+
+	prefix := clientPrefix + ".managementPermissions"
+
+	// Keycloak deletes every scope permission on the client, and the policies
+	// attached to them, when fine-grained permissions are turned off. That is a
+	// deletion this provisioner will not perform on a resource it may not own,
+	// so the value is refused rather than applied.
+	if mp.Enabled != nil && !*mp.Enabled {
+		return fmt.Errorf("%s.enabled: must be true — Keycloak deletes the client's scope permissions and their policies when fine-grained permissions are disabled, which this provisioner does not do; remove the managementPermissions block to stop managing the client", prefix)
+	}
+
+	if len(mp.Scopes) == 0 {
+		return fmt.Errorf("%s.scopes: at least one permission scope is required", prefix)
+	}
+
+	for name, scope := range mp.Scopes {
+		scopePath := fmt.Sprintf("%s.scopes[%s]", prefix, name)
+
+		if name == "" {
+			return fmt.Errorf("%s.scopes: permission scope name is required", prefix)
+		}
+		if containsNullByte(name) {
+			return fmt.Errorf("%s: contains null byte", scopePath)
+		}
+
+		// An empty list would mean "grant this to nobody", which can only be
+		// applied by deleting the policy. Shrinking a list withdraws a grant;
+		// emptying it is refused so the tool never deletes.
+		if len(scope.Clients) == 0 {
+			return fmt.Errorf("%s.clients: at least one client is required (an empty list would mean revoking the scope entirely, which this provisioner does not do; remove the scope to stop managing it)", scopePath)
+		}
+
+		seen := make(map[string]bool, len(scope.Clients))
+
+		for k, clientID := range scope.Clients {
+			path := fmt.Sprintf("%s.clients[%d]", scopePath, k)
+
+			if clientID == "" {
+				return fmt.Errorf("%s: clientId is required", path)
+			}
+			if containsNullByte(clientID) {
+				return fmt.Errorf("%s: contains null byte", path)
+			}
+			if seen[clientID] {
+				return fmt.Errorf("%s: duplicate client %q", path, clientID)
+			}
+
+			seen[clientID] = true
 		}
 	}
 

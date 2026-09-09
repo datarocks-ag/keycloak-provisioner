@@ -2791,3 +2791,176 @@ func TestClientDefaultAcrValuesAcceptsClientMapAndUndeclared(t *testing.T) {
 		})
 	}
 }
+
+func TestManagementPermissionsParse(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    clients:
+      - clientId: "sandbox-router"
+        managementPermissions:
+          enabled: true
+          scopes:
+            token-exchange:
+              clients: ["sandbox-bff"]
+`
+	path := writeTempConfig(t, yaml)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	mp := cfg.Realms[0].Clients[0].ManagementPermissions
+	if mp == nil {
+		t.Fatal("managementPermissions was not parsed")
+	}
+	if mp.Enabled == nil || !*mp.Enabled {
+		t.Errorf("enabled = %v, want true", mp.Enabled)
+	}
+
+	scope, ok := mp.Scopes["token-exchange"]
+	if !ok {
+		t.Fatalf("token-exchange scope missing, got %v", mp.Scopes)
+	}
+	if len(scope.Clients) != 1 || scope.Clients[0] != "sandbox-bff" {
+		t.Errorf("clients = %v, want [sandbox-bff]", scope.Clients)
+	}
+}
+
+// TestManagementPermissionsEnabledDefaultsToTrue pins that declaring the block
+// is the intent, so the flag can be left out.
+func TestManagementPermissionsEnabledDefaultsToTrue(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    clients:
+      - clientId: "app"
+        managementPermissions:
+          scopes:
+            token-exchange:
+              clients: ["bff"]
+`
+	path := writeTempConfig(t, yaml)
+	if _, err := Load(path); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestManagementPermissionsRejectsDisabled covers the one value that would make
+// the provisioner delete: Keycloak drops the client's scope permissions, and
+// their policies, when fine-grained permissions are switched off.
+func TestManagementPermissionsRejectsDisabled(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    clients:
+      - clientId: "app"
+        managementPermissions:
+          enabled: false
+          scopes:
+            token-exchange:
+              clients: ["bff"]
+`
+	path := writeTempConfig(t, yaml)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for managementPermissions.enabled: false")
+	}
+	if !strings.Contains(err.Error(), "deletes") {
+		t.Errorf("error should say why it is refused, got: %v", err)
+	}
+}
+
+func TestManagementPermissionsRejectsEmptyClientList(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    clients:
+      - clientId: "app"
+        managementPermissions:
+          scopes:
+            token-exchange:
+              clients: []
+`
+	path := writeTempConfig(t, yaml)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for an empty client list")
+	}
+	if !strings.Contains(err.Error(), "at least one client") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestManagementPermissionsRejectsNoScopes(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    clients:
+      - clientId: "app"
+        managementPermissions:
+          enabled: true
+`
+	path := writeTempConfig(t, yaml)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for a block declaring no scopes")
+	}
+	if !strings.Contains(err.Error(), "scopes") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestManagementPermissionsRejectsDuplicateClient(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    clients:
+      - clientId: "app"
+        managementPermissions:
+          scopes:
+            token-exchange:
+              clients: ["bff", "bff"]
+`
+	path := writeTempConfig(t, yaml)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for a duplicate client")
+	}
+	if !strings.Contains(err.Error(), "duplicate") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// TestManagementPermissionsSubstitutesEnvVars pins that a grantee can come from
+// the environment, matching every other string in the config.
+func TestManagementPermissionsSubstitutesEnvVars(t *testing.T) {
+	t.Setenv("GRANTED_CLIENT", "sandbox-bff")
+
+	yaml := `
+realms:
+  - realm: "test"
+    clients:
+      - clientId: "app"
+        managementPermissions:
+          scopes:
+            token-exchange:
+              clients: ["${GRANTED_CLIENT}"]
+`
+	path := writeTempConfig(t, yaml)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got := cfg.Realms[0].Clients[0].ManagementPermissions.Scopes["token-exchange"].Clients
+	if len(got) != 1 || got[0] != "sandbox-bff" {
+		t.Errorf("clients = %v, want [sandbox-bff]", got)
+	}
+}

@@ -124,6 +124,12 @@ realms:
           clients:
             web:
               - "web-admin"
+        managementPermissions:
+          scopes:
+            token-exchange:
+              clients:
+                - "bff"
+      - clientId: "bff"
     roles:
       - name: "app-admin"
     groups:
@@ -182,7 +188,13 @@ realms:
 //
 // Note the two identical "would create protocol mapper" entries: one is the
 // mapper on the client scope, one is the mapper on the client. They are
-// distinguished by the container attribute, not the message.
+// distinguished by the container attribute, not the message. The two "would
+// create client" entries are likewise the two clients, "web" and the "bff" it
+// grants token-exchange to.
+//
+// The three management permission lines sit after the scope mappings and before
+// the groups, which is the ordering constraint that matters: a permission names
+// another client as the grantee, so every client has to exist first.
 //
 // Dry-run's behaviour *is* what it logs: nothing is written, so the log is the
 // only observable output. Asserting the ordered message list is therefore the
@@ -204,10 +216,14 @@ func TestDryRunGoldenLog(t *testing.T) {
 		"would create protocol mapper",
 		"would create client role",
 		"would assign client scope",
+		"would create client",
 		"would create realm role",
 		"would assign realm roles",
 		"would add realm roles to scope",
 		"would add client roles to scope",
+		"would enable fine-grained management permissions",
+		"would create management permission policy",
+		"would attach policies to management permission",
 		"would create group",
 		"would assign realm roles",
 		"would create subgroup",

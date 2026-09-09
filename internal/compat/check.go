@@ -190,6 +190,10 @@ func (r Requirement) unsatisfiedBy(info ServerInfo) string {
 	// reported as disabled; anything else has already been covered by the
 	// version comparison above.
 	if enabled, known := info.Features[r.Feature]; known && !enabled {
+		if r.Flag != "" {
+			return fmt.Sprintf("requires the %s server feature, which is disabled on this server; start Keycloak with --features=%s", r.Feature, r.Flag)
+		}
+
 		return fmt.Sprintf("requires the %s server feature, which is disabled on this server", r.Feature)
 	}
 
