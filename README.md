@@ -552,9 +552,49 @@ Nothing is deleted. Removing a scope from the config stops it being reconciled b
 
 The permission's `decisionStrategy` is set to `AFFIRMATIVE`, so each attached policy grants independently. Under Keycloak's `UNANIMOUS` default a permission carrying more than one policy grants only when *every* policy passes, which would silently make the configured grant ineffective. If the provisioner loosens an existing `UNANIMOUS` permission that already had policies attached, it logs a warning saying so.
 
-### Not a complete impersonation setup
+### Using this for impersonation
 
-Granting `token-exchange` is necessary for v1 impersonation but has not been shown to be sufficient. In particular the v1 exchange provider is itself behind a separate `token-exchange:v1` feature flag, independent of this one. Treat this as the piece that makes the permission reproducible, not as a working impersonation recipe.
+The `token-exchange` scope permission is one of four things v1 impersonation needs — the exchange that accepts `requested_subject`. All four are required; the following was verified end to end against Keycloak 26.6 and 26.7.2 by decoding the returned token and confirming its `sub` is the impersonated user, not the service account.
+
+1. **Both server features**, not just this one: `--features=token-exchange:v1,admin-fine-grained-authz:v1`. They are independent flags, and `admin-fine-grained-authz:v1` does not enable the v1 exchange provider.
+2. **The `token-exchange` permission on the audience client** — the client being exchanged *to*, not the requesting one. That is what this section configures.
+3. **The `impersonation` role** from `realm-management`, on the requesting client's service account (`serviceAccountRoles`).
+4. **That role actually reaching the token** — see below.
+
+Removing any one of them fails the exchange.
+
+#### The trap: a granted role that never reaches the token
+
+If the requesting client sets `fullScopeAllowed: false`, the `impersonation` role must also be in its [scope mappings](#role-scope-mappings), or the exchange is refused even though the role is genuinely granted. Measured on 26.6, varying only the scope while the service account holds the role throughout:
+
+| `fullScopeAllowed` | `impersonation` in `scopeMappings` | roles in the client's token | exchange |
+|---|---|---|---|
+| `true` | — | `["impersonation"]` | succeeds |
+| `false` | no | `[]` | **`access_denied: Client not allowed to exchange`** |
+| `false` | yes | `["impersonation"]` | succeeds |
+
+The middle row is the one that costs time. The role is on the service-account user and the admin console shows it there, so it reads as granted — but `fullScopeAllowed: false` keeps it out of the token, and the exchange sees a client without it. Declare it:
+
+```yaml
+- clientId: "sandbox-bff"
+  serviceAccountsEnabled: true
+  fullScopeAllowed: false
+  serviceAccountRoles:
+    clients:
+      realm-management: ["impersonation"]
+  scopeMappings:
+    clients:
+      realm-management: ["impersonation"]
+```
+
+#### Telling the two failures apart
+
+The error distinguishes a missing feature from a missing grant, which is worth knowing before changing anything:
+
+| error | meaning |
+|---|---|
+| `invalid_request: Parameter 'requested_subject' is not supported for standard token exchange` | `token-exchange:v1` is **not** enabled — the request reached the v2 provider, which has no impersonation at all |
+| `access_denied: Client not allowed to exchange` | v1 **is** active; one of the grants above is missing or is not reaching the token |
 
 ## Client Scopes
 
