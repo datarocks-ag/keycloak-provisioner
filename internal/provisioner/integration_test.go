@@ -3787,3 +3787,218 @@ func sortedNames(set map[string]bool) []string {
 
 	return out
 }
+
+// TestIntegrationOrganizationIdentityProviderDomain provisions an
+// organization-linked provider carrying kc.org.domain and runs twice.
+//
+// The second run is the one that matters. Keycloak validates kc.org.domain only
+// against a provider already associated with an organization, and the
+// provisioner creates providers before it makes the association — so the first
+// run writes the provider unlinked and unvalidated, and only a re-run exercises
+// the rule. A config that passes here passes on every subsequent run too.
+//
+// Config validation compares the domain exactly, matching what Keycloak does;
+// TestIntegrationOrganizationDomainIsCaseSensitive below is what establishes
+// that. Here the cases match, which is the configuration a user should write.
+func TestIntegrationOrganizationIdentityProviderDomain(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	const realm = "org-idp-domain-realm"
+
+	configYAML := `
+realms:
+  - realm: "org-idp-domain-realm"
+    enabled: true
+    organizationsEnabled: true
+    identityProviders:
+      - alias: "corp"
+        providerId: "oidc"
+        config:
+          clientId: "kc"
+          clientSecret: "secret"
+          authorizationUrl: "https://idp.example.com/auth"
+          tokenUrl: "https://idp.example.com/token"
+          kc.org.domain: "acme.com"
+          kc.org.broker.public: "true"
+          kc.org.broker.redirect.mode.email-matches: "true"
+    organizations:
+      - name: "acme"
+        domains:
+          - name: "acme.com"
+        identityProviders:
+          - "corp"
+`
+	cfg, err := config.Load(writeTestConfig(t, configYAML))
+	if err != nil {
+		t.Fatalf("loading config: %v", err)
+	}
+
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("first run failed: %v", err)
+	}
+
+	providerConfig := func() map[string]any {
+		t.Helper()
+
+		idps, err := kc.GetIdentityProviders(ctx, realm)
+		if err != nil {
+			t.Fatalf("listing identity providers: %v", err)
+		}
+
+		for _, idp := range idps {
+			if idp["alias"] == "corp" {
+				c, _ := idp["config"].(map[string]any)
+
+				return c
+			}
+		}
+
+		t.Fatal("identity provider \"corp\" not found")
+
+		return nil
+	}
+
+	got := providerConfig()
+	for key, want := range map[string]string{
+		"kc.org.domain":                             "acme.com",
+		"kc.org.broker.public":                      "true",
+		"kc.org.broker.redirect.mode.email-matches": "true",
+	} {
+		if got[key] != want {
+			t.Errorf("config[%q] = %v, want %q", key, got[key], want)
+		}
+	}
+
+	// The provider must actually be linked, or the re-run below would prove
+	// nothing: the validation this test exists for only applies once it is.
+	linked, err := kc.GetOrganizationIdentityProviders(ctx, realm, organizationIDByName(t, kc, realm, "acme"))
+	if err != nil {
+		t.Fatalf("listing the organization's identity providers: %v", err)
+	}
+	if len(linked) != 1 || linked[0]["alias"] != "corp" {
+		t.Fatalf("provider was not linked to the organization: %v", linked)
+	}
+
+	// The provider is linked now, so this run updates a linked provider — the
+	// path that rejects a domain the organization does not have.
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("re-run failed: %v", err)
+	}
+
+	if got := providerConfig(); got["kc.org.domain"] != "acme.com" {
+		t.Errorf("after re-run, kc.org.domain = %v", got["kc.org.domain"])
+	}
+}
+
+// organizationIDByName resolves an organization's UUID for assertions.
+func organizationIDByName(t *testing.T, kc *client.Client, realm, name string) string {
+	t.Helper()
+
+	orgs, err := kc.GetOrganizations(context.Background(), realm, name)
+	if err != nil {
+		t.Fatalf("searching organizations: %v", err)
+	}
+	if len(orgs) == 0 {
+		t.Fatalf("organization %q not found", name)
+	}
+
+	return orgs[0]["id"].(string)
+}
+
+// TestIntegrationOrganizationDomainIsCaseSensitive records the server behaviour
+// that config validation's exact comparison depends on.
+//
+// It drives the admin client directly rather than provisioning, because the
+// config this asserts about is one config validation now refuses — which is the
+// point, and also why the reason has to be pinned somewhere the validator
+// cannot simply agree with itself. If a future Keycloak starts comparing domain
+// names case-insensitively, this test fails and organizationHasDomain can be
+// relaxed.
+func TestIntegrationOrganizationDomainIsCaseSensitive(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	const realm = "org-domain-case-realm"
+
+	if err := kc.CreateRealm(ctx, map[string]any{
+		"realm": realm, "enabled": true, "organizationsEnabled": true,
+	}); err != nil {
+		t.Fatalf("creating realm: %v", err)
+	}
+
+	if err := kc.CreateIdentityProvider(ctx, realm, map[string]any{
+		"alias": "corp", "providerId": "oidc", "enabled": true,
+		"config": map[string]any{
+			"clientId": "kc", "clientSecret": "secret",
+			"authorizationUrl": "https://idp.example.com/auth",
+			"tokenUrl":         "https://idp.example.com/token",
+		},
+	}); err != nil {
+		t.Fatalf("creating identity provider: %v", err)
+	}
+
+	if _, err := kc.CreateOrganization(ctx, realm, map[string]any{
+		"name": "acme", "alias": "acme",
+		"domains": []map[string]any{{"name": "acme.com"}},
+	}); err != nil {
+		t.Fatalf("creating organization: %v", err)
+	}
+
+	orgID := organizationIDByName(t, kc, realm, "acme")
+
+	if err := kc.AddOrganizationIdentityProvider(ctx, realm, orgID, "corp"); err != nil {
+		t.Fatalf("linking identity provider: %v", err)
+	}
+
+	update := func(domain string) error {
+		idps, err := kc.GetIdentityProviders(ctx, realm)
+		if err != nil {
+			t.Fatalf("listing identity providers: %v", err)
+		}
+
+		for _, idp := range idps {
+			if idp["alias"] != "corp" {
+				continue
+			}
+
+			body := map[string]any{}
+			for k, v := range idp {
+				body[k] = v
+			}
+			delete(body, "internalId")
+			delete(body, "organizationId")
+			delete(body, "types")
+
+			cfg, _ := body["config"].(map[string]any)
+			next := map[string]any{}
+			for k, v := range cfg {
+				next[k] = v
+			}
+			next["kc.org.domain"] = domain
+			body["config"] = next
+
+			return kc.UpdateIdentityProvider(ctx, realm, "corp", body)
+		}
+
+		t.Fatal("identity provider \"corp\" not found")
+
+		return nil
+	}
+
+	if err := update("acme.com"); err != nil {
+		t.Fatalf("the organization's own domain should be accepted: %v", err)
+	}
+
+	err := update("ACME.com")
+	if err == nil {
+		t.Fatal("Keycloak accepted a domain differing only in case; " +
+			"organizationHasDomain in internal/config can be relaxed to compare case-insensitively")
+	}
+
+	if !strings.Contains(err.Error(), "Domain does not match any domain from the organization") {
+		t.Errorf("unexpected refusal: %v", err)
+	}
+}
