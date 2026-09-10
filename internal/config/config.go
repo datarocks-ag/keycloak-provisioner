@@ -1371,20 +1371,23 @@ func validateOrganizationIdentityProviderDomains(realmIdx int, r Realm) error {
 			names = append(names, d.Name)
 		}
 
+		// The index alone identifies the provider positionally; the alias is what
+		// the reader is looking for, and the point of checking here rather than
+		// letting Keycloak answer is that its own 400 names nothing at all.
 		path := fmt.Sprintf("realms[%d].identityProviders[%d].config[%s]", realmIdx, i, orgDomainConfigKey)
 
 		if len(names) == 0 {
-			return fmt.Errorf("%s: %q is not a domain of organization %q, which declares no domains",
-				path, domain, org.Name)
+			return fmt.Errorf("%s: identity provider %q has %q, but organization %q declares no domains",
+				path, idp.Alias, domain, org.Name)
 		}
 
 		if organizationHasDomainIgnoringCase(org, domain) {
-			return fmt.Errorf("%s: %q differs only in case from a domain of organization %q (%s), and Keycloak compares them exactly",
-				path, domain, org.Name, strings.Join(names, ", "))
+			return fmt.Errorf("%s: identity provider %q has %q, which differs only in case from a domain of organization %q (%s); Keycloak compares them exactly",
+				path, idp.Alias, domain, org.Name, strings.Join(names, ", "))
 		}
 
-		return fmt.Errorf("%s: %q is not a domain of organization %q (which has %s)",
-			path, domain, org.Name, strings.Join(names, ", "))
+		return fmt.Errorf("%s: identity provider %q has %q, which is not a domain of organization %q (which has %s)",
+			path, idp.Alias, domain, org.Name, strings.Join(names, ", "))
 	}
 
 	return nil

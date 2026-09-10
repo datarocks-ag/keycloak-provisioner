@@ -3904,7 +3904,12 @@ func organizationIDByName(t *testing.T, kc *client.Client, realm, name string) s
 		t.Fatalf("organization %q not found", name)
 	}
 
-	return orgs[0]["id"].(string)
+	id, ok := orgs[0]["id"].(string)
+	if !ok {
+		t.Fatalf("organization %q: missing or invalid id in response", name)
+	}
+
+	return id
 }
 
 // TestIntegrationOrganizationDomainIsCaseSensitive records the server behaviour
