@@ -314,6 +314,18 @@ realms:
     #       clientSecret: "${CORPORATE_IDP_SECRET}"
     #       authorizationUrl: "https://idp.example.com/authorize"
     #       tokenUrl: "https://idp.example.com/token"
+    #       # Organization settings, meaningful once an organization below
+    #       # lists this alias under its identityProviders.
+    #       #
+    #       # kc.org.domain must name a domain of that organization, and is
+    #       # checked at config load: Keycloak only applies the rule to a
+    #       # provider already linked, and providers are created before the
+    #       # link is made — so without this check a wrong domain passes on a
+    #       # fresh realm and fails on every run after it. The comparison is
+    #       # case-sensitive, because Keycloak's is.
+    #       # kc.org.domain: "acme.com"
+    #       # kc.org.broker.public: "true"                       # offer it on the login page
+    #       # kc.org.broker.redirect.mode.email-matches: "true"  # redirect when the email domain matches
     #     mappers:
     #       - name: "email"
     #         # Validated against the server: Keycloak accepts an unknown mapper

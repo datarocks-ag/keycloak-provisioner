@@ -69,6 +69,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   feature where the flag differs from the feature name, rather than only the
   name reported in server info.
 
+- Documentation for the three organization-scoped identity provider settings,
+  which were reachable through the provider's `config` map but appeared in
+  neither the README nor the example config: `kc.org.domain`,
+  `kc.org.broker.public`, and
+  `kc.org.broker.redirect.mode.email-matches`.
+
+### Fixed
+
+- `kc.org.domain` on an identity provider is now validated at config load
+  against the domains of the organization that links it, instead of being left
+  to Keycloak.
+
+  Keycloak does apply the rule, but only to a provider already associated with
+  an organization — and this provisioner creates identity providers (step 11)
+  before it makes the association (step 12). So on a realm built from scratch
+  the provider is unlinked when it is written, the rule does not apply, and a
+  domain belonging to no organization is accepted with `201`. Applying the same
+  config to a realm where the association already exists is refused with
+  `400 Domain does not match any domain from the organization`.
+
+  The result was a config that passed on first provision and failed on every run
+  after it, with nothing changed in between — worst in CI, which provisions
+  fresh realms and would never see it, while the environment that re-runs is the
+  one that breaks. In the meantime the organization had a provider matching no
+  domain, so email-based redirection silently never fired.
+
+  The comparison is **case-sensitive**, matching Keycloak: `ACME.com` and
+  `acme.com` are different domains to it and a difference of case alone earns
+  the same 400. Since domain names are case-insensitive as names, that is
+  surprising enough that the error says when only the case differs rather than
+  reporting the domain as absent.
+
+  A provider that no organization in the config links is not checked — the
+  association may already exist on the server or be managed elsewhere, and the
+  config cannot tell.
 ## [1.12.0] — 2026-08-31
 
 Moving a client scope between `defaultClientScopes` and `optionalClientScopes`
