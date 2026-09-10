@@ -47,7 +47,12 @@ func managementPolicyName(scope, targetClientID string) string {
 //
 // Nothing is deleted either way. A scope removed from the config stops being
 // reconciled; its policy stays attached until someone removes it.
-func (p *Provisioner) ensureManagementPermissions(ctx context.Context, realm, targetUUID string, c config.Client) error {
+func (p *Provisioner) ensureManagementPermissions(
+	ctx context.Context,
+	realm, targetUUID string,
+	c config.Client,
+	clients clientUUIDIndex,
+) error {
 	mp := c.ManagementPermissions
 	if mp == nil {
 		return nil
@@ -60,7 +65,7 @@ func (p *Provisioner) ensureManagementPermissions(ctx context.Context, realm, ta
 
 	// The resource server belongs to realm-management, not to the target: the
 	// permissions and policies are all objects on that client.
-	resourceServerUUID, err := p.resolveClientUUID(ctx, realm, realmManagementClientID)
+	resourceServerUUID, err := p.resolveIndexedClientUUID(ctx, realm, clients, realmManagementClientID)
 	if err != nil {
 		return fmt.Errorf("resolving the %s client for client %q: %w", realmManagementClientID, c.ClientID, err)
 	}
@@ -75,7 +80,7 @@ func (p *Provisioner) ensureManagementPermissions(ctx context.Context, realm, ta
 		}
 
 		if err := p.ensureManagementPermissionScope(
-			ctx, realm, resourceServerUUID, permissionID, scope, c.ClientID, mp.Scopes[scope].Clients,
+			ctx, realm, resourceServerUUID, permissionID, scope, c.ClientID, mp.Scopes[scope].Clients, clients,
 		); err != nil {
 			return err
 		}
@@ -117,11 +122,12 @@ func (p *Provisioner) ensureManagementPermissionScope(
 	ctx context.Context,
 	realm, resourceServerUUID, permissionID, scope, targetClientID string,
 	grantedClientIDs []string,
+	clients clientUUIDIndex,
 ) error {
 	grantedUUIDs := make([]string, 0, len(grantedClientIDs))
 
 	for _, granted := range grantedClientIDs {
-		uuid, err := p.resolveClientUUID(ctx, realm, granted)
+		uuid, err := p.resolveIndexedClientUUID(ctx, realm, clients, granted)
 		if err != nil {
 			return fmt.Errorf("resolving client %q granted %q on client %q: %w", granted, scope, targetClientID, err)
 		}
@@ -347,4 +353,42 @@ func sortedKeys[V any](m map[string]V) []string {
 	sort.Strings(keys)
 
 	return keys
+}
+
+// clientUUIDIndex maps a realm's clientIds to their UUIDs.
+//
+// It is seeded from the client loop, which already knows the UUID of every
+// client the config declares, and filled in for anything else the first time it
+// is asked for. Without it a grantee named by three scopes costs three
+// identical lookups, and realm-management costs one per target client — the
+// same re-listing the client scope and identity provider indexes exist to
+// avoid.
+type clientUUIDIndex map[string]string
+
+// resolveIndexedClientUUID returns a client's UUID, consulting the index before
+// asking Keycloak and remembering what it had to ask for.
+//
+// A nil index is valid and simply memoises nothing, so a caller that has no
+// index — a test, or a path where one would not pay for itself — needs no
+// special case.
+func (p *Provisioner) resolveIndexedClientUUID(
+	ctx context.Context,
+	realm string,
+	index clientUUIDIndex,
+	clientID string,
+) (string, error) {
+	if uuid, ok := index[clientID]; ok {
+		return uuid, nil
+	}
+
+	uuid, err := p.resolveClientUUID(ctx, realm, clientID)
+	if err != nil {
+		return "", err
+	}
+
+	if index != nil {
+		index[clientID] = uuid
+	}
+
+	return uuid, nil
 }

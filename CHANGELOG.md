@@ -48,9 +48,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `(client, scope)` named `keycloak-provisioner.<scope>.<clientId>` and
     rewrites its client list, so removing a `clientId` withdraws that grant on
     the next run. The permission's own policy list stays additive, so a policy
-    attached by hand keeps working. Nothing is deleted, and `enabled: false` is
-    rejected: Keycloak deletes the client's whole scope permission set when
-    fine-grained permissions are switched off.
+    attached by hand keeps working. Nothing is deleted, which bounds this: a
+    grant can be narrowed but not withdrawn entirely, since `clients` must name
+    at least one client. `enabled: false` is rejected for the same reason —
+    Keycloak deletes the client's whole scope permission set when fine-grained
+    permissions are switched off.
 
   Granting `token-exchange` is one of three things v1 impersonation needs, and
   the README now documents the whole verified recipe: both server features

@@ -548,7 +548,9 @@ This is the one place the provisioner replaces state rather than only adding to 
 - **The policy is the provisioner's.** For each `(client, scope)` pair it owns a client policy named `keycloak-provisioner.<scope>.<clientId>`, and rewrites its client list to match the config. **Removing a `clientId` from the list withdraws that grant on the next run.** A permission that could only grow would leave impersonation rights that no edit could take back, which would defeat the point of declaring them.
 - **The permission's policy list is shared.** The provisioner's policy is added alongside whatever is already attached, so a policy created by hand or by another tool keeps working.
 
-Nothing is deleted. Removing a scope from the config stops it being reconciled but leaves the existing grant in place — to revoke everything, remove the clients from the list rather than the scope from the config. For the same reason `enabled: false` is rejected at validation: Keycloak deletes the client's whole scope permission set, and the policies attached to it, when fine-grained permissions are switched off.
+Nothing is deleted, and that bounds what the config can take back. A grant can be **narrowed** — dropping a `clientId` withdraws that client on the next run — but it cannot be withdrawn entirely: `clients` must name at least one client, and removing the scope from the config stops it being reconciled rather than revoking it. Taking back the last grant means deleting the policy in Keycloak by hand.
+
+`enabled: false` is rejected at validation for the same reason: Keycloak deletes the client's whole scope permission set, and the policies attached to it, when fine-grained permissions are switched off.
 
 The permission's `decisionStrategy` is set to `AFFIRMATIVE`, so each attached policy grants independently. Under Keycloak's `UNANIMOUS` default a permission carrying more than one policy grants only when *every* policy passes, which would silently make the configured grant ineffective. If the provisioner loosens an existing `UNANIMOUS` permission that already had policies attached, it logs a warning saying so.
 

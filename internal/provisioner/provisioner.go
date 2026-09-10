@@ -146,6 +146,10 @@ func (p *Provisioner) provisionRealm(ctx context.Context, realm config.Realm, st
 	}
 	var permissionTargets []permissionTarget
 
+	// Seeded as the loop goes, so a permission naming another client resolves
+	// without asking Keycloak for something this run already looked up.
+	clientUUIDs := clientUUIDIndex{}
+
 	for _, c := range realm.Clients {
 		clientUUID, err := p.ensureClient(ctx, realm.Realm, c, strategy)
 		if err != nil {
@@ -179,6 +183,8 @@ func (p *Provisioner) provisionRealm(ctx context.Context, realm config.Realm, st
 			})
 		}
 
+		clientUUIDs[c.ClientID] = clientUUID
+
 		if c.ManagementPermissions != nil {
 			permissionTargets = append(permissionTargets, permissionTarget{uuid: clientUUID, client: c})
 		}
@@ -208,7 +214,7 @@ func (p *Provisioner) provisionRealm(ctx context.Context, realm config.Realm, st
 	// a permission grants a scope on one client to another, and either may be
 	// declared first.
 	for _, t := range permissionTargets {
-		if err := p.ensureManagementPermissions(ctx, realm.Realm, t.uuid, t.client); err != nil {
+		if err := p.ensureManagementPermissions(ctx, realm.Realm, t.uuid, t.client, clientUUIDs); err != nil {
 			return fmt.Errorf("ensuring management permissions for client %q: %w", t.client.ClientID, err)
 		}
 	}

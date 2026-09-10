@@ -23,6 +23,7 @@ type permServer struct {
 	permSeed
 
 	// Recorded writes.
+	clientLookups int
 	enabledPUTs   int
 	createdPolicy []map[string]any
 	updatedPolicy []map[string]any
@@ -79,6 +80,10 @@ func newPermServer(t *testing.T, seed permSeed) (*permServer, string) {
 
 	server := testServer(t, map[string]http.HandlerFunc{
 		"GET /admin/realms/{realm}/clients": func(w http.ResponseWriter, r *http.Request) {
+			rec.mu.Lock()
+			rec.clientLookups++
+			rec.mu.Unlock()
+
 			clientID := r.URL.Query().Get("clientId")
 			if clientID == "ghost" {
 				json.NewEncoder(w).Encode([]map[string]any{})
@@ -221,9 +226,15 @@ func tokenExchangeTo(granted ...string) config.Client {
 func runPermissions(t *testing.T, url string, c config.Client) error {
 	t.Helper()
 
+	return runPermissionsIndexed(t, url, c, clientUUIDIndex{})
+}
+
+func runPermissionsIndexed(t *testing.T, url string, c config.Client, clients clientUUIDIndex) error {
+	t.Helper()
+
 	p := New(newTestClient(t, url), &config.Config{})
 
-	return p.ensureManagementPermissions(context.Background(), "test", targetUUID, c)
+	return p.ensureManagementPermissions(context.Background(), "test", targetUUID, c, clients)
 }
 
 // stringsIn reads a JSON array of strings out of a decoded request body.
@@ -513,5 +524,51 @@ func TestManagementPermissionsAbsentBlockDoesNothing(t *testing.T) {
 
 	if rec.enabledPUTs != 0 || len(rec.createdPolicy) != 0 || len(rec.updatedPerm) != 0 {
 		t.Error("a client without managementPermissions must not touch the permission API")
+	}
+}
+
+// TestManagementPermissionsResolvesEachClientOnce pins the index. A grantee
+// named by several scopes, and realm-management itself, were each re-resolved
+// per use before it existed.
+func TestManagementPermissionsResolvesEachClientOnce(t *testing.T) {
+	rec, url := newPermServer(t, permSeed{enabled: true})
+
+	c := config.Client{
+		ClientID: "target",
+		ManagementPermissions: &config.ManagementPermissions{
+			Scopes: map[string]config.ManagementPermissionScope{
+				"token-exchange": {Clients: []string{"bff"}},
+				"map-roles":      {Clients: []string{"bff"}},
+				"view":           {Clients: []string{"bff"}},
+			},
+		},
+	}
+
+	if err := runPermissions(t, url, c); err != nil {
+		t.Fatalf("ensureManagementPermissions: %v", err)
+	}
+
+	// One for realm-management, one for the grantee — not one per scope.
+	if rec.clientLookups != 2 {
+		t.Errorf("client lookups = %d, want 2 (realm-management and bff, each resolved once)", rec.clientLookups)
+	}
+}
+
+// TestManagementPermissionsUsesTheSeededIndex covers the other half: a grantee
+// the client loop already resolved costs no lookup at all.
+func TestManagementPermissionsUsesTheSeededIndex(t *testing.T) {
+	rec, url := newPermServer(t, permSeed{enabled: true})
+
+	seeded := clientUUIDIndex{
+		"bff":                   "bff-uuid",
+		realmManagementClientID: "realm-management-uuid",
+	}
+
+	if err := runPermissionsIndexed(t, url, tokenExchangeTo("bff"), seeded); err != nil {
+		t.Fatalf("ensureManagementPermissions: %v", err)
+	}
+
+	if rec.clientLookups != 0 {
+		t.Errorf("client lookups = %d, want 0 — both clients were already known", rec.clientLookups)
 	}
 }
