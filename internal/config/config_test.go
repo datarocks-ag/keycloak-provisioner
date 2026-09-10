@@ -2791,3 +2791,207 @@ func TestClientDefaultAcrValuesAcceptsClientMapAndUndeclared(t *testing.T) {
 		})
 	}
 }
+
+// orgIdPDomainConfig builds a realm with one organization linking one identity
+// provider, so the tests below vary only the two values that matter.
+func orgIdPDomainConfig(orgDomain, idpDomain string) string {
+	return `
+realms:
+  - realm: "test"
+    organizationsEnabled: true
+    identityProviders:
+      - alias: "corp"
+        providerId: "oidc"
+        config:
+          clientId: "kc"
+          kc.org.domain: "` + idpDomain + `"
+    organizations:
+      - name: "acme"
+        domains:
+          - name: "` + orgDomain + `"
+        identityProviders:
+          - "corp"
+`
+}
+
+func TestOrgIdPDomainAcceptsMatchingDomain(t *testing.T) {
+	path := writeTempConfig(t, orgIdPDomainConfig("acme.com", "acme.com"))
+	if _, err := Load(path); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestOrgIdPDomainRejectsForeignDomain is the case Keycloak accepts on a fresh
+// realm and refuses on every run after it, because the rule only applies once
+// the provider is linked.
+func TestOrgIdPDomainRejectsForeignDomain(t *testing.T) {
+	path := writeTempConfig(t, orgIdPDomainConfig("acme.com", "nope.example"))
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected a domain belonging to no organization to be rejected")
+	}
+
+	// Keycloak's own 400 names neither the provider, the domain, nor what the
+	// organization actually has, so all three have to be here.
+	for _, want := range []string{"kc.org.domain", "nope.example", "acme", "acme.com"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should mention %q, got: %v", want, err)
+		}
+	}
+}
+
+// TestOrgIdPDomainIsCaseSensitive pins the comparison against the server's.
+//
+// Treating domain names as case-insensitive is the intuitive choice and it is
+// wrong: Keycloak compares the strings literally and answers 400 for a
+// difference of case alone. Accepting this config would wave through exactly
+// what this check exists to catch. Measured — see
+// TestIntegrationOrganizationDomainIsCaseSensitive.
+func TestOrgIdPDomainIsCaseSensitive(t *testing.T) {
+	_, err := Load(writeTempConfig(t, orgIdPDomainConfig("ACME.com", "acme.COM")))
+	if err == nil {
+		t.Fatal("expected a case difference to be rejected, as Keycloak rejects it")
+	}
+
+	// A bare "not a domain of" next to a domains list that visibly contains the
+	// name is a baffling thing to read, so the message has to name the cause.
+	if !strings.Contains(err.Error(), "differs only in case") {
+		t.Errorf("error should explain that only the case differs, got: %v", err)
+	}
+}
+
+// TestOrgIdPDomainRejectsWhenOrganizationHasNoDomains covers the message that
+// would otherwise read "(which has )".
+func TestOrgIdPDomainRejectsWhenOrganizationHasNoDomains(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    organizationsEnabled: true
+    identityProviders:
+      - alias: "corp"
+        providerId: "oidc"
+        config:
+          kc.org.domain: "acme.com"
+    organizations:
+      - name: "acme"
+        identityProviders:
+          - "corp"
+`
+	_, err := Load(writeTempConfig(t, yaml))
+	if err == nil {
+		t.Fatal("expected rejection when the organization declares no domains")
+	}
+	if !strings.Contains(err.Error(), "declares no domains") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// TestOrgIdPDomainIgnoresUnlinkedProvider is the deliberate limit: the
+// association may already exist on the server or be managed elsewhere, and the
+// config cannot tell, so an unvalidatable value is left to Keycloak.
+func TestOrgIdPDomainIgnoresUnlinkedProvider(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    organizationsEnabled: true
+    identityProviders:
+      - alias: "corp"
+        providerId: "oidc"
+        config:
+          kc.org.domain: "somewhere.else"
+    organizations:
+      - name: "acme"
+        domains:
+          - name: "acme.com"
+`
+	if _, err := Load(writeTempConfig(t, yaml)); err != nil {
+		t.Fatalf("a provider no organization links must not be validated: %v", err)
+	}
+}
+
+// TestOrgIdPDomainIgnoresProviderWithoutTheKey guards the common case: almost
+// no provider sets it.
+func TestOrgIdPDomainIgnoresProviderWithoutTheKey(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    organizationsEnabled: true
+    identityProviders:
+      - alias: "corp"
+        providerId: "oidc"
+        config:
+          clientId: "kc"
+    organizations:
+      - name: "acme"
+        domains:
+          - name: "acme.com"
+        identityProviders:
+          - "corp"
+`
+	if _, err := Load(writeTempConfig(t, yaml)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestOrgIdPDomainMatchesTheRightOrganization pins that the check uses the
+// organization that links the provider, not merely any organization that
+// happens to own the domain.
+func TestOrgIdPDomainMatchesTheRightOrganization(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    organizationsEnabled: true
+    identityProviders:
+      - alias: "corp"
+        providerId: "oidc"
+        config:
+          kc.org.domain: "other.com"
+    organizations:
+      - name: "acme"
+        domains:
+          - name: "acme.com"
+        identityProviders:
+          - "corp"
+      - name: "other"
+        domains:
+          - name: "other.com"
+`
+	_, err := Load(writeTempConfig(t, yaml))
+	if err == nil {
+		t.Fatal("expected rejection: other.com belongs to an organization that does not link this provider")
+	}
+	if !strings.Contains(err.Error(), `organization "acme"`) {
+		t.Errorf("error should name the linking organization, got: %v", err)
+	}
+}
+
+// TestOrgIdPDomainSubstitutesEnvVars pins that the check runs after expansion,
+// so a domain supplied per environment is compared as its resolved value.
+func TestOrgIdPDomainSubstitutesEnvVars(t *testing.T) {
+	t.Setenv("ORG_DOMAIN", "acme.com")
+
+	// Only the provider side uses the variable. If expansion did not run before
+	// the check, "${ORG_DOMAIN}" would not match the literal domain and this
+	// would fail — which a config using the variable on both sides would not
+	// catch, since two unexpanded values compare equal.
+	yaml := `
+realms:
+  - realm: "test"
+    organizationsEnabled: true
+    identityProviders:
+      - alias: "corp"
+        providerId: "oidc"
+        config:
+          kc.org.domain: "${ORG_DOMAIN}"
+    organizations:
+      - name: "acme"
+        domains:
+          - name: "acme.com"
+        identityProviders:
+          - "corp"
+`
+	if _, err := Load(writeTempConfig(t, yaml)); err != nil {
+		t.Fatalf("expanded values should compare equal: %v", err)
+	}
+}

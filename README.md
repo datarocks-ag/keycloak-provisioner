@@ -788,6 +788,43 @@ Organizations can link identity providers by alias — see
 either declared in the same config or already present in the realm, and belongs
 to at most one organization.
 
+### Organization identity provider settings
+
+Linking a provider to an organization associates the two, but three keys in the provider's own `config` decide how it then behaves:
+
+| key | effect |
+|---|---|
+| `kc.org.domain` | the organization domain this provider is bound to |
+| `kc.org.broker.public` | whether the provider is offered on the login page |
+| `kc.org.broker.redirect.mode.email-matches` | redirect to the provider when the entered email matches the domain |
+
+```yaml
+identityProviders:
+  - alias: "corp"
+    providerId: "oidc"
+    config:
+      clientId: "kc"
+      clientSecret: "${CORP_IDP_SECRET}"
+      kc.org.domain: "acme.com"
+      kc.org.broker.public: "true"
+      kc.org.broker.redirect.mode.email-matches: "true"
+
+organizations:
+  - name: "acme"
+    domains:
+      - name: "acme.com"
+    identityProviders:
+      - "corp"
+```
+
+`kc.org.domain` must name a domain of the organization that links the provider, and **the provisioner checks this at config load** rather than leaving it to Keycloak. Keycloak does apply the rule, but only to a provider already associated with an organization — and providers are created before the association is made. So on a realm being built from scratch the provider is unlinked when it is written, the rule does not apply, and a domain belonging to no organization is accepted. The same config applied to a realm where the association already exists is refused with `400 Domain does not match any domain from the organization`.
+
+That is a config which passes on first provision and fails on every run after it, with nothing changed in between — and in the meantime an organization whose provider matches no domain, so email-based redirection silently never fires. Validating up front makes the outcome the same either way.
+
+The comparison is **case-sensitive**, because Keycloak's is: `ACME.com` and `acme.com` are different domains to it, and a difference of case alone earns the same 400. Domain names being case-insensitive as names makes this surprising, so the error says when only the case differs rather than reporting the domain as absent.
+
+A provider that no organization *in the config* links is not checked. The association may already exist on the server or be managed elsewhere, and the config cannot tell — that case is left to Keycloak.
+
 ## Identity Providers
 
 Identity providers (identity brokering) are declared per realm under

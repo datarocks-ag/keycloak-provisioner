@@ -1007,6 +1007,12 @@ func validate(cfg *Config) error {
 		if err := validateIdentityProviders(i, r.IdentityProviders); err != nil {
 			return err
 		}
+
+		// Last of the realm's checks: it reads both the organizations and the
+		// identity providers, so both must already be known to be well-formed.
+		if err := validateOrganizationIdentityProviderDomains(i, r); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -1289,6 +1295,125 @@ func validateOrganizations(realmIdx int, r Realm) error {
 	}
 
 	return nil
+}
+
+// orgDomainConfigKey binds an organization-linked identity provider to one of
+// its organization's domains. Keycloak validates it — but only once the
+// provider is actually linked, which is what makes it worth checking here.
+const orgDomainConfigKey = "kc.org.domain"
+
+// validateOrganizationIdentityProviderDomains checks that every identity
+// provider setting kc.org.domain names a domain of the organization that links
+// it.
+//
+// Keycloak applies this rule itself, but only to a provider already associated
+// with an organization, and the provisioner creates providers before it makes
+// the association. So on a realm being built from scratch the provider is
+// unlinked when it is written, the rule does not apply, and a domain belonging
+// to no organization is accepted with 201. The same config applied to a realm
+// where the association already exists is rejected with
+// "Domain does not match any domain from the organization".
+//
+// The result is a config that passes on first provision and fails on every run
+// after it, with nothing changed in between — and in the meantime an
+// organization whose provider matches no domain, so email-based redirection
+// silently never fires. Checking here makes the outcome the same either way,
+// before anything is written.
+//
+// A provider no organization in *this config* links is left alone: the
+// association may already exist on the server or be managed elsewhere, and the
+// config cannot tell. That is the one case this cannot cover.
+//
+// The domain comparison is exact, matching Keycloak's — see
+// organizationHasDomain.
+func validateOrganizationIdentityProviderDomains(realmIdx int, r Realm) error {
+	if len(r.Organizations) == 0 {
+		return nil
+	}
+
+	// Which organization claims each alias. Duplicate claims are already
+	// rejected by validateOrganizationIdentityProviders, so the last write
+	// cannot mask a conflict.
+	owner := make(map[string]Organization)
+
+	for _, o := range r.Organizations {
+		for _, alias := range o.IdentityProviders {
+			owner[alias] = o
+		}
+	}
+
+	for i, idp := range r.IdentityProviders {
+		domain, ok := idp.Config[orgDomainConfigKey]
+		if !ok || domain == "" {
+			continue
+		}
+
+		org, linked := owner[idp.Alias]
+		if !linked {
+			continue
+		}
+
+		if organizationHasDomain(org, domain) {
+			continue
+		}
+
+		names := make([]string, 0, len(org.Domains))
+		for _, d := range org.Domains {
+			names = append(names, d.Name)
+		}
+
+		// The index alone identifies the provider positionally; the alias is what
+		// the reader is looking for, and the point of checking here rather than
+		// letting Keycloak answer is that its own 400 names nothing at all.
+		path := fmt.Sprintf("realms[%d].identityProviders[%d].config[%s]", realmIdx, i, orgDomainConfigKey)
+
+		if len(names) == 0 {
+			return fmt.Errorf("%s: identity provider %q has %q, but organization %q declares no domains",
+				path, idp.Alias, domain, org.Name)
+		}
+
+		if organizationHasDomainIgnoringCase(org, domain) {
+			return fmt.Errorf("%s: identity provider %q has %q, which differs only in case from a domain of organization %q (%s); Keycloak compares them exactly",
+				path, idp.Alias, domain, org.Name, strings.Join(names, ", "))
+		}
+
+		return fmt.Errorf("%s: identity provider %q has %q, which is not a domain of organization %q (which has %s)",
+			path, idp.Alias, domain, org.Name, strings.Join(names, ", "))
+	}
+
+	return nil
+}
+
+// organizationHasDomain reports whether the organization declares this domain.
+//
+// The comparison is exact. Domain names are case-insensitive as names, so
+// ignoring case is the intuitive choice and it is the wrong one: Keycloak
+// compares the two strings literally and answers 400 for a difference of case
+// alone, measured on 26.6. Accepting one here would wave through precisely the
+// config this check exists to catch — good on first provision, refused on every
+// run after. See TestIntegrationOrganizationDomainIsCaseSensitive.
+func organizationHasDomain(o Organization, domain string) bool {
+	for _, d := range o.Domains {
+		if d.Name == domain {
+			return true
+		}
+	}
+
+	return false
+}
+
+// organizationHasDomainIgnoringCase reports whether the only thing separating
+// the configured domain from one the organization has is capitalisation. It
+// exists to say so in the error, because "acme.com is not a domain of acme"
+// is a baffling thing to read next to a domains list containing ACME.com.
+func organizationHasDomainIgnoringCase(o Organization, domain string) bool {
+	for _, d := range o.Domains {
+		if strings.EqualFold(d.Name, domain) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // validateOrganizationIdentityProviders checks the aliases one organization
