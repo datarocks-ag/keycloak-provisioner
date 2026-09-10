@@ -50,6 +50,17 @@ const (
 	tokenExchangeP = "perm-token-exchange"
 )
 
+// affirmativePermission is the scope permission as this provisioner leaves it.
+func affirmativePermission() map[string]any {
+	return map[string]any{
+		"id":               tokenExchangeP,
+		"name":             "token-exchange.permission.client." + targetUUID,
+		"type":             "scope",
+		"logic":            "POSITIVE",
+		"decisionStrategy": "AFFIRMATIVE",
+	}
+}
+
 func newPermServer(t *testing.T, seed permSeed) (*permServer, string) {
 	t.Helper()
 
@@ -300,6 +311,11 @@ func TestManagementPermissionsIsIdempotent(t *testing.T) {
 			policyName: {"id": policyName + "-id", "name": policyName, "clients": []any{"bff-uuid"}},
 		},
 		associated: []map[string]any{{"id": policyName + "-id", "name": policyName}},
+		// A realm this provisioner has already applied is AFFIRMATIVE. Seeding
+		// Keycloak's UNANIMOUS default here would describe a realm in the broken
+		// state the reconciler exists to repair — see
+		// TestManagementPermissionsRepairsDecisionStrategy.
+		permission: affirmativePermission(),
 	})
 
 	if err := runPermissions(t, url, tokenExchangeTo("bff")); err != nil {
@@ -570,5 +586,76 @@ func TestManagementPermissionsUsesTheSeededIndex(t *testing.T) {
 
 	if rec.clientLookups != 0 {
 		t.Errorf("client lookups = %d, want 0 — both clients were already known", rec.clientLookups)
+	}
+}
+
+// TestManagementPermissionsRepairsDecisionStrategy covers a grant that is
+// attached and inert.
+//
+// Under UNANIMOUS a permission grants only when every attached policy passes, so
+// a second policy added out of band silently disables the configured grant.
+// Skipping the permission because the policy is already attached would leave
+// that unrepaired, which is the failure this reconciler is least able to see:
+// everything it manages looks present.
+func TestManagementPermissionsRepairsDecisionStrategy(t *testing.T) {
+	const policyName = "keycloak-provisioner.token-exchange.target"
+
+	rec, url := newPermServer(t, permSeed{
+		enabled: true,
+		policies: map[string]map[string]any{
+			policyName: {"id": policyName + "-id", "name": policyName, "clients": []any{"bff-uuid"}},
+		},
+		associated: []map[string]any{
+			{"id": policyName + "-id", "name": policyName},
+			{"id": "hand-made-id", "name": "someone-elses-policy"},
+		},
+		// Keycloak's default, and what an out-of-band edit leaves behind.
+		permission: map[string]any{
+			"id": tokenExchangeP, "type": "scope", "logic": "POSITIVE", "decisionStrategy": "UNANIMOUS",
+		},
+	})
+
+	if err := runPermissions(t, url, tokenExchangeTo("bff")); err != nil {
+		t.Fatalf("ensureManagementPermissions: %v", err)
+	}
+
+	if len(rec.updatedPerm) != 1 {
+		t.Fatalf("expected the permission to be corrected once, got %d updates", len(rec.updatedPerm))
+	}
+
+	if got := rec.updatedPerm[0]["decisionStrategy"]; got != "AFFIRMATIVE" {
+		t.Errorf("decisionStrategy = %v, want AFFIRMATIVE", got)
+	}
+
+	// Repairing the strategy must not detach anything, its own policy included.
+	got := stringsIn(t, rec.updatedPerm[0]["policies"])
+	if len(got) != 2 {
+		t.Errorf("policies = %v, want both to survive the correction", got)
+	}
+
+	// The policy is already correct, so nothing about it should be rewritten.
+	if len(rec.updatedPolicy) != 0 || len(rec.createdPolicy) != 0 {
+		t.Errorf("policy was rewritten while only the strategy needed fixing")
+	}
+}
+
+func TestSameStringSetIgnoresDuplicates(t *testing.T) {
+	cases := []struct {
+		name string
+		a, b []string
+		want bool
+	}{
+		{"duplicate on the server side", []string{"x", "x"}, []string{"x"}, true},
+		{"duplicate on the config side", []string{"x"}, []string{"x", "x"}, true},
+		{"reordered", []string{"x", "y"}, []string{"y", "x"}, true},
+		{"different values", []string{"x"}, []string{"y"}, false},
+		{"subset is not equal", []string{"x", "y"}, []string{"x"}, false},
+		{"both empty", nil, nil, true},
+	}
+
+	for _, c := range cases {
+		if got := sameStringSet(c.a, c.b); got != c.want {
+			t.Errorf("%s: sameStringSet(%v, %v) = %v, want %v", c.name, c.a, c.b, got, c.want)
+		}
 	}
 }

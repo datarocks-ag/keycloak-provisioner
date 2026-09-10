@@ -22,6 +22,12 @@ const realmManagementClientID = "realm-management"
 // so a run can find last run's policy without storing anything.
 const managementPolicyPrefix = "keycloak-provisioner"
 
+// affirmativeDecisionStrategy makes a scope permission grant when any one
+// attached policy passes. Under Keycloak's UNANIMOUS default a permission
+// carrying more than one policy grants only when every one of them passes, so a
+// grant added alongside another policy would never take effect.
+const affirmativeDecisionStrategy = "AFFIRMATIVE"
+
 // managementPolicyName is the name of the policy granting one permission scope
 // on one client. It is keyed by the target's clientId rather than its UUID so
 // the policy is legible in the admin console; renaming a client's clientId
@@ -251,16 +257,35 @@ func (p *Provisioner) attachManagementPolicy(
 
 	logArgs := []any{"realm", realm, "clientId", targetClientID, "scope", scope}
 
+	alreadyAttached := false
+	others := make([]string, 0, len(attached))
+
 	for _, id := range attached {
 		if id == policyID {
-			slog.Debug("Management permission policy already attached", logArgs...)
-			return nil
+			alreadyAttached = true
+			continue
 		}
+
+		others = append(others, id)
 	}
 
+	// Read the permission even when the policy is already attached. Its decision
+	// strategy is part of what makes the grant effective, and it can be changed
+	// out of band: a permission left at UNANIMOUS with a second policy attached
+	// grants only when both pass, so a grant this config made would quietly stop
+	// working. Returning early on the attachment alone would leave that
+	// unrepaired for as long as nobody looked.
 	permission, err := p.client.GetAuthzScopePermission(ctx, realm, resourceServerUUID, permissionID)
 	if err != nil {
 		return fmt.Errorf("reading the %q permission on client %q: %w", scope, targetClientID, err)
+	}
+
+	strategy, _ := permission["decisionStrategy"].(string)
+
+	if alreadyAttached && strategy == affirmativeDecisionStrategy {
+		slog.Debug("Management permission policy already attached", logArgs...)
+
+		return nil
 	}
 
 	// The permission's representation omits its policies on read but replaces
@@ -271,20 +296,26 @@ func (p *Provisioner) attachManagementPolicy(
 		body[k] = v
 	}
 
-	body["policies"] = append(attached, policyID)
-
-	// AFFIRMATIVE makes the permission grant when any one attached policy
-	// passes. Under UNANIMOUS — Keycloak's default — a permission carrying more
-	// than one policy grants only when every one of them passes, so the grant
-	// this config asks for would not take effect.
-	if strategy, _ := permission["decisionStrategy"].(string); strategy != "AFFIRMATIVE" && len(attached) > 0 {
-		slog.Warn("Loosening the permission's decision strategy to AFFIRMATIVE; policies already attached now grant independently",
-			append(logArgs, "was", strategy, "attachedPolicies", len(attached))...)
+	if alreadyAttached {
+		body["policies"] = attached
+	} else {
+		body["policies"] = append(attached, policyID)
 	}
 
-	body["decisionStrategy"] = "AFFIRMATIVE"
+	// Loosening only matters to report when something else is attached: with one
+	// policy the two strategies decide identically.
+	if strategy != affirmativeDecisionStrategy && len(others) > 0 {
+		slog.Warn("Loosening the permission's decision strategy to AFFIRMATIVE; policies already attached now grant independently",
+			append(logArgs, "was", strategy, "otherPolicies", len(others))...)
+	}
 
-	slog.Info("Attaching management permission policy", append(logArgs, "policy", policyID)...)
+	body["decisionStrategy"] = affirmativeDecisionStrategy
+
+	if alreadyAttached {
+		slog.Info("Correcting management permission decision strategy", append(logArgs, "was", strategy)...)
+	} else {
+		slog.Info("Attaching management permission policy", append(logArgs, "policy", policyID)...)
+	}
 
 	if err := p.client.UpdateAuthzScopePermission(ctx, realm, resourceServerUUID, permissionID, body); err != nil {
 		return fmt.Errorf("attaching a policy to %q on client %q: %w", scope, targetClientID, err)
@@ -326,20 +357,34 @@ func stringsFrom(v any) []string {
 // sameStringSet reports whether two lists hold the same values, ignoring order
 // and duplicates. Keycloak does not preserve the order of a policy's clients,
 // so comparing the lists directly would rewrite the policy on every run.
+//
+// Comparing sets in both directions rather than deleting from one as the other
+// is walked: deletion makes a repeated value in b look absent the second time
+// it appears, which is the opposite of ignoring duplicates.
 func sameStringSet(a, b []string) bool {
-	set := make(map[string]bool, len(a))
-	for _, s := range a {
+	inA := stringSet(a)
+	inB := stringSet(b)
+
+	if len(inA) != len(inB) {
+		return false
+	}
+
+	for s := range inA {
+		if !inB[s] {
+			return false
+		}
+	}
+
+	return true
+}
+
+func stringSet(values []string) map[string]bool {
+	set := make(map[string]bool, len(values))
+	for _, s := range values {
 		set[s] = true
 	}
 
-	for _, s := range b {
-		if !set[s] {
-			return false
-		}
-		delete(set, s)
-	}
-
-	return len(set) == 0
+	return set
 }
 
 // sortedKeys returns a map's keys in order, so logs and dry-run output do not

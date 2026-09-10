@@ -556,13 +556,13 @@ The permission's `decisionStrategy` is set to `AFFIRMATIVE`, so each attached po
 
 ### Using this for impersonation
 
-The `token-exchange` scope permission is one of four things v1 impersonation needs — the exchange that accepts `requested_subject`. All four are required; the following was verified end to end against Keycloak 26.6 and 26.7.2 by decoding the returned token and confirming its `sub` is the impersonated user, not the service account.
+The `token-exchange` scope permission is one of three things v1 impersonation needs — the exchange that accepts `requested_subject`. All three are required, and the whole set was verified end to end against Keycloak 26.6 and 26.7.2 by decoding the returned token and confirming its `sub` is the impersonated user, not the service account.
 
 1. **Both server features**, not just this one: `--features=token-exchange:v1,admin-fine-grained-authz:v1`. They are independent flags, and `admin-fine-grained-authz:v1` does not enable the v1 exchange provider.
 2. **The `token-exchange` permission on the audience client** — the client being exchanged *to*, not the requesting one. That is what this section configures.
 3. **`realm-management`'s `impersonation` role held by the identity in the subject token** — see below. This is the one that is easy to put in the wrong place.
 
-Removing either of 2 or 3 fails the exchange.
+Without 1 the request never reaches the v1 provider at all — v2 rejects `requested_subject` outright. Removing either of 2 or 3 leaves the provider in place and the exchange refused; the table below is that measurement.
 
 #### The trap: the role belongs to the operator, not to the client
 
