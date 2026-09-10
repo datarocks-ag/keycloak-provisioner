@@ -1297,15 +1297,6 @@ func validateOrganizations(realmIdx int, r Realm) error {
 	return nil
 }
 
-// validateOrganizationIdentityProviders checks the aliases one organization
-// associates, and records them in linkedIdPs so a provider claimed by two
-// organizations is caught.
-//
-// Keycloak allows a provider to belong to at most one organization and answers
-// 400 for a second claim, so catching it here turns a mid-run failure into a
-// config error. An alias not declared under realms[i].identityProviders is
-// deliberately allowed: it may already exist on the server, the same way
-// members may name pre-existing users.
 // orgDomainConfigKey binds an organization-linked identity provider to one of
 // its organization's domains. Keycloak validates it — but only once the
 // provider is actually linked, which is what makes it worth checking here.
@@ -1425,6 +1416,15 @@ func organizationHasDomainIgnoringCase(o Organization, domain string) bool {
 	return false
 }
 
+// validateOrganizationIdentityProviders checks the aliases one organization
+// associates, and records them in linkedIdPs so a provider claimed by two
+// organizations is caught.
+//
+// Keycloak allows a provider to belong to at most one organization and answers
+// 400 for a second claim, so catching it here turns a mid-run failure into a
+// config error. An alias not declared under realms[i].identityProviders is
+// deliberately allowed: it may already exist on the server, the same way
+// members may name pre-existing users.
 func validateOrganizationIdentityProviders(prefix string, o Organization, linkedIdPs map[string]string) error {
 	seen := make(map[string]bool)
 
