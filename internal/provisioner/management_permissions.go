@@ -340,18 +340,31 @@ func scopePermissionIDs(rep map[string]any) map[string]string {
 	return ids
 }
 
-// stringsFrom reads a JSON array of strings out of an untyped representation.
+// stringsFrom reads a list of strings out of an untyped representation.
+//
+// It accepts both shapes the value arrives in. Keycloak's responses decode to
+// []any, but the dry-run adapter stores what the reconciler handed it, which is
+// already []string. Understanding only the first would return nothing for the
+// second — and nothing is a valid answer here, meaning "this policy grants to no
+// one", so the mistake would read as a difference and rewrite the policy rather
+// than fail.
 func stringsFrom(v any) []string {
-	raw, _ := v.([]any)
-	out := make([]string, 0, len(raw))
+	switch raw := v.(type) {
+	case []string:
+		return raw
+	case []any:
+		out := make([]string, 0, len(raw))
 
-	for _, e := range raw {
-		if s, ok := e.(string); ok {
-			out = append(out, s)
+		for _, e := range raw {
+			if s, ok := e.(string); ok {
+				out = append(out, s)
+			}
 		}
-	}
 
-	return out
+		return out
+	default:
+		return nil
+	}
 }
 
 // sameStringSet reports whether two lists hold the same values, ignoring order

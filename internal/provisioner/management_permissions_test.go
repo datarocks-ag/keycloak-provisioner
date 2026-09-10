@@ -659,3 +659,42 @@ func TestSameStringSetIgnoresDuplicates(t *testing.T) {
 		}
 	}
 }
+
+// TestStringsFromAcceptsBothShapes pins the two shapes a policy's client list
+// arrives in.
+//
+// Keycloak's own responses decode to []any, but the dry-run adapter stores what
+// the reconciler handed it, which is []string. A helper that understands only
+// the first silently returns nothing for the second — and "nothing" is a valid
+// answer here, meaning "this policy grants to no one", so the mistake reads as a
+// difference and rewrites the policy rather than failing.
+func TestStringsFromAcceptsBothShapes(t *testing.T) {
+	cases := []struct {
+		name string
+		in   any
+		want []string
+	}{
+		{"decoded from JSON", []any{"a", "b"}, []string{"a", "b"}},
+		{"stored by the dry-run adapter", []string{"a", "b"}, []string{"a", "b"}},
+		{"mixed junk is skipped", []any{"a", 7, nil, "b"}, []string{"a", "b"}},
+		{"absent", nil, nil},
+	}
+
+	for _, c := range cases {
+		got := stringsFrom(c.in)
+
+		if len(got) != len(c.want) {
+			t.Errorf("%s: stringsFrom(%v) = %v, want %v", c.name, c.in, got, c.want)
+
+			continue
+		}
+
+		for i := range c.want {
+			if got[i] != c.want[i] {
+				t.Errorf("%s: stringsFrom(%v) = %v, want %v", c.name, c.in, got, c.want)
+
+				break
+			}
+		}
+	}
+}
