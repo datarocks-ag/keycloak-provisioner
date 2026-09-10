@@ -26,6 +26,7 @@ type KeycloakAPI interface {
 	OrganizationAPI
 	OrganizationGroupAPI
 	IdentityProviderAPI
+	ManagementPermissionAPI
 }
 
 // dryRunAPI must satisfy the port. Asserting it here fails the build in the
@@ -212,4 +213,34 @@ type IdentityProviderAPI interface {
 	// one organization.
 	GetOrganizationIdentityProviders(ctx context.Context, realm, orgID string) ([]map[string]any, error)
 	AddOrganizationIdentityProvider(ctx context.Context, realm, orgID, alias string) error
+}
+
+// ManagementPermissionAPI covers Keycloak's fine-grained admin permissions on a
+// client — the v1 model, and the only way to grant a token-exchange permission.
+//
+// The objects live on two different clients. The on/off switch and the scope
+// permission ids belong to the *target* client. The permissions and the
+// policies satisfying them are authorization objects on the *realm-management*
+// client's resource server, so every method below names which client owns what
+// it touches.
+//
+// Two shapes here are unusual enough to be worth stating, because both are
+// silent traps:
+//
+//   - GetAuthzClientPolicies matches the name as a substring. Callers must
+//     compare names themselves to find one policy.
+//   - GetAuthzScopePermission does not return the attached policies —
+//     "policies" is write-only on that representation. Reading them takes
+//     GetAuthzAssociatedPolicies, and a write that omits one detaches it.
+type ManagementPermissionAPI interface {
+	GetClientManagementPermissions(ctx context.Context, realm, clientUUID string) (map[string]any, error)
+	// SetClientManagementPermissions is idempotent: enabling permissions that
+	// are already enabled returns the same scope permission ids.
+	SetClientManagementPermissions(ctx context.Context, realm, clientUUID string, enabled bool) (map[string]any, error)
+	GetAuthzClientPolicies(ctx context.Context, realm, resourceServerUUID, name string) ([]map[string]any, error)
+	CreateAuthzClientPolicy(ctx context.Context, realm, resourceServerUUID string, body map[string]any) (string, error)
+	UpdateAuthzClientPolicy(ctx context.Context, realm, resourceServerUUID, policyID string, body map[string]any) error
+	GetAuthzScopePermission(ctx context.Context, realm, resourceServerUUID, permissionID string) (map[string]any, error)
+	GetAuthzAssociatedPolicies(ctx context.Context, realm, resourceServerUUID, permissionID string) ([]map[string]any, error)
+	UpdateAuthzScopePermission(ctx context.Context, realm, resourceServerUUID, permissionID string, body map[string]any) error
 }

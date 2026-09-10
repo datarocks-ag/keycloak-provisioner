@@ -7,6 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `managementPermissions` on a client, expressing Keycloak's **v1** fine-grained
+  admin permissions — which other clients may exercise a given admin capability
+  on it:
+
+  ```yaml
+  clients:
+    - clientId: "sandbox-router"
+      managementPermissions:
+        scopes:
+          token-exchange:
+            clients: ["sandbox-bff"]
+  ```
+
+  This is the only way to express a v1 `token-exchange` permission, which gates
+  impersonation — the exchange that accepts `requested_subject`. Previously it
+  had to be applied by hand after every run, so a realm needing impersonation
+  could not be rebuilt from its configuration.
+
+  Any scope the server offers works as a key. Names are validated against the
+  `scopePermissions` map Keycloak itself returns, so a typo is named rather than
+  ignored and no release is needed when Keycloak adds a scope. On 26.6 and 26.7:
+  `view`, `manage`, `configure`, `map-roles`, `map-roles-client-scope`,
+  `map-roles-composite`, `token-exchange`.
+
+  Three things to know:
+
+  - **Requires `--features=admin-fine-grained-authz:v1`.** Without it the admin
+    API answers `501` with `{"error": "Feature not enabled"}`, naming neither
+    the feature nor the flag. The pre-flight check now refuses such a run with a
+    message that names the flag, before anything is written.
+  - **Enabling v1 switches the v2 permission model off.** Keycloak reports
+    `ADMIN_FINE_GRAINED_AUTHZ` and `ADMIN_FINE_GRAINED_AUTHZ_V2` as separate
+    features and only one is active — a realm-wide consequence of a per-client
+    setting.
+  - **The client list is authoritative.** This is the one place the provisioner
+    replaces state rather than only adding to it. It owns a policy per
+    `(client, scope)` named `keycloak-provisioner.<scope>.<clientId>` and
+    rewrites its client list, so removing a `clientId` withdraws that grant on
+    the next run. The permission's own policy list stays additive, so a policy
+    attached by hand keeps working. Nothing is deleted, which bounds this: a
+    grant can be narrowed but not withdrawn entirely, since `clients` must name
+    at least one client. `enabled: false` is rejected for the same reason —
+    Keycloak deletes the client's whole scope permission set when fine-grained
+    permissions are switched off.
+
+  Granting `token-exchange` is one of three things v1 impersonation needs, and
+  the README now documents the whole verified recipe: both server features
+  (`token-exchange:v1` and `admin-fine-grained-authz:v1` are independent flags),
+  this permission on the *audience* client, and `realm-management`'s
+  `impersonation` role held by the identity in the subject token — which in a
+  real impersonation is the **operator's own account**, not the requesting
+  client's service account. Granting it to the service account and verifying it
+  there is the failure that looks like success, and it is measured: removing the
+  service-account grant changes nothing, removing the operator's refuses the
+  exchange.
+
+- Compatibility errors now name the command-line flag for a disabled server
+  feature where the flag differs from the feature name, rather than only the
+  name reported in server info.
+
+- Documentation for the three organization-scoped identity provider settings,
+  which were reachable through the provider's `config` map but appeared in
+  neither the README nor the example config: `kc.org.domain`,
+  `kc.org.broker.public`, and
+  `kc.org.broker.redirect.mode.email-matches`.
+
 ### Fixed
 
 - `kc.org.domain` on an identity provider is now validated at config load
@@ -36,15 +104,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A provider that no organization in the config links is not checked — the
   association may already exist on the server or be managed elsewhere, and the
   config cannot tell.
-
-### Added
-
-- Documentation for the three organization-scoped identity provider settings,
-  which were reachable through the provider's `config` map but appeared in
-  neither the README nor the example config: `kc.org.domain`,
-  `kc.org.broker.public`, and
-  `kc.org.broker.redirect.mode.email-matches`.
-
 ## [1.12.0] — 2026-08-31
 
 Moving a client scope between `defaultClientScopes` and `optionalClientScopes`

@@ -120,14 +120,15 @@ In dry-run mode, every mutating call logs a `DRY-RUN:` message and is skipped. R
    6. **Realm roles** — created or updated
    7. **Service account roles** — assigned (additive, after roles exist)
       - **Scope mappings** — roles declared on a client or client scope added to its scope (additive, after roles exist)
-   8. **Groups** — created or updated (matched by `name`)
+   8. **Fine-grained management permissions** — enabled per client, one policy per scope created or updated, attached to the scope permission (after every client exists)
+   9. **Groups** — created or updated (matched by `name`)
       - **Attributes** — set from config
       - **Realm/client role assignments** — granted if not already mapped (additive)
       - **Subgroups** — created or updated recursively
-   9. **Users** — created or updated, passwords set, roles assigned, group memberships added (additive)
-   10. **Identity providers** — created or updated (matched by `alias`), merged over the server's representation
+   10. **Users** — created or updated, passwords set, roles assigned, group memberships added (additive)
+   11. **Identity providers** — created or updated (matched by `alias`), merged over the server's representation
        - **Mappers** — created or updated (matched by `name`); their config is replaced, not merged
-   11. **Organizations** — created or updated (matched by `name`), domains set, members added, identity providers linked (all additive)
+   12. **Organizations** — created or updated (matched by `name`), domains set, members added, identity providers linked (all additive)
 
 Authentication flows run before clients so a client can bind to a flow defined
 in the same config, and before the realm bindings that reference them. Client
@@ -140,7 +141,9 @@ after roles and groups, which a hardcoded-role or hardcoded-group mapper names.
 Scope mappings run with the service account roles rather than where they are
 declared: they name roles on any client in the realm, and realm roles, none of
 which exist while the owning client or client scope is being reconciled.
-Organizations run last so their members resolve to users created in the same run
+Fine-grained management permissions run after the whole client loop rather than
+inside it: a permission names *another* client as the grantee, and either client
+may be declared first. Organizations run last so their members resolve to users created in the same run
 and their identity provider links resolve to providers created just above. Role assignments, group
 memberships and organization memberships are additive: the provisioner grants any configured role or
 membership that is not yet present, and never removes existing ones.
@@ -279,6 +282,7 @@ Every field is optional except `realm`. A field left out is not sent, so Keycloa
 | `serviceAccountRoles` | object | Roles granted to the service account |
 | `fullScopeAllowed` | bool | Whether tokens carry every role the subject holds (see Token Exchange) |
 | `scopeMappings` | object | Roles in this client's scope (see Role Scope Mappings) |
+| `managementPermissions` | object | Fine-grained admin permissions on this client (see Fine-Grained Admin Permissions) |
 
 ## Master Realm
 
@@ -502,6 +506,100 @@ for this flag, so a client already set to `false` out-of-band is not widened by 
 run that does not declare it — but a client the provisioner *creates* without the
 field gets Keycloak's permissive `true`. Declare it explicitly on clients where the
 scope matters.
+
+## Fine-Grained Admin Permissions
+
+`managementPermissions` declares Keycloak's **v1** fine-grained admin permissions on a client: which other clients are allowed to exercise a given admin capability on it.
+
+```yaml
+clients:
+  - clientId: "sandbox-router"
+    managementPermissions:
+      scopes:
+        token-exchange:
+          clients: ["sandbox-bff"]
+  - clientId: "sandbox-bff"
+```
+
+This is the only way to express a v1 **token-exchange** permission, which is what gates impersonation — the exchange that accepts `requested_subject`. Without it that permission has to be applied by hand after every run, and the realm cannot be rebuilt from its configuration.
+
+### Requires a server feature
+
+The API behind this is off by default. Start Keycloak with:
+
+```
+--features=admin-fine-grained-authz:v1
+```
+
+Without it the admin API answers `501` with `{"error": "Feature not enabled"}`, naming neither the feature nor the flag. The provisioner checks for it before writing anything and refuses the run with a message that names the flag — see [Keycloak Compatibility](#keycloak-compatibility).
+
+Note that enabling v1 **switches the v2 permission model off**: Keycloak reports `ADMIN_FINE_GRAINED_AUTHZ` and `ADMIN_FINE_GRAINED_AUTHZ_V2` as separate features and only one is active. This is a realm-wide consequence of a per-client setting, so it is worth deciding deliberately.
+
+### Scopes
+
+Any scope the running Keycloak offers can be used as a key. Scope names are validated against the `scopePermissions` map the server itself returns, so a typo is reported by name rather than silently ignored, and no upgrade is needed when Keycloak adds one. On 26.6 and 26.7 the set is:
+
+`view`, `manage`, `configure`, `map-roles`, `map-roles-client-scope`, `map-roles-composite`, `token-exchange`
+
+### What is authoritative and what is additive
+
+This is the one place the provisioner replaces state rather than only adding to it, and the split is deliberate:
+
+- **The policy is the provisioner's.** For each `(client, scope)` pair it owns a client policy named `keycloak-provisioner.<scope>.<clientId>`, and rewrites its client list to match the config. **Removing a `clientId` from the list withdraws that grant on the next run.** A permission that could only grow would leave impersonation rights that no edit could take back, which would defeat the point of declaring them.
+- **The permission's policy list is shared.** The provisioner's policy is added alongside whatever is already attached, so a policy created by hand or by another tool keeps working.
+
+Nothing is deleted, and that bounds what the config can take back. A grant can be **narrowed** — dropping a `clientId` withdraws that client on the next run — but it cannot be withdrawn entirely: `clients` must name at least one client, and removing the scope from the config stops it being reconciled rather than revoking it. Taking back the last grant means deleting the policy in Keycloak by hand.
+
+`enabled: false` is rejected at validation for the same reason: Keycloak deletes the client's whole scope permission set, and the policies attached to it, when fine-grained permissions are switched off.
+
+The permission's `decisionStrategy` is set to `AFFIRMATIVE`, so each attached policy grants independently. Under Keycloak's `UNANIMOUS` default a permission carrying more than one policy grants only when *every* policy passes, which would silently make the configured grant ineffective. If the provisioner loosens an existing `UNANIMOUS` permission that already had policies attached, it logs a warning saying so.
+
+### Using this for impersonation
+
+The `token-exchange` scope permission is one of three things v1 impersonation needs — the exchange that accepts `requested_subject`. All three are required, and the whole set was verified end to end against Keycloak 26.6 and 26.7.2 by decoding the returned token and confirming its `sub` is the impersonated user, not the service account.
+
+1. **Both server features**, not just this one: `--features=token-exchange:v1,admin-fine-grained-authz:v1`. They are independent flags, and `admin-fine-grained-authz:v1` does not enable the v1 exchange provider.
+2. **The `token-exchange` permission on the audience client** — the client being exchanged *to*, not the requesting one. That is what this section configures.
+3. **`realm-management`'s `impersonation` role held by the identity in the subject token** — see below. This is the one that is easy to put in the wrong place.
+
+Without 1 the request never reaches the v1 provider at all — v2 rejects `requested_subject` outright. Removing either of 2 or 3 leaves the provider in place and the exchange refused; the table below is that measurement.
+
+#### The trap: the role belongs to the operator, not to the client
+
+The natural assumption is that the *requesting client* needs permission to impersonate, so the role goes on its service account. That is wrong for the ordinary flow, and it fails in a way that looks like everything is configured.
+
+Keycloak checks the identity the `subject_token` represents. In a real impersonation that is the **operator** — the human whose session the exchange is performed under — so the operator's own account needs the role. Measured on 26.7.2 against a realm with a service-account grant already in place, removing one thing at a time:
+
+| removed | exchange |
+|---|---|
+| — (all present) | succeeds |
+| `token-exchange` permission on the audience client | **refused** |
+| `impersonation` on the requesting client's **service account** | succeeds — not required |
+| that role in the client's **scope mappings** | succeeds — not required |
+| `impersonation` on the **operator's user account** | **refused** |
+
+So a realm can grant the role to the client's service account, verify it is present there, and still be refused — which is exactly what the role's absence on the operator looks like:
+
+```yaml
+users:
+  - username: "bob"          # an operator who may impersonate
+    roles:
+      clients:
+        realm-management: ["impersonation"]
+```
+
+The service-account grant matters only when a client exchanges **its own** token — then the service account *is* the identity in the subject token, and the usual rule applies: with `fullScopeAllowed: false` the role must also be in the client's [scope mappings](#role-scope-mappings) or it never reaches the token.
+
+Note what this role is: `realm-management:impersonation` lets its holder impersonate through Keycloak's admin API as well, not only through the exchange. Granting it to operator accounts is a real privilege decision, not a formality.
+
+#### Telling the two failures apart
+
+The error distinguishes a missing feature from a missing grant, which is worth knowing before changing anything:
+
+| error | meaning |
+|---|---|
+| `invalid_request: Parameter 'requested_subject' is not supported for standard token exchange` | `token-exchange:v1` is **not** enabled — the request reached the v2 provider, which has no impersonation at all |
+| `access_denied: Client not allowed to exchange` | v1 **is** active; one of the grants above is missing or is not reaching the token |
 
 ## Client Scopes
 
@@ -944,6 +1042,7 @@ Some configuration only works on newer Keycloak releases, and some of it also de
 | organizations | 26.0 | `ORGANIZATION` |
 | organization groups | 26.6 | `ORGANIZATION` |
 | standard token exchange | 26.2 | `TOKEN_EXCHANGE_STANDARD_V2` |
+| client management permissions | any | `ADMIN_FINE_GRAINED_AUTHZ` |
 | step-up authentication | any | `STEP_UP_AUTHENTICATION` |
 
 <!-- END COMPATIBILITY TABLE -->
