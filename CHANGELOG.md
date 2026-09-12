@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_No unreleased changes._
+
+## [1.13.0] — 2026-09-12
+
 ### Added
 
 - `managementPermissions` on a client, expressing Keycloak's **v1** fine-grained
@@ -104,6 +108,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A provider that no organization in the config links is not checked — the
   association may already exist on the server or be managed elsewhere, and the
   config cannot tell.
+
 ## [1.12.0] — 2026-08-31
 
 Moving a client scope between `defaultClientScopes` and `optionalClientScopes`
