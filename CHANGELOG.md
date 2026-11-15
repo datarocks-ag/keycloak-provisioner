@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_No unreleased changes._
+
+## [1.14.0] — 2026-11-15
+
+The documentation moved from the README into `docs/`, with an FAQ and fifteen
+how-to guides, checked against the code and run against Keycloak 26.6.4.
+Writing it surfaced the fixes below. Minor rather than patch: two validation
+rules now refuse configs that loaded before (a user `id` declared twice, and a
+`defaultAcrValues` entry missing from the client's own `acrLoaMap`), because
+both used to fail part-way through a run instead.
+
 ### Changed
 
 - Go language version raised to 1.27.0 (`go.mod`); CI and release workflows
@@ -889,7 +900,9 @@ Initial release.
   (testcontainers-based Keycloak), Trivy scan, GHCR publish, GoReleaser.
 - LICENSE.
 
-[Unreleased]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.12.0...HEAD
+[Unreleased]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.14.0...HEAD
+[1.14.0]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.13.0...v1.14.0
+[1.13.0]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.11.0...v1.12.0
 [1.11.0]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.10.0...v1.11.0
 [1.10.0]: https://github.com/datarocks-ag/keycloak-provisioner/compare/v1.9.0...v1.10.0
