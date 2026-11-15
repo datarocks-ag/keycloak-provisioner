@@ -478,7 +478,9 @@ Further reading: [Allow a client to impersonate users](howto/allow-impersonation
 ### Why do I get "… is not in the acrLoaMap; the config declares …"?
 
 Because a client's `defaultAcrValues` names an authentication context class reference (ACR)
-value that neither the realm's nor the client's `acrLoaMap` in the config declares.
+value that the `acrLoaMap` in the config doesn't declare: the client's own map when it has one,
+otherwise the realm's. With a client map the message says `the client's acrLoaMap`, because
+Keycloak would refuse a value that only the realm's map has.
 
 Only the config counts: a map that exists on the server but isn't in the config isn't
 consulted. When the config declares no `acrLoaMap` at all, the check is skipped.

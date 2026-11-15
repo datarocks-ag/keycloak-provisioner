@@ -59,6 +59,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   once per variable (`Environment variable is not set; ${VAR} is kept as
   literal text`), so a secret or password that silently became `${VAR}`
   shows up in the log. Escaped `$${VAR}` and comments don't warn.
+- `defaultAcrValues` on a client that declares its own `acrLoaMap` is
+  checked against that map alone, as Keycloak does. A value found only in
+  the realm's map used to pass validation and then fail the run part-way
+  with a 400 from Keycloak; it is now rejected when the config loads.
 
 ## [1.13.0] — 2026-09-12
 

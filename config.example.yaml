@@ -131,7 +131,8 @@ realms:
         # through the assigned client scopes. Omitting it leaves it unmanaged.
         fullScopeAllowed: false
         # ACR values Keycloak applies when a request asks for none. Each must
-        # be a key of this client's acrLoaMap or the realm's. Keycloak stores
+        # be a key of this client's acrLoaMap, or of the realm's when the
+        # client declares none (Keycloak checks the client's own). Keycloak stores
         # them as a "##"-separated string, not a JSON array — use this field
         # rather than writing default.acr.values by hand, since a JSON array is
         # rejected with a message about the ACR map rather than the encoding.

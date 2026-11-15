@@ -2259,12 +2259,15 @@ func validateDefaultAcrValues(prefix string, c Client, realmAcrLoaMap map[string
 		seen[v] = true
 	}
 
-	known := make(map[string]bool, len(realmAcrLoaMap)+len(c.AcrLoaMap))
-	for name := range realmAcrLoaMap {
-		known[name] = true
+	// A client with its own map is checked against that map alone: Keycloak
+	// refuses a value that only the realm's map has, with a 400 mid-run.
+	declared, mapName := realmAcrLoaMap, "acrLoaMap"
+	if len(c.AcrLoaMap) > 0 {
+		declared, mapName = c.AcrLoaMap, "client's acrLoaMap"
 	}
 
-	for name := range c.AcrLoaMap {
+	known := make(map[string]bool, len(declared))
+	for name := range declared {
 		known[name] = true
 	}
 
@@ -2287,8 +2290,8 @@ func validateDefaultAcrValues(prefix string, c Client, realmAcrLoaMap map[string
 		sort.Strings(names)
 
 		return fmt.Errorf(
-			"%s.defaultAcrValues[%d]: %q is not in the acrLoaMap; the config declares %s",
-			prefix, i, v, strings.Join(names, ", "))
+			"%s.defaultAcrValues[%d]: %q is not in the %s; the config declares %s",
+			prefix, i, v, mapName, strings.Join(names, ", "))
 	}
 
 	return nil

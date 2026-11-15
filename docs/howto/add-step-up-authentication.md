@@ -243,7 +243,7 @@ than with a browser:
 
   The message suggests `copyFrom`, but for step-up build the flow from scratch as in step 2.
 - **A default ACR that is not in the map is rejected at load.** The check uses the `acrLoaMap`
-  declared in the config, the client's or the realm's:
+  declared in the config: the client's own map when it has one, otherwise the realm's:
 
   ```
   {"time":"…","level":"ERROR","msg":"Failed to load configuration","error":"validating config: realms[0].clients[0].defaultAcrValues[0]: \"platinum\" is not in the acrLoaMap; the config declares gold, silver"}

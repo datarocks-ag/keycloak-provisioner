@@ -834,14 +834,16 @@ realms:
 | `acrLoaMap` | realm, client | map of int | ACR value → Level of Authentication. Written as JSON to the `acr.loa.map` attribute (keys sorted) and wins over that key under `attributes`. Levels ≥ 0; empty ACR name rejected; an empty map leaves the attribute unmanaged. Keys are not expanded. Needs the `STEP_UP_AUTHENTICATION` feature. |
 | `defaultAcrValues` | client | list | ACR values applied when a request asks for none. Written to `default.acr.values` as one `##`-separated string. No empty values, no `##`, no duplicates. |
 
-Every `defaultAcrValues` entry must be a key of the realm's or the client's `acrLoaMap` **in the
-config**; when neither declares one, the check is skipped (the map may be on the server):
+Every `defaultAcrValues` entry must be a key of an `acrLoaMap` **in the config**: the client's
+own map when it declares one, otherwise the realm's. When neither declares one, the check is
+skipped (the map may be on the server):
 `realms[0].clients[0].defaultAcrValues[0]: "platinum" is not in the acrLoaMap; the config declares gold, silver`.
 
-When the client has its own `acrLoaMap`, list the default values in it too: on Keycloak 26.6.4 a
-value found only in the realm's map passed validation and was then refused with `Default ACR values
-need to contain values specified in the ACR-To-Loa mapping or number levels from set realm browser
-flow`, failing the run at that client.
+A client with its own map is checked against that map alone, because Keycloak does the same:
+on 26.6.4 a value found only in the realm's map was refused with `Default ACR values need to
+contain values specified in the ACR-To-Loa mapping or number levels from set realm browser flow`.
+The load-time error then reads `… is not in the client's acrLoaMap; …`. Version 1.13.0 accepted
+such a value and failed part-way through the run.
 
 The map only names levels. A flow with a `CONDITIONAL` subflow containing the
 `conditional-level-of-authentication` authenticator enforces them, see

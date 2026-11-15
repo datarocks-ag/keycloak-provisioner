@@ -2797,6 +2797,20 @@ func TestClientDefaultAcrValuesValidation(t *testing.T) {
 			`"standard" is not in the acrLoaMap; the config declares gold`,
 		},
 		{
+			// Keycloak checks against the client's map when it has one; a
+			// value only the realm declares is refused with a 400 mid-run.
+			"value only in the realm's map when the client has its own",
+			`    acrLoaMap:
+      silver: 1
+    clients:
+      - clientId: "app"
+        acrLoaMap:
+          gold: 2
+        defaultAcrValues:
+          - "silver"`,
+			`"silver" is not in the client's acrLoaMap; the config declares gold`,
+		},
+		{
 			"separator inside a value",
 			`    acrLoaMap:
       gold: 2
