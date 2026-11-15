@@ -56,25 +56,43 @@ realms:
     # bind to a flow defined here. Flows are CREATE-ONLY: an existing alias is
     # left untouched whatever the strategy. To change a flow, delete it in
     # Keycloak or use a new alias. Declaring a built-in flow (browser, direct
-    # grant, ...) is rejected — use copyFrom to derive your own instead.
+    # grant, ...) is rejected — declare your own under a new alias instead.
+    # `copyFrom: "browser"` gives an exact copy, but don't add REQUIRED or
+    # CONDITIONAL steps to a copy: they sit beside its ALTERNATIVE login
+    # steps, which Keycloak then skips, so nobody can log in. A step-up flow
+    # is therefore built from scratch:
     # authenticationFlows:
     #   - alias: "browser-step-up"
     #     description: "Browser flow with LoA step-up"
     #     providerId: "basic-flow"   # or "form-flow"; default basic-flow
-    #     copyFrom: "browser"        # seed from an existing flow
     #     executions:                # created in the order declared
-    #       - subflow: "loa-gold"
-    #         requirement: "CONDITIONAL"
-    #         providerId: "basic-flow"        # subflow type; default basic-flow
-    #         description: "Require gold LoA" # subflows only
+    #       - provider: "auth-cookie"
+    #         requirement: "ALTERNATIVE"
+    #       - subflow: "browser-step-up-levels"
+    #         requirement: "ALTERNATIVE"
     #         executions:
-    #           - provider: "conditional-level-of-authentication"
-    #             requirement: "REQUIRED"
-    #             config:
-    #               alias: "gold-condition"   # names the config itself
-    #               loa-condition-level: "2"
-    #           - provider: "auth-otp-form"
-    #             requirement: "REQUIRED"
+    #           - subflow: "browser-step-up-silver"
+    #             requirement: "CONDITIONAL"
+    #             executions:
+    #               - provider: "conditional-level-of-authentication"
+    #                 requirement: "REQUIRED"
+    #                 config:
+    #                   alias: "silver-condition"   # names the config itself
+    #                   loa-condition-level: "1"
+    #               - provider: "auth-username-password-form"
+    #                 requirement: "REQUIRED"
+    #           - subflow: "browser-step-up-gold"
+    #             requirement: "CONDITIONAL"
+    #             providerId: "basic-flow"        # subflow type; default basic-flow
+    #             description: "Require gold LoA" # subflows only
+    #             executions:
+    #               - provider: "conditional-level-of-authentication"
+    #                 requirement: "REQUIRED"
+    #                 config:
+    #                   alias: "gold-condition"
+    #                   loa-condition-level: "2"
+    #               - provider: "auth-otp-form"
+    #                 requirement: "REQUIRED"
 
     # Realm-level flow bindings, by alias. Applied after the flows exist.
     # Unset bindings are left alone.

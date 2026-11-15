@@ -769,8 +769,10 @@ realms:
 - **Create-only, whatever the strategy.** A flow whose alias exists is skipped
   (`Skipping existing authentication flow`). To change one, delete it in Keycloak or use a new alias.
 - **Built-in flows** are refused during the run, not at load: `authentication flow "browser" is a
-  built-in Keycloak flow and will not be modified; declare a new alias with copyFrom: "browser" to
-  customise it`.
+  built-in Keycloak flow and will not be modified; declare your own flow under a new alias and bind
+  it (copyFrom: "browser" gives an exact copy, but don't add REQUIRED or CONDITIONAL steps to a
+  copy: Keycloak then skips its login steps)`. In 1.13.0 and earlier the message recommended `copyFrom`
+  without the warning.
 
 Walk-through: [Add step-up authentication to a client](howto/add-step-up-authentication.md).
 

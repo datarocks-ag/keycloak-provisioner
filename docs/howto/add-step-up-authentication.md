@@ -238,10 +238,10 @@ than with a browser:
 - **Built-in flows are refused.** Declaring the alias `browser` fails the run:
 
   ```
-  {"time":"…","level":"ERROR","msg":"Provisioning failed","error":"provisioning realm \"stepup\": ensuring authentication flow \"browser\": authentication flow \"browser\" is a built-in Keycloak flow and will not be modified; declare a new alias with copyFrom: \"browser\" to customise it"}
+  {"time":"…","level":"ERROR","msg":"Provisioning failed","error":"provisioning realm \"stepup\": ensuring authentication flow \"browser\": authentication flow \"browser\" is a built-in Keycloak flow and will not be modified; declare your own flow under a new alias and bind it (copyFrom: \"browser\" gives an exact copy, but don't add REQUIRED or CONDITIONAL steps to a copy: Keycloak then skips its login steps)"}
   ```
 
-  The message suggests `copyFrom`, but for step-up build the flow from scratch as in step 2.
+  For step-up, build the flow from scratch as in step 2, as the message warns.
 - **A default ACR that is not in the map is rejected at load.** The check uses the `acrLoaMap`
   declared in the config: the client's own map when it has one, otherwise the realm's:
 

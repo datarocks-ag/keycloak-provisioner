@@ -690,11 +690,10 @@ and the provisioner never modifies those.
 
 ```json
 …
-{"level":"ERROR","msg":"Provisioning failed","error":"provisioning realm \"faq\": ensuring authentication flow \"browser\": authentication flow \"browser\" is a built-in Keycloak flow and will not be modified; declare a new alias with copyFrom: \"browser\" to customise it"}
+{"level":"ERROR","msg":"Provisioning failed","error":"provisioning realm \"faq\": ensuring authentication flow \"browser\": authentication flow \"browser\" is a built-in Keycloak flow and will not be modified; declare your own flow under a new alias and bind it (copyFrom: \"browser\" gives an exact copy, but don't add REQUIRED or CONDITIONAL steps to a copy: Keycloak then skips its login steps)"}
 ```
 
-Give your flow its own alias. `copyFrom: browser`, as the message suggests, gives you an exact
-copy:
+Give your flow its own alias. `copyFrom: browser` gives you an exact copy:
 
 ```yaml
 realms:
