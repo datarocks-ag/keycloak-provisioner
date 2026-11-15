@@ -48,6 +48,11 @@ func main() {
 	}
 	slog.Info("Configuration loaded", "realms", len(cfg.Realms))
 
+	for _, name := range cfg.UnresolvedEnvVars {
+		slog.Warn("Environment variable is not set; ${"+name+"} is kept as literal text",
+			"variable", name)
+	}
+
 	slog.Info("Connecting to Keycloak", "url", opts.KeycloakURL)
 	kc := client.New(opts.KeycloakURL, opts.Username, opts.Password)
 	if err := kc.Connect(ctx); err != nil {

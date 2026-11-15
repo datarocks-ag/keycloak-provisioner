@@ -302,8 +302,9 @@ Further reading: [Configuration reference](configuration.md),
 
 ### My `${VAR}` showed up literally as a password or secret. Why?
 
-Because a `${VAR}` whose environment variable isn't set is left in the config as written,
-without an error or a warning. That text then becomes the password or secret.
+Because a `${VAR}` whose environment variable isn't set is left in the config as written. The
+run doesn't fail; it logs a warning for each such variable (1.13.0 and earlier don't). That
+text then becomes the password or secret.
 
 Expansion happens when the config loads. `$${VAR}` is the escape for a literal `${VAR}`. In
 this test (on a test realm) `DAVE_PASSWORD` was not set, the run succeeded, and the literal
@@ -477,7 +478,9 @@ Further reading: [Allow a client to impersonate users](howto/allow-impersonation
 ### Why do I get "… is not in the acrLoaMap; the config declares …"?
 
 Because a client's `defaultAcrValues` names an authentication context class reference (ACR)
-value that neither the realm's nor the client's `acrLoaMap` in the config declares.
+value that the `acrLoaMap` in the config doesn't declare: the client's own map when it has one,
+otherwise the realm's. With a client map the message says `the client's acrLoaMap`, because
+Keycloak would refuse a value that only the realm's map has.
 
 Only the config counts: a map that exists on the server but isn't in the config isn't
 consulted. When the config declares no `acrLoaMap` at all, the check is skipped.
@@ -674,8 +677,9 @@ realms:
 {"level":"ERROR","msg":"Provisioning failed","error":"provisioning realm \"faq\": ensuring user \"bob\": user \"bob\" exists with id fa6f5e62-9998-4bec-9433-a6ff9fe95a0b but the config declares 3f2b8c1e-5d4a-4e6f-9a7b-1c2d3e4f5a6b; ids cannot be changed after creation"}
 ```
 
-Put the id from the message into the config, or remove `id` from the user. Keep ids unique
-and never reuse an id another user already has.
+Put the id from the message into the config, or remove `id` from the user. An id must also
+be unique on the whole server: the config is rejected when it declares one twice, and the run
+stops when Keycloak already has another user with it.
 
 Further reading: [Provision users with passwords, roles and groups](howto/provision-users.md)
 
@@ -686,11 +690,10 @@ and the provisioner never modifies those.
 
 ```json
 …
-{"level":"ERROR","msg":"Provisioning failed","error":"provisioning realm \"faq\": ensuring authentication flow \"browser\": authentication flow \"browser\" is a built-in Keycloak flow and will not be modified; declare a new alias with copyFrom: \"browser\" to customise it"}
+{"level":"ERROR","msg":"Provisioning failed","error":"provisioning realm \"faq\": ensuring authentication flow \"browser\": authentication flow \"browser\" is a built-in Keycloak flow and will not be modified; declare your own flow under a new alias and bind it (copyFrom: \"browser\" gives an exact copy, but don't add REQUIRED or CONDITIONAL steps to a copy: Keycloak then skips its login steps)"}
 ```
 
-Give your flow its own alias. `copyFrom: browser`, as the message suggests, gives you an exact
-copy:
+Give your flow its own alias. `copyFrom: browser` gives you an exact copy:
 
 ```yaml
 realms:

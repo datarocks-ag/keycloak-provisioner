@@ -57,8 +57,11 @@ func TestEnsureAuthenticationFlowRejectsBuiltIn(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error for a built-in flow")
 	}
-	if !strings.Contains(err.Error(), "copyFrom") {
-		t.Errorf("error should point at copyFrom, got: %v", err)
+	// copyFrom alone is not safe advice: steps added to a copy disable its
+	// login steps, so the message has to say so.
+	if !strings.Contains(err.Error(), "under a new alias") ||
+		!strings.Contains(err.Error(), "don't add REQUIRED or CONDITIONAL steps to a copy") {
+		t.Errorf("error should point at a new alias and warn about copies, got: %v", err)
 	}
 }
 

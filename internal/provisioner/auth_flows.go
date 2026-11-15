@@ -31,9 +31,13 @@ func (p *Provisioner) ensureAuthenticationFlow(ctx context.Context, realm string
 
 	if existing := findFlowByAlias(flows, f.Alias); existing != nil {
 		if builtIn, _ := existing["builtIn"].(bool); builtIn {
+			// Steps added to a copy land beside its ALTERNATIVE login steps,
+			// which Keycloak then ignores, so copyFrom alone is not the advice.
 			return fmt.Errorf(
 				"authentication flow %q is a built-in Keycloak flow and will not be modified; "+
-					"declare a new alias with copyFrom: %q to customise it", f.Alias, f.Alias)
+					"declare your own flow under a new alias and bind it (copyFrom: %q gives an exact copy, "+
+					"but don't add REQUIRED or CONDITIONAL steps to a copy: Keycloak then skips its login steps)",
+				f.Alias, f.Alias)
 		}
 
 		slog.Info("Skipping existing authentication flow", "realm", realm, "flow", f.Alias)

@@ -89,8 +89,9 @@ A few things to notice:
 
 - **Secrets aren't in the file.** `${SHOP_API_SECRET}` and `${ALICE_PASSWORD}` are read from
   the environment when the config is loaded. A file without secrets can be committed and
-  reviewed. If a variable is not set, the placeholder stays as literal text, with no
-  warning, so the client secret would become the string `${SHOP_API_SECRET}`. Always set
+  reviewed. If a variable is not set, the placeholder stays as literal text, so the
+  client secret would become the string `${SHOP_API_SECRET}`; the run logs a `WARN` line
+  naming the variable (1.13.0 and earlier don't). Always set
   the variables you reference. [Keep secrets out of the config file](howto/keep-secrets-out-of-the-config.md)
   covers this in depth.
 - **`publicClient: false` makes `shop-api` confidential**: it authenticates with its

@@ -21,9 +21,10 @@ Kubernetes Secret, your CI's secret variables or an `.env` file that never leave
   [How it works](../concepts.md).
 - **`$${VAR}` escape.** `$${VAR}` becomes the literal text `${VAR}`, for values where Keycloak
   itself expects that syntax.
-- **An unset variable is left as it is.** The provisioner neither fails nor warns: an unset
-  `${VAR}` stays the literal text `${VAR}`, and that text is what Keycloak stores, for example
-  as a client secret.
+- **An unset variable is left as it is.** The provisioner doesn't fail: an unset `${VAR}` stays
+  the literal text `${VAR}`, and that text is what Keycloak stores, for example as a client
+  secret. It logs a warning for each such variable when the config loads; 1.13.0 and earlier
+  stay silent.
 - **Environment only.** The provisioner reads secrets from environment variables only. There
   are no `_FILE` variants, and the image is built `FROM scratch` without a shell, so a Docker
   or Compose secret mounted as a file under `/run/secrets` can't be read; hand the value to
@@ -132,8 +133,13 @@ this against a development or staging server; on production, check the client's
 
 ## Pitfalls
 
-- **An unset variable becomes the value.** Captured with `BILLING_API_CLIENT_SECRET` unset:
-  the run succeeds with no warning, and the same query returns
+- **An unset variable becomes the value.** The run succeeds and logs only a warning:
+
+  ```json
+  {"time":"…","level":"WARN","msg":"Environment variable is not set; ${BILLING_API_CLIENT_SECRET} is kept as literal text","variable":"BILLING_API_CLIENT_SECRET"}
+  ```
+
+  Captured with `BILLING_API_CLIENT_SECRET` unset, the same query then returns
 
   ```json
   {
@@ -152,8 +158,10 @@ this against a development or staging server; on production, check the client's
   to an empty string, and an empty client `secret` is not sent at all: an existing client
   keeps the secret it has, and Keycloak generates one for a new client (Keycloak behaviour,
   not checked by the provisioner).
-- **Typos in the variable name** behave like an unset variable. Run the check above after the
-  first deployment to each environment.
+- **Typos in the variable name** behave like an unset variable. Search the log for
+  `Environment variable is not set`, and run the check above after the first deployment to
+  each environment. A value where Keycloak itself expects `${…}`, such as a message key in a
+  client `name`, warns too unless you write it as `$${…}`.
 - **Not every field is expanded.** A `${VAR}` in `strategy`, a client scope `type`, an
   `acrLoaMap` key, a management permission scope name or a protocol mapper config key stays
   literal text. See the

@@ -44,6 +44,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   port with bash. The admin is set with `KC_BOOTSTRAP_ADMIN_USERNAME` and
   `KC_BOOTSTRAP_ADMIN_PASSWORD`, replacing the deprecated `KEYCLOAK_ADMIN`
   variables.
+- Users created with a fixed `id`:
+  - They are now granted the realm's default role
+    (`default-roles-<realm>`). Partial import, which keeps the id, skips
+    it, so these users lacked `offline_access`, `uma_authorization` and the
+    `account` roles.
+  - An id declared twice, in any realm or the master realm, is rejected
+    when the config loads (`duplicate user id`). An id that already belongs
+    to another user in Keycloak fails with a message naming the cause,
+    instead of `409 Duplicate resource error`.
+  - A dry run of such a user in an existing realm no longer fails with
+    `404 User not found` while reading its role mappings.
+- An unset `${VAR}` is still kept as literal text, but now logs a warning
+  once per variable (`Environment variable is not set; ${VAR} is kept as
+  literal text`), so a secret or password that silently became `${VAR}`
+  shows up in the log. Escaped `$${VAR}` and comments don't warn.
+- `defaultAcrValues` on a client that declares its own `acrLoaMap` is
+  checked against that map alone, as Keycloak does. A value found only in
+  the realm's map used to pass validation and then fail the run part-way
+  with a 400 from Keycloak; it is now rejected when the config loads.
+- The error for a built-in authentication flow no longer recommends only
+  `copyFrom`. Steps added to a copied flow sit beside its `ALTERNATIVE`
+  login steps, which Keycloak then skips, so a client bound to such a flow
+  can't log in. The message now says so, and `config.example.yaml` shows a
+  step-up flow built from scratch. The step-up integration test now
+  checks that the bound client is offered a login form, not only the
+  flow's structure.
 
 ## [1.13.0] — 2026-09-12
 

@@ -52,6 +52,11 @@ type Config struct {
 	Strategy    string             `yaml:"strategy"`
 	MasterRealm *MasterRealmConfig `yaml:"masterRealm"`
 	Realms      []Realm            `yaml:"realms"`
+
+	// UnresolvedEnvVars names the variables referenced as ${NAME} in a value
+	// but not set in the environment, sorted. Such a reference is kept as
+	// literal text, so the caller should warn about it.
+	UnresolvedEnvVars []string `yaml:"-"`
 }
 
 // MasterRealmConfig allows limited configuration of the master realm.
@@ -575,6 +580,45 @@ func expandEnvVars(s string) string {
 	})
 }
 
+// unresolvedEnvVars returns, sorted and unique, the names of variables that
+// the file references as ${NAME} in a key or value but that are not set.
+// It walks the YAML nodes rather than the text so comments don't count.
+func unresolvedEnvVars(data []byte) ([]string, error) {
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return nil, err
+	}
+
+	names := make(map[string]bool)
+
+	var walk func(n *yaml.Node)
+	walk = func(n *yaml.Node) {
+		if n.Kind == yaml.ScalarNode {
+			for _, m := range envVarPattern.FindAllStringSubmatch(n.Value, -1) {
+				if m[2] == "" {
+					continue // $${NAME}, an escaped literal
+				}
+				if _, ok := os.LookupEnv(m[2]); !ok {
+					names[m[2]] = true
+				}
+			}
+		}
+
+		for _, child := range n.Content {
+			walk(child)
+		}
+	}
+	walk(&root)
+
+	result := make([]string, 0, len(names))
+	for name := range names {
+		result = append(result, name)
+	}
+	slices.Sort(result)
+
+	return result, nil
+}
+
 // expandUserRoles expands env vars in a UserRoles struct.
 func expandUserRoles(roles *UserRoles) {
 	if roles == nil {
@@ -915,7 +959,13 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parsing config YAML: %w", err)
 	}
 
+	unresolved, err := unresolvedEnvVars(data)
+	if err != nil {
+		return nil, fmt.Errorf("parsing config YAML: %w", err)
+	}
+
 	expandConfig(&cfg)
+	cfg.UnresolvedEnvVars = unresolved
 
 	if err := validate(&cfg); err != nil {
 		return nil, fmt.Errorf("validating config: %w", err)
@@ -1001,6 +1051,10 @@ func validate(cfg *Config) error {
 		if err := validateMasterRealm(cfg.MasterRealm); err != nil {
 			return err
 		}
+	}
+
+	if err := validateUniqueUserIDs(cfg); err != nil {
+		return err
 	}
 
 	realmNames := make(map[string]bool)
@@ -1603,6 +1657,46 @@ func validateMasterRealm(mr *MasterRealmConfig) error {
 	return nil
 }
 
+// validateUniqueUserIDs rejects a fixed user id declared twice. Keycloak keys
+// users by id across the whole server, not per realm, so the second import
+// would fail with a 409 part-way through the run.
+func validateUniqueUserIDs(cfg *Config) error {
+	seen := make(map[string]string)
+
+	check := func(prefix string, users []User) error {
+		for i, u := range users {
+			if u.ID == "" {
+				continue
+			}
+
+			path := fmt.Sprintf("%s.users[%d].id", prefix, i)
+			id := strings.ToLower(u.ID)
+
+			if first, ok := seen[id]; ok {
+				return fmt.Errorf("%s: duplicate user id %q, already declared at %s", path, u.ID, first)
+			}
+
+			seen[id] = path
+		}
+
+		return nil
+	}
+
+	if cfg.MasterRealm != nil {
+		if err := check("masterRealm", cfg.MasterRealm.Users); err != nil {
+			return err
+		}
+	}
+
+	for i, r := range cfg.Realms {
+		if err := check(fmt.Sprintf("realms[%d]", i), r.Users); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func validateUsers(prefix string, users []User) error {
 	names := make(map[string]bool)
 
@@ -2165,12 +2259,15 @@ func validateDefaultAcrValues(prefix string, c Client, realmAcrLoaMap map[string
 		seen[v] = true
 	}
 
-	known := make(map[string]bool, len(realmAcrLoaMap)+len(c.AcrLoaMap))
-	for name := range realmAcrLoaMap {
-		known[name] = true
+	// A client with its own map is checked against that map alone: Keycloak
+	// refuses a value that only the realm's map has, with a 400 mid-run.
+	declared, mapName := realmAcrLoaMap, "acrLoaMap"
+	if len(c.AcrLoaMap) > 0 {
+		declared, mapName = c.AcrLoaMap, "client's acrLoaMap"
 	}
 
-	for name := range c.AcrLoaMap {
+	known := make(map[string]bool, len(declared))
+	for name := range declared {
 		known[name] = true
 	}
 
@@ -2193,8 +2290,8 @@ func validateDefaultAcrValues(prefix string, c Client, realmAcrLoaMap map[string
 		sort.Strings(names)
 
 		return fmt.Errorf(
-			"%s.defaultAcrValues[%d]: %q is not in the acrLoaMap; the config declares %s",
-			prefix, i, v, strings.Join(names, ", "))
+			"%s.defaultAcrValues[%d]: %q is not in the %s; the config declares %s",
+			prefix, i, v, mapName, strings.Join(names, ", "))
 	}
 
 	return nil

@@ -698,8 +698,12 @@ Gives the user the same UUID in every environment.
 - Users are still matched by `username`. If the user exists under another id, the run fails:
   `user "alice" exists with id <server-id> but the config declares <config-id>; ids cannot be
   changed after creation`.
-- Keep ids unique and never reuse an id another user already has: the provisioner doesn't check
-  for that.
+- Unique across the whole config, master realm included, because Keycloak keys users by id
+  server-wide: `….id: duplicate user id "<id>", already declared at <path>`. An id that already
+  belongs to another user in Keycloak stops the run: `user "alice": id <id> already belongs to
+  another user in realm "shop"; ids must be unique`.
+- A user created with an `id` is granted the realm's default role (`default-roles-<realm>`), as
+  a user created without one is.
 
 ## Authentication flows
 
@@ -765,8 +769,10 @@ realms:
 - **Create-only, whatever the strategy.** A flow whose alias exists is skipped
   (`Skipping existing authentication flow`). To change one, delete it in Keycloak or use a new alias.
 - **Built-in flows** are refused during the run, not at load: `authentication flow "browser" is a
-  built-in Keycloak flow and will not be modified; declare a new alias with copyFrom: "browser" to
-  customise it`.
+  built-in Keycloak flow and will not be modified; declare your own flow under a new alias and bind
+  it (copyFrom: "browser" gives an exact copy, but don't add REQUIRED or CONDITIONAL steps to a
+  copy: Keycloak then skips its login steps)`. In 1.13.0 and earlier the message recommended `copyFrom`
+  without the warning.
 
 Walk-through: [Add step-up authentication to a client](howto/add-step-up-authentication.md).
 
@@ -830,14 +836,16 @@ realms:
 | `acrLoaMap` | realm, client | map of int | ACR value → Level of Authentication. Written as JSON to the `acr.loa.map` attribute (keys sorted) and wins over that key under `attributes`. Levels ≥ 0; empty ACR name rejected; an empty map leaves the attribute unmanaged. Keys are not expanded. Needs the `STEP_UP_AUTHENTICATION` feature. |
 | `defaultAcrValues` | client | list | ACR values applied when a request asks for none. Written to `default.acr.values` as one `##`-separated string. No empty values, no `##`, no duplicates. |
 
-Every `defaultAcrValues` entry must be a key of the realm's or the client's `acrLoaMap` **in the
-config**; when neither declares one, the check is skipped (the map may be on the server):
+Every `defaultAcrValues` entry must be a key of an `acrLoaMap` **in the config**: the client's
+own map when it declares one, otherwise the realm's. When neither declares one, the check is
+skipped (the map may be on the server):
 `realms[0].clients[0].defaultAcrValues[0]: "platinum" is not in the acrLoaMap; the config declares gold, silver`.
 
-When the client has its own `acrLoaMap`, list the default values in it too: on Keycloak 26.6.4 a
-value found only in the realm's map passed validation and was then refused with `Default ACR values
-need to contain values specified in the ACR-To-Loa mapping or number levels from set realm browser
-flow`, failing the run at that client.
+A client with its own map is checked against that map alone, because Keycloak does the same:
+on 26.6.4 a value found only in the realm's map was refused with `Default ACR values need to
+contain values specified in the ACR-To-Loa mapping or number levels from set realm browser flow`.
+The load-time error then reads `… is not in the client's acrLoaMap; …`. Version 1.13.0 accepted
+such a value and failed part-way through the run.
 
 The map only names levels. A flow with a `CONDITIONAL` subflow containing the
 `conditional-level-of-authentication` authenticator enforces them, see
@@ -1023,7 +1031,7 @@ validation:
 | Syntax | Result |
 |---|---|
 | `${VAR}` | Value of `VAR`, also when it is set to an empty string. |
-| `${VAR}` with `VAR` unset | **Left as the literal text `${VAR}`, without a warning.** |
+| `${VAR}` with `VAR` unset | **Left as the literal text `${VAR}`.** The run continues and logs `Environment variable is not set; ${VAR} is kept as literal text` as a warning, once per variable (1.13.0 and earlier don't warn). |
 | `$${VAR}` | The literal text `${VAR}`. |
 
 ```yaml
@@ -1062,7 +1070,7 @@ The checks:
   `alias` and `providerId`; mapper `protocol`, `protocolMapper` and `identityProviderMapper`;
   credential `type` and `secret`.
 - **Uniqueness:** realm names; `clientId` per realm; realm roles; client roles per client;
-  client scopes; usernames; group and organization group names among siblings; flow and subflow
+  client scopes; usernames; user `id`s across the whole config; group and organization group names among siblings; flow and subflow
   aliases per realm; identity provider aliases; mapper names per owner; organization names;
   domains per organization; credential `type`+`label` per user; required actions per user;
   `defaultAcrValues` per client; grantee clients per management permission scope.

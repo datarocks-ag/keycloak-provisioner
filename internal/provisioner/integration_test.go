@@ -10,6 +10,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -2082,25 +2083,42 @@ realms:
       silver: 1
       gold: 2
     authenticationFlows:
+      # Built from scratch: steps added to a copyFrom flow land beside its
+      # ALTERNATIVE steps, and Keycloak then ignores those, login form included.
       - alias: "browser-step-up"
         description: "Browser flow with LoA step-up"
-        copyFrom: "browser"
         executions:
-          - subflow: "loa-gold"
-            requirement: "CONDITIONAL"
+          - provider: "auth-cookie"
+            requirement: "ALTERNATIVE"
+          - subflow: "stepup-levels"
+            requirement: "ALTERNATIVE"
             executions:
-              - provider: "conditional-level-of-authentication"
-                requirement: "REQUIRED"
-                config:
-                  alias: "gold-condition"
-                  loa-condition-level: "2"
-              - provider: "auth-otp-form"
-                requirement: "REQUIRED"
+              - subflow: "stepup-silver"
+                requirement: "CONDITIONAL"
+                executions:
+                  - provider: "conditional-level-of-authentication"
+                    requirement: "REQUIRED"
+                    config:
+                      alias: "silver-condition"
+                      loa-condition-level: "1"
+                  - provider: "auth-username-password-form"
+                    requirement: "REQUIRED"
+              - subflow: "stepup-gold"
+                requirement: "CONDITIONAL"
+                executions:
+                  - provider: "conditional-level-of-authentication"
+                    requirement: "REQUIRED"
+                    config:
+                      alias: "gold-condition"
+                      loa-condition-level: "2"
+                  - provider: "auth-otp-form"
+                    requirement: "REQUIRED"
     authenticationBindings:
       browserFlow: "browser-step-up"
     clients:
       - clientId: "stepup-app"
         enabled: true
+        redirectUris: ["http://localhost/*"]
         acrLoaMap:
           gold: 2
         authenticationFlowBindingOverrides:
@@ -2136,22 +2154,23 @@ realms:
 		t.Fatalf("getting flow executions: %v", err)
 	}
 
-	// The copied browser flow keeps its own executions; ours are appended after
-	// them, in the order declared.
+	// Executions are listed depth-first in the order declared; the gold
+	// subflow's condition and OTP form follow it.
 	subflowIdx, conditionIdx, otpIdx := -1, -1, -1
 	for i, e := range executions {
-		switch e["displayName"] {
-		case "loa-gold":
+		if e["displayName"] == "stepup-gold" {
 			subflowIdx = i
 		}
 		switch e["providerId"] {
 		case "conditional-level-of-authentication":
-			conditionIdx = i
 			if e["requirement"] != "REQUIRED" {
 				t.Errorf("condition requirement: expected REQUIRED, got %v", e["requirement"])
 			}
 			if e["authenticationConfig"] == nil {
 				t.Error("conditional-level-of-authentication has no config attached")
+			}
+			if subflowIdx >= 0 && conditionIdx < 0 {
+				conditionIdx = i
 			}
 		case "auth-otp-form":
 			otpIdx = i
@@ -2159,7 +2178,7 @@ realms:
 	}
 
 	if subflowIdx < 0 {
-		t.Fatalf("subflow loa-gold not found: %v", executions)
+		t.Fatalf("subflow stepup-gold not found: %v", executions)
 	}
 	if conditionIdx < 0 || otpIdx < 0 {
 		t.Fatalf("nested executions not found: %v", executions)
@@ -2195,6 +2214,39 @@ realms:
 	if overrides["browser"] != flowID {
 		t.Errorf("expected browser override to be flow id %q, got %v", flowID, overrides["browser"])
 	}
+
+	// A flow can have the right structure and still lock everyone out, so the
+	// bound client must actually offer a username and password form.
+	page := loginPage(t, sharedBaseURL, "stepup-realm", "stepup-app", "http://localhost/cb")
+	if !strings.Contains(page, `id="kc-form-login"`) || strings.Contains(page, "Invalid username or password") {
+		t.Errorf("the step-up flow does not offer a login form")
+	}
+}
+
+// loginPage fetches the first page of a browser login for a client, as a
+// browser following the authorization endpoint would see it.
+func loginPage(t *testing.T, baseURL, realm, clientID, redirectURI string) string {
+	t.Helper()
+
+	q := url.Values{
+		"client_id":     {clientID},
+		"response_type": {"code"},
+		"scope":         {"openid"},
+		"redirect_uri":  {redirectURI},
+	}
+
+	resp, err := http.Get(baseURL + "/realms/" + realm + "/protocol/openid-connect/auth?" + q.Encode())
+	if err != nil {
+		t.Fatalf("requesting the login page: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading the login page: %v", err)
+	}
+
+	return string(body)
 }
 
 // TestIntegrationAuthenticationFlowNotReconciled pins the create-only contract:
@@ -2276,8 +2328,11 @@ realms:
 	if err == nil {
 		t.Fatal("expected provisioning to fail for a built-in flow")
 	}
-	if !strings.Contains(err.Error(), "copyFrom") {
-		t.Errorf("error should point at copyFrom, got: %v", err)
+	// copyFrom alone is not safe advice: steps added to a copy disable its
+	// login steps, so the message has to say so.
+	if !strings.Contains(err.Error(), "under a new alias") ||
+		!strings.Contains(err.Error(), "don't add REQUIRED or CONDITIONAL steps to a copy") {
+		t.Errorf("error should point at a new alias and warn about copies, got: %v", err)
 	}
 }
 
@@ -2540,6 +2595,148 @@ realms:
 	}
 	if users[0]["id"] != wantID {
 		t.Errorf("id changed on re-run: %v", users[0]["id"])
+	}
+}
+
+// TestIntegrationPredictableUserIDGetsDefaultRoles: a user created through
+// partial import must end up like one created through the users endpoint,
+// which grants the realm's default role.
+func TestIntegrationPredictableUserIDGetsDefaultRoles(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	const wantID = "21111111-2222-3333-4444-555555555555"
+
+	configYAML := `
+realms:
+  - realm: "uid-default-roles"
+    enabled: true
+    users:
+      - username: "alice"
+        id: "` + wantID + `"
+        enabled: true
+`
+	cfg, err := config.Load(writeTestConfig(t, configYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	roles, err := kc.GetRealmRoleMappings(ctx, "uid-default-roles", client.RoleSubjectUsers, wantID)
+	if err != nil {
+		t.Fatalf("getting role mappings: %v", err)
+	}
+	if !containsRoleNamed(roles, "default-roles-uid-default-roles") {
+		t.Errorf("default role not granted to a user created with a fixed id: %v", roles)
+	}
+}
+
+// TestIntegrationPredictableUserIDHeldByAnotherUserFails: when the configured
+// id already belongs to a different user, the import creates nothing, and the
+// run must stop rather than apply alice's password and roles to that user.
+func TestIntegrationPredictableUserIDHeldByAnotherUserFails(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	const sharedID = "31111111-2222-3333-4444-555555555555"
+
+	first := `
+realms:
+  - realm: "uid-collision"
+    enabled: true
+    roles:
+      - name: "app-admin"
+    users:
+      - username: "bob"
+        id: "` + sharedID + `"
+        enabled: true
+`
+	cfg, err := config.Load(writeTestConfig(t, first))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+
+	second := `
+realms:
+  - realm: "uid-collision"
+    enabled: true
+    roles:
+      - name: "app-admin"
+    users:
+      - username: "alice"
+        id: "` + sharedID + `"
+        enabled: true
+        roles:
+          realm:
+            - "app-admin"
+`
+	cfg, err = config.Load(writeTestConfig(t, second))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = provisioner.New(kc, cfg).Run(ctx)
+	if err == nil || !strings.Contains(err.Error(), "already belongs to") {
+		t.Fatalf("expected the run to fail because the id belongs to bob, got %v", err)
+	}
+
+	roles, err := kc.GetRealmRoleMappings(ctx, "uid-collision", client.RoleSubjectUsers, sharedID)
+	if err != nil {
+		t.Fatalf("getting bob's role mappings: %v", err)
+	}
+	if containsRoleNamed(roles, "app-admin") {
+		t.Errorf("alice's role was granted to bob: %v", roles)
+	}
+}
+
+// TestIntegrationDryRunPredictableUserIDInExistingRealm: in an existing realm,
+// a dry run of a new user with a fixed id must not query the server about a
+// user that the run never created.
+func TestIntegrationDryRunPredictableUserIDInExistingRealm(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	base := `
+realms:
+  - realm: "uid-dryrun"
+    enabled: true
+    roles:
+      - name: "app-admin"
+`
+	cfg, err := config.Load(writeTestConfig(t, base))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("creating the realm: %v", err)
+	}
+
+	withUser := base + `    users:
+      - username: "alice"
+        id: "41111111-2222-3333-4444-555555555555"
+        enabled: true
+        roles:
+          realm:
+            - "app-admin"
+`
+	cfg, err = config.Load(writeTestConfig(t, withUser))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := provisioner.New(provisioner.NewDryRunAdapter(kc), cfg).Run(ctx); err != nil {
+		t.Fatalf("dry-run: %v", err)
 	}
 }
 

@@ -78,7 +78,6 @@ because Keycloak's default user profile requires them before a user can complete
         lastName: "Example"
         roles:
           realm:
-            - "default-roles-users"   # see Pitfalls: a fixed id skips the default roles
             - "shop-user"
           clients:
             shop-web:                    # the clientId, not the client's internal UUID
@@ -211,12 +210,12 @@ the client, which you would not normally enable for a browser application.
 
 ## Pitfalls
 
-- **A user with a fixed `id` does not get the realm's default roles.** The provisioner creates
-  such a user through Keycloak's partial import, which keeps the id. On Keycloak 26.6.4, a user
-  created that way had no `default-roles-<realm>` mapping, while a user created without an `id`
-  had it (Keycloak behaviour, observed on 26.6.4). Without it the user lacks `offline_access`,
-  `uma_authorization` and the `account` client roles. List `default-roles-<realm>` under
-  `roles.realm`, as `alice` does above.
+- **With 1.13.0 and earlier, a user with a fixed `id` misses the realm's default roles.** The
+  provisioner creates such a user through Keycloak's partial import, which keeps the id but,
+  unlike the users endpoint, grants no `default-roles-<realm>` (Keycloak behaviour, observed on
+  26.6.4). Later versions grant it after the import. On 1.13.0, list `default-roles-<realm>`
+  under `roles.realm` yourself; otherwise the user lacks `offline_access`, `uma_authorization`
+  and the `account` client roles.
 - **`Account is not fully set up` on login.** Either the user still has a required action, as
   `bob` does, or the user has no `firstName` or `lastName`. A user declared without them was
   created fine but could not sign in on Keycloak 26.6.4 (Keycloak behaviour, observed on 26.6.4).
@@ -232,8 +231,11 @@ the client, which you would not normally enable for a browser application.
   the run fails:
   `user "alice" exists with id 6f1c2a7e-0b5d-4c1e-9a3f-2d8e4b7c9a10 but the config declares 00000000-0000-4000-8000-000000000001; ids cannot be changed after creation`.
   To give an existing user a fixed id, delete the user in Keycloak and run again.
-- **Keep ids unique and never reuse an id another user has.** The provisioner checks that an
-  `id` is a UUID but not that it is unique, neither within the config nor in the realm.
+- **An `id` must be unique on the whole server, not only in the realm.** The config is checked
+  when it loads: `realms[0].users[1].id: duplicate user id "<id>", already declared at
+  realms[0].users[0].id`. An id that already belongs to another user in Keycloak stops the run
+  when the user is created: `user "alice": id <id> already belongs to another user in realm
+  "users"; ids must be unique`.
 - **Removing a role or a group from the config changes nothing in Keycloak.** Roles and
   memberships are only ever added. Remove them in the admin console or through the admin API.
 - **`initialPassword` does nothing for an existing user.** It is set only by the run that
