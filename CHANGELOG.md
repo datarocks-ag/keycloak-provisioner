@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   transitive dependencies; no API changes.
 - Bumped the `golangci-lint` tool dependency from 2.11.4 to 2.15.0; 2.11.4
   (staticcheck 0.7.0) panics analysing the Go 1.27 standard library.
+- Bumped `github.com/stillya/testcontainers-keycloak` from 0.3.8 to 0.3.9 and
+  refreshed indirect Go dependencies (moby, compress, `golang.org/x/*`); no
+  API changes.
 
 ## [1.13.0] — 2026-09-12
 
