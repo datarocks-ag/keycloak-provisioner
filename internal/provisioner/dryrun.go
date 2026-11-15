@@ -43,6 +43,7 @@ func NewDryRunAdapter(inner KeycloakAPI) KeycloakAPI {
 		createdScopes:      make(map[clientScopeKey]string),
 		createdFlows:       make(map[flowKey]string),
 		createdUsers:       make(map[userKey]string),
+		importedUserIDs:    make(map[string]bool),
 		createdOrgMembers:  make(map[orgMemberKey]bool),
 		createdIdPs:        make(map[idpKey]map[string]any),
 		createdPolicies:    make(map[policyKey]map[string]any),
@@ -77,6 +78,7 @@ type dryRunAPI struct {
 	createdScopes      map[clientScopeKey]string    // -> synthetic client scope id
 	createdFlows       map[flowKey]string           // -> synthetic authentication flow id
 	createdUsers       map[userKey]string           // -> synthetic user id
+	importedUserIDs    map[string]bool              // fixed ids of users that would be imported
 	createdOrgMembers  map[orgMemberKey]bool        // organization memberships added this run
 	createdIdPs        map[idpKey]map[string]any    // -> the representation that would have been created
 	createdPolicies    map[policyKey]map[string]any // management permission policies created this run
@@ -94,6 +96,21 @@ func (d *dryRunAPI) newID(kind string) string {
 
 func isSyntheticID(s string) bool {
 	return strings.HasPrefix(s, dryRunIDPrefix)
+}
+
+// userIsPlanned reports whether a user id belongs to a user this run would
+// create. Such a user is not on the server, so asking about it would 404. A
+// user imported with a fixed id keeps that id, so it is not synthetic and has
+// to be remembered separately.
+func (d *dryRunAPI) userIsPlanned(userID string) bool {
+	if isSyntheticID(userID) {
+		return true
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	return d.importedUserIDs[userID]
 }
 
 // Realms.
@@ -318,6 +335,7 @@ func (d *dryRunAPI) PartialImportUsers(_ context.Context, realm string, users []
 		if username != "" && id != "" {
 			d.mu.Lock()
 			d.createdUsers[userKey{realm, username}] = id
+			d.importedUserIDs[id] = true
 			d.mu.Unlock()
 		}
 	}
@@ -371,7 +389,7 @@ func (d *dryRunAPI) ResetUserPassword(_ context.Context, realm, userID string, _
 // are no credentials to compare against, so every configured one is reported
 // as a create.
 func (d *dryRunAPI) GetUserCredentials(ctx context.Context, realm, userID string) ([]map[string]any, error) {
-	if isSyntheticID(userID) || d.realmIsSynthetic(realm) {
+	if d.userIsPlanned(userID) || d.realmIsSynthetic(realm) {
 		return nil, nil
 	}
 	return d.inner.GetUserCredentials(ctx, realm, userID)
@@ -408,7 +426,7 @@ func (d *dryRunAPI) AddClientScopeMappings(_ context.Context, realm, owner, owne
 }
 
 func (d *dryRunAPI) GetUserGroups(ctx context.Context, realm, userID string) ([]map[string]any, error) {
-	if isSyntheticID(userID) || d.realmIsSynthetic(realm) {
+	if d.userIsPlanned(userID) || d.realmIsSynthetic(realm) {
 		return nil, nil
 	}
 	return d.inner.GetUserGroups(ctx, realm, userID)
@@ -422,7 +440,7 @@ func (d *dryRunAPI) AddUserToGroup(_ context.Context, realm, userID, groupID str
 // Role mappings.
 
 func (d *dryRunAPI) GetRealmRoleMappings(ctx context.Context, realm, subject, subjectID string) ([]map[string]any, error) {
-	if d.realmIsSynthetic(realm) || isSyntheticID(subjectID) {
+	if d.realmIsSynthetic(realm) || d.userIsPlanned(subjectID) {
 		return nil, nil
 	}
 
@@ -437,7 +455,7 @@ func (d *dryRunAPI) AddRealmRoleMappings(_ context.Context, realm, subject, subj
 }
 
 func (d *dryRunAPI) GetClientRoleMappings(ctx context.Context, realm, subject, subjectID, clientUUID string) ([]map[string]any, error) {
-	if d.realmIsSynthetic(realm) || isSyntheticID(subjectID) || isSyntheticID(clientUUID) {
+	if d.realmIsSynthetic(realm) || d.userIsPlanned(subjectID) || isSyntheticID(clientUUID) {
 		return nil, nil
 	}
 

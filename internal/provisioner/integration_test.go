@@ -2543,6 +2543,148 @@ realms:
 	}
 }
 
+// TestIntegrationPredictableUserIDGetsDefaultRoles: a user created through
+// partial import must end up like one created through the users endpoint,
+// which grants the realm's default role.
+func TestIntegrationPredictableUserIDGetsDefaultRoles(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	const wantID = "21111111-2222-3333-4444-555555555555"
+
+	configYAML := `
+realms:
+  - realm: "uid-default-roles"
+    enabled: true
+    users:
+      - username: "alice"
+        id: "` + wantID + `"
+        enabled: true
+`
+	cfg, err := config.Load(writeTestConfig(t, configYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	roles, err := kc.GetRealmRoleMappings(ctx, "uid-default-roles", client.RoleSubjectUsers, wantID)
+	if err != nil {
+		t.Fatalf("getting role mappings: %v", err)
+	}
+	if !containsRoleNamed(roles, "default-roles-uid-default-roles") {
+		t.Errorf("default role not granted to a user created with a fixed id: %v", roles)
+	}
+}
+
+// TestIntegrationPredictableUserIDHeldByAnotherUserFails: when the configured
+// id already belongs to a different user, the import creates nothing, and the
+// run must stop rather than apply alice's password and roles to that user.
+func TestIntegrationPredictableUserIDHeldByAnotherUserFails(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	const sharedID = "31111111-2222-3333-4444-555555555555"
+
+	first := `
+realms:
+  - realm: "uid-collision"
+    enabled: true
+    roles:
+      - name: "app-admin"
+    users:
+      - username: "bob"
+        id: "` + sharedID + `"
+        enabled: true
+`
+	cfg, err := config.Load(writeTestConfig(t, first))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+
+	second := `
+realms:
+  - realm: "uid-collision"
+    enabled: true
+    roles:
+      - name: "app-admin"
+    users:
+      - username: "alice"
+        id: "` + sharedID + `"
+        enabled: true
+        roles:
+          realm:
+            - "app-admin"
+`
+	cfg, err = config.Load(writeTestConfig(t, second))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = provisioner.New(kc, cfg).Run(ctx)
+	if err == nil || !strings.Contains(err.Error(), "already belongs to") {
+		t.Fatalf("expected the run to fail because the id belongs to bob, got %v", err)
+	}
+
+	roles, err := kc.GetRealmRoleMappings(ctx, "uid-collision", client.RoleSubjectUsers, sharedID)
+	if err != nil {
+		t.Fatalf("getting bob's role mappings: %v", err)
+	}
+	if containsRoleNamed(roles, "app-admin") {
+		t.Errorf("alice's role was granted to bob: %v", roles)
+	}
+}
+
+// TestIntegrationDryRunPredictableUserIDInExistingRealm: in an existing realm,
+// a dry run of a new user with a fixed id must not query the server about a
+// user that the run never created.
+func TestIntegrationDryRunPredictableUserIDInExistingRealm(t *testing.T) {
+	kc, cleanup := setupKeycloak(t)
+	defer cleanup()
+
+	base := `
+realms:
+  - realm: "uid-dryrun"
+    enabled: true
+    roles:
+      - name: "app-admin"
+`
+	cfg, err := config.Load(writeTestConfig(t, base))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if err := provisioner.New(kc, cfg).Run(ctx); err != nil {
+		t.Fatalf("creating the realm: %v", err)
+	}
+
+	withUser := base + `    users:
+      - username: "alice"
+        id: "41111111-2222-3333-4444-555555555555"
+        enabled: true
+        roles:
+          realm:
+            - "app-admin"
+`
+	cfg, err = config.Load(writeTestConfig(t, withUser))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := provisioner.New(provisioner.NewDryRunAdapter(kc), cfg).Run(ctx); err != nil {
+		t.Fatalf("dry-run: %v", err)
+	}
+}
+
 func containsRoleNamed(roles []map[string]any, name string) bool {
 	for _, r := range roles {
 		if r["name"] == name {

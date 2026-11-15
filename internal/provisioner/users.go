@@ -3,8 +3,10 @@ package provisioner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 
 	"keycloak-provisioner/internal/config"
 )
@@ -212,10 +214,42 @@ func (p *Provisioner) createUser(ctx context.Context, realm string, user config.
 	imported["id"] = user.ID
 
 	if err := p.client.PartialImportUsers(ctx, realm, []map[string]any{imported}); err != nil {
+		// Keycloak answers 409 when the id is taken: the username lookup above
+		// found no user of this name, so the id belongs to someone else.
+		var status interface{ StatusCode() int }
+		if errors.As(err, &status) && status.StatusCode() == http.StatusConflict {
+			return "", fmt.Errorf(
+				"user %q: id %s already belongs to another user in realm %q; ids must be unique",
+				user.Username, user.ID, realm)
+		}
+
 		return "", fmt.Errorf("importing user %q with id %s: %w", user.Username, user.ID, err)
 	}
 
+	if err := p.grantDefaultRole(ctx, realm, user); err != nil {
+		return "", err
+	}
+
 	return user.ID, nil
+}
+
+// grantDefaultRole gives an imported user the realm's default role. The users
+// endpoint grants it on create; partial import does not, so without this a
+// user with a fixed id would lack offline_access, uma_authorization and the
+// account roles every other user has.
+func (p *Provisioner) grantDefaultRole(ctx context.Context, realm string, user config.User) error {
+	rep, err := p.client.GetRealm(ctx, realm)
+	if err != nil {
+		return fmt.Errorf("reading realm %q for its default role: %w", realm, err)
+	}
+
+	defaultRole, _ := rep["defaultRole"].(map[string]any)
+	name, _ := defaultRole["name"].(string)
+	if name == "" {
+		return nil
+	}
+
+	return p.ensureRealmRoleMappings(ctx, realm, userRoleSubject(user.ID, user.Username), []string{name})
 }
 
 // ensureUserGroups adds the user to any configured group they are not yet a

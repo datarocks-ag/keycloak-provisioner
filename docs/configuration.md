@@ -698,8 +698,12 @@ Gives the user the same UUID in every environment.
 - Users are still matched by `username`. If the user exists under another id, the run fails:
   `user "alice" exists with id <server-id> but the config declares <config-id>; ids cannot be
   changed after creation`.
-- Keep ids unique and never reuse an id another user already has: the provisioner doesn't check
-  for that.
+- Unique across the whole config, master realm included, because Keycloak keys users by id
+  server-wide: `….id: duplicate user id "<id>", already declared at <path>`. An id that already
+  belongs to another user in Keycloak stops the run: `user "alice": id <id> already belongs to
+  another user in realm "shop"; ids must be unique`.
+- A user created with an `id` is granted the realm's default role (`default-roles-<realm>`), as
+  a user created without one is.
 
 ## Authentication flows
 
@@ -1062,7 +1066,7 @@ The checks:
   `alias` and `providerId`; mapper `protocol`, `protocolMapper` and `identityProviderMapper`;
   credential `type` and `secret`.
 - **Uniqueness:** realm names; `clientId` per realm; realm roles; client roles per client;
-  client scopes; usernames; group and organization group names among siblings; flow and subflow
+  client scopes; usernames; user `id`s across the whole config; group and organization group names among siblings; flow and subflow
   aliases per realm; identity provider aliases; mapper names per owner; organization names;
   domains per organization; credential `type`+`label` per user; required actions per user;
   `defaultAcrValues` per client; grantee clients per management permission scope.

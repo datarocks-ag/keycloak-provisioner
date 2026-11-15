@@ -708,6 +708,41 @@ realms:
 	}
 }
 
+func TestValidationDuplicateUserIDInRealm(t *testing.T) {
+	yaml := `
+realms:
+  - realm: "test"
+    users:
+      - username: "alice"
+        id: "11111111-2222-3333-4444-555555555555"
+      - username: "bob"
+        id: "11111111-2222-3333-4444-555555555555"
+`
+	_, err := Load(writeTempConfig(t, yaml))
+	if err == nil || !strings.Contains(err.Error(), "duplicate user id") {
+		t.Fatalf("expected a duplicate user id error, got %v", err)
+	}
+}
+
+// User ids are unique across the whole server, not per realm.
+func TestValidationDuplicateUserIDAcrossRealms(t *testing.T) {
+	yaml := `
+masterRealm:
+  users:
+    - username: "ops"
+      id: "11111111-2222-3333-4444-555555555555"
+realms:
+  - realm: "test"
+    users:
+      - username: "alice"
+        id: "11111111-2222-3333-4444-555555555555"
+`
+	_, err := Load(writeTempConfig(t, yaml))
+	if err == nil || !strings.Contains(err.Error(), "duplicate user id") {
+		t.Fatalf("expected a duplicate user id error, got %v", err)
+	}
+}
+
 func TestValidationNullByteInUsername(t *testing.T) {
 	yaml := "realms:\n  - realm: \"test\"\n    users:\n      - username: \"user\\x00evil\"\n"
 	path := writeTempConfig(t, yaml)

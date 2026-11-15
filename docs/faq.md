@@ -674,8 +674,9 @@ realms:
 {"level":"ERROR","msg":"Provisioning failed","error":"provisioning realm \"faq\": ensuring user \"bob\": user \"bob\" exists with id fa6f5e62-9998-4bec-9433-a6ff9fe95a0b but the config declares 3f2b8c1e-5d4a-4e6f-9a7b-1c2d3e4f5a6b; ids cannot be changed after creation"}
 ```
 
-Put the id from the message into the config, or remove `id` from the user. Keep ids unique
-and never reuse an id another user already has.
+Put the id from the message into the config, or remove `id` from the user. An id must also
+be unique on the whole server: the config is rejected when it declares one twice, and the run
+stops when Keycloak already has another user with it.
 
 Further reading: [Provision users with passwords, roles and groups](howto/provision-users.md)
 

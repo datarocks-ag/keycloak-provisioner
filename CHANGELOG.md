@@ -44,6 +44,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   port with bash. The admin is set with `KC_BOOTSTRAP_ADMIN_USERNAME` and
   `KC_BOOTSTRAP_ADMIN_PASSWORD`, replacing the deprecated `KEYCLOAK_ADMIN`
   variables.
+- Users created with a fixed `id`:
+  - They are now granted the realm's default role
+    (`default-roles-<realm>`). Partial import, which keeps the id, skips
+    it, so these users lacked `offline_access`, `uma_authorization` and the
+    `account` roles.
+  - An id declared twice, in any realm or the master realm, is rejected
+    when the config loads (`duplicate user id`). An id that already belongs
+    to another user in Keycloak fails with a message naming the cause,
+    instead of `409 Duplicate resource error`.
+  - A dry run of such a user in an existing realm no longer fails with
+    `404 User not found` while reading its role mappings.
 
 ## [1.13.0] — 2026-09-12
 

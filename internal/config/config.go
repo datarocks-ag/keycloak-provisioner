@@ -1003,6 +1003,10 @@ func validate(cfg *Config) error {
 		}
 	}
 
+	if err := validateUniqueUserIDs(cfg); err != nil {
+		return err
+	}
+
 	realmNames := make(map[string]bool)
 
 	for i, r := range cfg.Realms {
@@ -1600,6 +1604,46 @@ func validateMasterRealm(mr *MasterRealmConfig) error {
 	if err := validateUsers("masterRealm", mr.Users); err != nil {
 		return err
 	}
+	return nil
+}
+
+// validateUniqueUserIDs rejects a fixed user id declared twice. Keycloak keys
+// users by id across the whole server, not per realm, so the second import
+// would fail with a 409 part-way through the run.
+func validateUniqueUserIDs(cfg *Config) error {
+	seen := make(map[string]string)
+
+	check := func(prefix string, users []User) error {
+		for i, u := range users {
+			if u.ID == "" {
+				continue
+			}
+
+			path := fmt.Sprintf("%s.users[%d].id", prefix, i)
+			id := strings.ToLower(u.ID)
+
+			if first, ok := seen[id]; ok {
+				return fmt.Errorf("%s: duplicate user id %q, already declared at %s", path, u.ID, first)
+			}
+
+			seen[id] = path
+		}
+
+		return nil
+	}
+
+	if cfg.MasterRealm != nil {
+		if err := check("masterRealm", cfg.MasterRealm.Users); err != nil {
+			return err
+		}
+	}
+
+	for i, r := range cfg.Realms {
+		if err := check(fmt.Sprintf("realms[%d]", i), r.Users); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
