@@ -82,7 +82,7 @@ the unset-variable trap before the provisioner runs:
 
 ```yaml
   keycloak-provisioner:
-    image: ghcr.io/datarocks-ag/keycloak-provisioner:1.13
+    image: ghcr.io/datarocks-ag/keycloak-provisioner:1.14
     environment:
       KEYCLOAK_URL: http://keycloak:8080
       KEYCLOAK_USER: ${KEYCLOAK_USER:?set KEYCLOAK_USER}

@@ -70,7 +70,7 @@ services:
       retries: 20
 
   keycloak-provisioner:
-    image: ghcr.io/datarocks-ag/keycloak-provisioner:1.13
+    image: ghcr.io/datarocks-ag/keycloak-provisioner:1.14
     depends_on:
       keycloak: { condition: service_healthy }
     environment:
@@ -123,7 +123,7 @@ spec:
     spec:
       initContainers:
         - name: keycloak-provisioner
-          image: ghcr.io/datarocks-ag/keycloak-provisioner:1.13
+          image: ghcr.io/datarocks-ag/keycloak-provisioner:1.14
           env:
             - { name: KEYCLOAK_URL, value: "https://keycloak.example.com" }
             - name: KEYCLOAK_USER

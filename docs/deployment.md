@@ -11,13 +11,13 @@ Images are published to `ghcr.io/datarocks-ag/keycloak-provisioner` for `linux/a
 
 | Tag | Points to | Use it for |
 |---|---|---|
-| `1.13.0` | exactly that release | production: reproducible |
-| `1.13` | latest patch release of 1.13 | production: picks up fixes |
+| `1.14.0` | exactly that release | production: reproducible |
+| `1.14` | latest patch release of 1.14 | production: picks up fixes |
 | `latest` | latest release | trying things out |
 | `develop` | the `develop` branch | testing unreleased changes |
 | `sha-<commit>` | a single commit (short hash) | debugging |
 
-Release tags (`v1.13.0` in Git) produce the version tags and `latest`; every push to
+Release tags (`v1.14.0` in Git) produce the version tags and `latest`; every push to
 `develop` produces `develop` and a `sha-<commit>` tag (`.github/workflows/release.yaml`).
 The documentation on the `develop` branch may describe features that aren't released yet;
 the [changelog](../CHANGELOG.md) lists them under *Unreleased*.
@@ -29,12 +29,12 @@ into, so a container can't run wrapper scripts. Its working directory is `/`, so
 config path `./config.yaml` resolves to `/config.yaml`.
 
 `--version` prints the version the image was built from, which is the output of
-`git describe --tags` (`v1.13.0` for a release image, `v1.13.0-<n>-g<commit>` for a `develop`
+`git describe --tags` (`v1.14.0` for a release image, `v1.14.0-<n>-g<commit>` for a `develop`
 image), or `dev` for a local `make build` or `make docker`:
 
 ```console
-$ docker run --rm ghcr.io/datarocks-ag/keycloak-provisioner:1.13.0 --version
-v1.13.0
+$ docker run --rm ghcr.io/datarocks-ag/keycloak-provisioner:1.14.0 --version
+v1.14.0
 ```
 
 ## Standalone binary
@@ -43,7 +43,7 @@ Every release has binaries for Linux and macOS (`amd64`, `arm64`) as `tar.gz` ar
 `checksums.txt`, on the
 [releases page](https://github.com/datarocks-ag/keycloak-provisioner/releases)
 (see [`.goreleaser.yaml`](../.goreleaser.yaml)). Their `--version` prints the release
-number without the `v` (`1.13.0`):
+number without the `v` (`1.14.0`):
 
 ```console
 $ export KEYCLOAK_URL=https://id.example.com KEYCLOAK_USER=<admin-user> KEYCLOAK_PASSWORD=<admin-password>
@@ -75,7 +75,7 @@ services:
       retries: 20
 
   keycloak-provisioner:
-    image: ghcr.io/datarocks-ag/keycloak-provisioner:1.13
+    image: ghcr.io/datarocks-ag/keycloak-provisioner:1.14
     depends_on:
       keycloak: { condition: service_healthy }
     environment:
@@ -148,7 +148,7 @@ spec:
         runAsUser: 65532
       containers:
         - name: keycloak-provisioner
-          image: ghcr.io/datarocks-ag/keycloak-provisioner:1.13
+          image: ghcr.io/datarocks-ag/keycloak-provisioner:1.14
           env:
             - { name: KEYCLOAK_URL, value: "https://keycloak.example.com" }
             - name: KEYCLOAK_USER

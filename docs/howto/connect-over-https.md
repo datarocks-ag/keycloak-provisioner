@@ -60,7 +60,7 @@ yours. In Docker Compose:
 
 ```yaml
   keycloak-provisioner:
-    image: ghcr.io/datarocks-ag/keycloak-provisioner:1.13
+    image: ghcr.io/datarocks-ag/keycloak-provisioner:1.14
     environment:
       KEYCLOAK_URL: https://keycloak.example.com
       SSL_CERT_FILE: /certs/ca.crt
