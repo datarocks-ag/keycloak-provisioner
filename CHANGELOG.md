@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bumped `github.com/testcontainers/testcontainers-go` from 0.44.0 to 0.45.0
   and `go.opentelemetry.io/otel/trace` from 1.44.0 to 1.47.0, with their
   transitive dependencies; no API changes.
+- Bumped the `golangci-lint` tool dependency from 2.11.4 to 2.15.0; 2.11.4
+  (staticcheck 0.7.0) panics analysing the Go 1.27 standard library.
 
 ## [1.13.0] — 2026-09-12
 
