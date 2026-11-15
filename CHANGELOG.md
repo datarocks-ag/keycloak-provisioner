@@ -19,6 +19,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bumped `github.com/stillya/testcontainers-keycloak` from 0.3.8 to 0.3.9 and
   refreshed indirect Go dependencies (moby, compress, `golang.org/x/*`); no
   API changes.
+- Documentation moved from the README into `docs/`: getting started, how it
+  works, configuration reference, deployment, an FAQ, and fifteen how-to
+  guides. Every claim was checked against the code, and examples were run
+  against Keycloak 26.6.4. Corrections to what the README said include:
+  - `strategy: create` still resets `password`, adds roles, groups and
+    credentials, and applies bindings, scope assignments and scope mappings
+    on existing resources.
+  - Declared organization `domains` replace the server's list.
+  - A run can stop part-way: the pre-flight check only refuses version,
+    feature and provider mismatches.
+  - Exported realm JSON can't be pasted into the config.
+  - Copying the `browser` flow with `copyFrom` and adding a `CONDITIONAL`
+    step-up subflow leaves nobody able to log in; the step-up guide builds
+    the flow from scratch.
+- The Keycloak compatibility table now lives in `docs/deployment.md`;
+  `go test ./internal/compat -update` regenerates it there.
+
+### Fixed
+
+- `docker-compose.yaml`: the Keycloak healthcheck used `curl`, which the
+  `keycloak/keycloak:26.6` image doesn't contain, so Keycloak never became
+  healthy and the provisioner never started. It now probes the management
+  port with bash. The admin is set with `KC_BOOTSTRAP_ADMIN_USERNAME` and
+  `KC_BOOTSTRAP_ADMIN_PASSWORD`, replacing the deprecated `KEYCLOAK_ADMIN`
+  variables.
 
 ## [1.13.0] — 2026-09-12
 
