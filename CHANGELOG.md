@@ -55,6 +55,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     instead of `409 Duplicate resource error`.
   - A dry run of such a user in an existing realm no longer fails with
     `404 User not found` while reading its role mappings.
+- An unset `${VAR}` is still kept as literal text, but now logs a warning
+  once per variable (`Environment variable is not set; ${VAR} is kept as
+  literal text`), so a secret or password that silently became `${VAR}`
+  shows up in the log. Escaped `$${VAR}` and comments don't warn.
 
 ## [1.13.0] — 2026-09-12
 

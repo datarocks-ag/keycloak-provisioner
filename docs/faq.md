@@ -302,8 +302,9 @@ Further reading: [Configuration reference](configuration.md),
 
 ### My `${VAR}` showed up literally as a password or secret. Why?
 
-Because a `${VAR}` whose environment variable isn't set is left in the config as written,
-without an error or a warning. That text then becomes the password or secret.
+Because a `${VAR}` whose environment variable isn't set is left in the config as written. The
+run doesn't fail; it logs a warning for each such variable (1.13.0 and earlier don't). That
+text then becomes the password or secret.
 
 Expansion happens when the config loads. `$${VAR}` is the escape for a literal `${VAR}`. In
 this test (on a test realm) `DAVE_PASSWORD` was not set, the run succeeded, and the literal

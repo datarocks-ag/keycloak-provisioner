@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -72,6 +73,36 @@ realms:
 	}
 	if len(cfg.Realms[0].Roles) != 1 {
 		t.Fatalf("expected 1 realm role, got %d", len(cfg.Realms[0].Roles))
+	}
+}
+
+// An unset variable is kept as literal text, so a client secret can silently
+// become "${NAME}". Load reports such references so the caller can warn;
+// escaped references, set variables and comments are not reported.
+func TestLoadReportsUnresolvedEnvVars(t *testing.T) {
+	t.Setenv("TEST_KC_SET", "value")
+
+	yaml := `
+# A comment mentioning ${TEST_KC_IN_COMMENT} is not a reference.
+realms:
+  - realm: "test"
+    displayName: "$${TEST_KC_ESCAPED}"
+    clients:
+      - clientId: "app"
+        secret: "${TEST_KC_UNSET_SECRET}"
+        name: "${TEST_KC_SET}"
+    users:
+      - username: "alice"
+        password: "${TEST_KC_UNSET_PASSWORD}"
+`
+	cfg, err := Load(writeTempConfig(t, yaml))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"TEST_KC_UNSET_PASSWORD", "TEST_KC_UNSET_SECRET"}
+	if !slices.Equal(cfg.UnresolvedEnvVars, want) {
+		t.Errorf("UnresolvedEnvVars = %v, want %v", cfg.UnresolvedEnvVars, want)
 	}
 }
 

@@ -253,7 +253,8 @@ it before a deploy.
 A string value may contain `${VAR}`, which is replaced with the environment variable's value
 when the config is loaded, before validation. `$${VAR}` gives you the literal text `${VAR}`.
 An unset variable is **not** an error: the placeholder stays in the value as literal text,
-with no warning, so a missing secret can become a client secret or password of `${VAR}`.
+so a missing secret can become a client secret or password of `${VAR}`. The run logs a warning
+for each such variable (1.13.0 and earlier don't).
 Expansion also covers keys of most maps, but not every field: `strategy`, a client scope's
 `type`, `acrLoaMap` keys and management permission scope names are taken as written. The
 [Configuration reference](configuration.md) lists exactly what is expanded, and

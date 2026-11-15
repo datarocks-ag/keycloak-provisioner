@@ -1027,7 +1027,7 @@ validation:
 | Syntax | Result |
 |---|---|
 | `${VAR}` | Value of `VAR`, also when it is set to an empty string. |
-| `${VAR}` with `VAR` unset | **Left as the literal text `${VAR}`, without a warning.** |
+| `${VAR}` with `VAR` unset | **Left as the literal text `${VAR}`.** The run continues and logs `Environment variable is not set; ${VAR} is kept as literal text` as a warning, once per variable (1.13.0 and earlier don't warn). |
 | `$${VAR}` | The literal text `${VAR}`. |
 
 ```yaml

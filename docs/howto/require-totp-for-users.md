@@ -60,8 +60,8 @@ realms:
 
 Add a `credentials` entry of type `otp` to the test user, in the same `users` list. `type` and
 `secret` are required, and `otp` is the only type the provisioner accepts. Pass the secret
-through an environment variable: an unset variable is not an error, and the literal text
-`${TESTER_TOTP_SECRET}` would become the secret.
+through an environment variable: an unset variable is not an error (the run only warns), and the
+literal text `${TESTER_TOTP_SECRET}` would become the secret.
 
 ```yaml
       - username: "tester"

@@ -191,8 +191,8 @@ $ curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
 ## Pitfalls
 
 - **An unset secret variable is written as text.** If `UPSTREAM_CLIENT_SECRET` is not set, the
-  provisioner leaves `${UPSTREAM_CLIENT_SECRET}` in the value without a warning and sends that
-  text to Keycloak as the secret.
+  provisioner leaves `${UPSTREAM_CLIENT_SECRET}` in the value and sends that text to Keycloak
+  as the secret. The run logs a `WARN` line naming the variable; 1.13.0 and earlier don't.
 - **Removing `clientSecret` from the config keeps the stored secret.** The merge carries the
   masked value forward. A run with the key removed still logged `Updating identity provider`,
   and brokered logins kept working. Removing any other `config` key does not delete it either;
