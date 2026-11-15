@@ -41,7 +41,7 @@ type Requirement struct {
 }
 
 // Requirements is the single source of truth for version gating. The docs
-// table in README.md is generated from it; see TestCompatibilityTableMatchesDocs.
+// table in docs/deployment.md is generated from it; see TestCompatibilityTableMatchesDocs.
 var Requirements = []Requirement{
 	{
 		Name:       "organizations",

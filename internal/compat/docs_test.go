@@ -7,26 +7,26 @@ import (
 	"testing"
 )
 
-// readmePath is relative to this package's directory.
-const readmePath = "../../README.md"
+// docsPath is relative to this package's directory.
+const docsPath = "../../docs/deployment.md"
 
-var update = flag.Bool("update", false, "rewrite the README compatibility table from the requirement registry")
+var update = flag.Bool("update", false, "rewrite the compatibility table in docs/deployment.md from the requirement registry")
 
 // TestCompatibilityTableMatchesDocs keeps the published table and the registry
 // in step. Documentation drifting behind the code is how the wrong minimum
 // version gets published, so this fails rather than trusting a human to
 // remember. Run `go test ./internal/compat -update` to regenerate.
 func TestCompatibilityTableMatchesDocs(t *testing.T) {
-	raw, err := os.ReadFile(readmePath)
+	raw, err := os.ReadFile(docsPath)
 	if err != nil {
-		t.Fatalf("reading README: %v", err)
+		t.Fatalf("reading %s: %v", docsPath, err)
 	}
 
 	doc := string(raw)
 
 	updated, ok := ReplaceDocsTable(doc)
 	if !ok {
-		t.Fatalf("README is missing the %s / %s markers", DocsBeginMarker, DocsEndMarker)
+		t.Fatalf("%s is missing the %s / %s markers", docsPath, DocsBeginMarker, DocsEndMarker)
 	}
 
 	if updated == doc {
@@ -34,15 +34,15 @@ func TestCompatibilityTableMatchesDocs(t *testing.T) {
 	}
 
 	if *update {
-		if err := os.WriteFile(readmePath, []byte(updated), 0o644); err != nil {
-			t.Fatalf("writing README: %v", err)
+		if err := os.WriteFile(docsPath, []byte(updated), 0o644); err != nil {
+			t.Fatalf("writing %s: %v", docsPath, err)
 		}
-		t.Log("README compatibility table regenerated")
+		t.Log("compatibility table regenerated")
 
 		return
 	}
 
-	t.Errorf("README compatibility table is out of date; run `go test ./internal/compat -update`.\n\nExpected table:\n%s", DocsTable())
+	t.Errorf("compatibility table in docs/deployment.md is out of date; run `go test ./internal/compat -update`.\n\nExpected table:\n%s", DocsTable())
 }
 
 func TestDocsTableRendersEveryRequirement(t *testing.T) {

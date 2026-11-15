@@ -5,13 +5,13 @@ import (
 	"strings"
 )
 
-// Doc markers delimit the generated compatibility table in README.md.
+// Doc markers delimit the generated compatibility table in docs/deployment.md.
 const (
 	DocsBeginMarker = "<!-- BEGIN COMPATIBILITY TABLE -->"
 	DocsEndMarker   = "<!-- END COMPATIBILITY TABLE -->"
 )
 
-// DocsTable renders Requirements as the markdown table published in the README.
+// DocsTable renders Requirements as the markdown table published in docs/deployment.md.
 // It is generated rather than hand-written so the docs cannot drift from the
 // behaviour; TestCompatibilityTableMatchesDocs enforces that.
 func DocsTable() string {
