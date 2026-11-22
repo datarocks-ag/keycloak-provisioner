@@ -55,7 +55,7 @@ Add the provisioner as a service, and let the application depend on it with
 ```yaml
 services:
   keycloak:
-    image: keycloak/keycloak:26.6
+    image: keycloak/keycloak:26.8
     command: ["start-dev"]
     environment:
       KC_HEALTH_ENABLED: "true"
