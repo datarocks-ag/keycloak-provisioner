@@ -16,7 +16,7 @@ step builds on the previous one, so keep the files you create.
 
 The repository's [`docker-compose.yaml`](../docker-compose.yaml) defines two services:
 
-- `keycloak` runs `keycloak/keycloak:26.8.2-3` in development mode (`start-dev`) on port 8080,
+- `keycloak` runs `keycloak/keycloak:26.8` in development mode (`start-dev`) on port 8080,
   with the management port 9000 for health checks. The bootstrap administrator is `admin`
   with the password `adminpass`, set through `KC_BOOTSTRAP_ADMIN_USERNAME` and
   `KC_BOOTSTRAP_ADMIN_PASSWORD`.
